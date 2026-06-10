@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
+import type { TaskRow, TaskStatus } from "./tasks.ts";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export interface SessionRow {
   id: string;
@@ -46,6 +47,7 @@ export class Indexer {
   private recreateSchema(): void {
     this.db.exec(`
       DROP TABLE IF EXISTS sessions;
+      DROP TABLE IF EXISTS tasks;
       DROP TABLE IF EXISTS meta;
       CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE sessions (
@@ -58,6 +60,20 @@ export class Indexer {
         unread INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX sessions_updated ON sessions(updated_at DESC);
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        parent_session_id TEXT NOT NULL,
+        subagent_session_id TEXT,
+        label TEXT NOT NULL,
+        status TEXT NOT NULL,
+        model TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        result_summary TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX tasks_parent ON tasks(parent_session_id);
+      CREATE INDEX tasks_created ON tasks(created_at DESC);
     `);
     this.db
       .prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?)")
@@ -116,6 +132,56 @@ export class Indexer {
   /** test hook for simulating stale schema */
   setSchemaVersionForTest(version: number): void {
     this.db.prepare("UPDATE meta SET value=? WHERE key='schema_version'").run(String(version));
+  }
+
+  upsertTask(row: TaskRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO tasks (id, parent_session_id, subagent_session_id, label, status, model,
+           created_at, started_at, finished_at, result_summary)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET subagent_session_id=excluded.subagent_session_id,
+           status=excluded.status, started_at=excluded.started_at,
+           finished_at=excluded.finished_at, result_summary=excluded.result_summary`,
+      )
+      .run(
+        row.id,
+        row.parentSessionId,
+        row.subagentSessionId,
+        row.label,
+        row.status,
+        row.model,
+        row.createdAt,
+        row.startedAt,
+        row.finishedAt,
+        row.resultSummary,
+      );
+  }
+
+  getTask(id: string): TaskRow | undefined {
+    const r = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as any;
+    return r ? this.toTaskRow(r) : undefined;
+  }
+
+  listTasks(): TaskRow[] {
+    return (this.db.prepare("SELECT * FROM tasks ORDER BY created_at DESC").all() as any[]).map((r) =>
+      this.toTaskRow(r),
+    );
+  }
+
+  private toTaskRow(r: any): TaskRow {
+    return {
+      id: r.id,
+      parentSessionId: r.parent_session_id,
+      subagentSessionId: r.subagent_session_id,
+      label: r.label,
+      status: r.status as TaskStatus,
+      model: r.model,
+      createdAt: r.created_at,
+      startedAt: r.started_at,
+      finishedAt: r.finished_at,
+      resultSummary: r.result_summary,
+    };
   }
 
   private toRow(r: any): SessionRow {

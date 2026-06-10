@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { Indexer, type SessionRow } from "../src/indexer.ts";
+import type { TaskRow } from "../src/tasks.ts";
 
 function tempDb(): string {
   return join(mkdtempSync(join(tmpdir(), "idx-")), "index.db");
@@ -56,5 +57,30 @@ describe("Indexer", () => {
     const c = new Indexer(path);
     expect(c.listSessions()).toEqual([]);
     expect(c.wasReset).toBe(true);
+  });
+});
+
+describe("tasks table", () => {
+  const taskRow: TaskRow = {
+    id: "t1",
+    parentSessionId: "p1",
+    subagentSessionId: null,
+    label: "research",
+    status: "pending",
+    model: "faux/faux",
+    createdAt: "2026-06-09T10:00:00Z",
+    startedAt: null,
+    finishedAt: null,
+    resultSummary: "",
+  };
+
+  test("upsert, get, list ordering", () => {
+    const idx = new Indexer(tempDb());
+    idx.upsertTask(taskRow);
+    idx.upsertTask({ ...taskRow, id: "t2", createdAt: "2026-06-09T11:00:00Z" });
+    idx.upsertTask({ ...taskRow, status: "running", subagentSessionId: "s1", startedAt: "x" });
+    expect(idx.getTask("t1")).toMatchObject({ status: "running", subagentSessionId: "s1" });
+    expect(idx.listTasks().map((t) => t.id)).toEqual(["t2", "t1"]); // newest created first
+    expect(idx.getTask("missing")).toBeUndefined();
   });
 });
