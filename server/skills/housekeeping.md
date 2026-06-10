@@ -252,15 +252,33 @@ outside glacier. Render and `cog_write("link-index.md", ...)`:
 |--------|-------------|
 ```
 
-### 9. L0 Header Maintenance
+### 9. L0 Header & Format Hygiene
 
-Check files for missing `<!-- L0: ... -->` headers, scoped to
-`changed_recently[]` — don't sweep the whole tree. For each candidate:
+**Detection is global, not bounded.** Diff `cog_list()` against the
+`l0index` output per domain: every `.md` file that appears in the listing
+but not in `cog_rpc("l0index", {"domain": ...})` is missing its
+`<!-- L0: ... -->` header (the daemon's l0index silently omits headerless
+files — absence from it IS the signal). Skip `glacier/` (read-only).
 
-1. `cog_outline(path)` to check whether the L0 header is present, without a
-   full read
-2. If missing: `cog_read(path)`, write a one-line summary (max 80 chars)
-3. `cog_patch` to insert the header after the title line
+**Repair every missing header this run — don't defer to "when the file is
+next touched"; dormant files never get touched.** Use `changed_recently[]`
+only to order the work, not to limit it. For each missing file:
+
+1. `cog_read(path)`, write a one-line summary (max 80 chars)
+2. `cog_patch` to insert the header as line 1 (before the title)
+
+If any headers were added, re-run `l0index` for the affected domains and
+rewrite their `INDEX.md` (§5b) so the index reflects the repair.
+
+**Observation format normalization**: while sweeping, if any
+`*observations.md` file contains legacy non-conforming blocks (e.g.
+`## date — title` headings with plain bullets above strict-format lines),
+normalize them: convert each legacy bullet to
+`- YYYY-MM-DD [tags]: text` (date from the enclosing heading, tags
+inferred, content preserved verbatim), then `cog_write` the full
+consistent file. The daemon validates appends against the strict format,
+so mixed files mean every future `cog_append` succeeds but the file reads
+inconsistently — fix the legacy block, never loosen the new entries.
 
 ### 10. Debrief
 
