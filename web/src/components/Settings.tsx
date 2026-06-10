@@ -92,15 +92,15 @@ export function Settings({
           <div>
             <h3 className="mb-1 text-sm font-medium">Schedules</h3>
             {schedules.length === 0 ? (
-              <p className="text-sm text-neutral-500">No schedules. Ask the assistant to remind you about something.</p>
+              <p className="text-sm text-muted-foreground">No schedules. Ask the assistant to remind you about something.</p>
             ) : (
               <ul className="space-y-1">
                 {schedules.map((s) => (
-                  <li key={s.id} className="flex items-center gap-2 rounded-md border border-neutral-800 p-2 text-sm">
+                  <li key={s.id} className="flex items-center gap-2 rounded-md border border-border bg-card p-2 text-sm text-card-foreground">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline gap-2">
                         <span className="truncate font-medium">{s.label}</span>
-                        <span className="text-xs text-neutral-500">
+                        <span className="text-xs text-muted-foreground">
                           {s.spec.type === "once" ? "once" : s.spec.expr}
                           {s.cancelled
                             ? " · cancelled"
@@ -109,7 +109,7 @@ export function Settings({
                               : " · completed"}
                         </span>
                       </div>
-                      <p className="truncate text-xs text-neutral-500">{s.prompt}</p>
+                      <p className="truncate text-xs text-muted-foreground">{s.prompt}</p>
                     </div>
                     {s.enabled && (
                       <Button variant="outline" size="sm" onClick={() => void cancelSchedule(s.id)}>

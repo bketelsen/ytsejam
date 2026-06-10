@@ -6,12 +6,12 @@ import type { ChatMessage, TaskRow } from "@/lib/types";
 import { Message } from "./Message";
 
 const STATUS_STYLES: Record<string, string> = {
-  pending: "text-neutral-400",
-  running: "text-yellow-400 animate-pulse",
-  completed: "text-green-400",
-  failed: "text-red-400",
-  cancelled: "text-neutral-500",
-  interrupted: "text-orange-400",
+  pending: "text-muted-foreground",
+  running: "text-warning animate-pulse",
+  completed: "text-success",
+  failed: "text-destructive",
+  cancelled: "text-muted-foreground",
+  interrupted: "text-warning",
 };
 
 function elapsed(task: TaskRow): string {
@@ -73,7 +73,7 @@ export function TaskTranscriptDialog({
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          {messages.length === 0 && <p className="text-sm text-neutral-500">No transcript yet…</p>}
+          {messages.length === 0 && <p className="text-sm text-muted-foreground">No transcript yet…</p>}
           {messages.map((m, i) => (
             <Message key={i} message={m} toolResults={toolResults} interrupted={!live} />
           ))}
@@ -92,24 +92,24 @@ export function TaskCard({
 }) {
   if (!task) {
     return (
-      <div className="my-1 rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm text-neutral-500">
+      <div className="my-1 rounded-md border border-border bg-card p-2 text-sm text-muted-foreground">
         background task (status unknown)
       </div>
     );
   }
   return (
-    <div className="my-1 flex items-center gap-3 rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm">
+    <div className="my-1 flex items-center gap-3 rounded-md border border-border bg-card p-2 text-sm text-card-foreground">
       <span className={STATUS_STYLES[task.status] ?? ""}>●</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate font-medium">{task.label}</span>
-          <span className="text-xs text-neutral-500">
+          <span className="text-xs text-muted-foreground">
             {task.status}
             {elapsed(task) && ` · ${elapsed(task)}`}
           </span>
         </div>
         {task.resultSummary && (
-          <p className="truncate text-xs text-neutral-500">{task.resultSummary}</p>
+          <p className="truncate text-xs text-muted-foreground">{task.resultSummary}</p>
         )}
       </div>
       {(task.status === "running" || task.status === "pending") && (

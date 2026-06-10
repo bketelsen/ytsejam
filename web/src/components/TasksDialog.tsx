@@ -22,7 +22,7 @@ export function TasksDialog({
             <DialogTitle>Background tasks</DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
-            {sorted.length === 0 && <p className="text-sm text-neutral-500">No tasks yet.</p>}
+            {sorted.length === 0 && <p className="text-sm text-muted-foreground">No tasks yet.</p>}
             {sorted.map((t) => (
               <TaskCard key={t.id} task={t} onViewTranscript={setTranscriptTaskId} />
             ))}
