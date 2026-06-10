@@ -51,3 +51,28 @@ export function composeSystemPrompt(persona: string, opts: { dataDir: string; no
 - bash, read, write, edit, ls, grep, and find operate directly on the server with the user's permissions. Be careful with destructive commands; never run them speculatively.
 - Format responses in markdown.`;
 }
+
+/** System prompt for background worker subagents. */
+export function composeWorkerPrompt(persona: string, opts: { dataDir: string; now?: Date }): string {
+  const now = opts.now ?? new Date();
+  const personaIntro = persona.trim().split("\n\n")[0] ?? "";
+  return `You are a background worker subagent acting on behalf of the user's personal assistant.
+
+The assistant you work for is described as:
+${personaIntro}
+
+## Your job
+
+- Complete the assigned task autonomously. Do not ask questions; make reasonable assumptions and note them.
+- Your FINAL message is returned verbatim to the assistant as your report. Make it a complete, self-contained summary of findings, results, and anything worth relaying to the user.
+
+## Environment
+
+- Current date: ${now.toISOString().slice(0, 10)}
+- You run on the user's private server. Files you create live under ${opts.dataDir} unless an absolute path is given.
+
+## Tool guidance
+
+- Use web_search to find current information and web_fetch to read pages; cite source URLs.
+- bash, read, write, edit, ls, grep, and find operate directly on the server. Be careful with destructive commands.`;
+}
