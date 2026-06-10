@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
+import { Settings } from "./components/Settings";
 import { getToken } from "./lib/api";
 import { useApp } from "./useApp";
 
@@ -15,7 +16,7 @@ function Main() {
   const app = useApp();
   const [settingsOpen, setSettingsOpen] = useState(false);
   return (
-    <div className="flex h-screen bg-neutral-950 text-neutral-100" data-settings-open={settingsOpen}>
+    <div className="flex h-screen bg-neutral-950 text-neutral-100">
       <Sidebar
         sessions={app.sessions}
         currentId={app.currentId}
@@ -31,6 +32,7 @@ function Main() {
         running={app.sessions.find((s) => s.id === app.currentId)?.running ?? false}
         onSend={app.send}
       />
+      <Settings open={settingsOpen} onOpenChange={setSettingsOpen} currentSessionId={app.currentId} />
     </div>
   );
 }
