@@ -82,6 +82,10 @@ export function useApp() {
     wsRef.current?.subscribe(id);
     if (id) {
       const { messages } = await client.getSession(id);
+      // user may have switched again while the transcript loaded
+      if (currentIdRef.current !== id) return;
+      // note: a message_end arriving during the fetch can be clobbered by this
+      // snapshot; it self-heals on reselect (messages have no stable id to merge by)
       setMessages(messages);
       void client.patchSession(id, { unread: false });
       setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: false } : s)));
