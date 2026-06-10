@@ -60,6 +60,9 @@ export function TaskTranscriptDialog({
   for (const m of messages) {
     if (m.role === "toolResult" && m.toolCallId) toolResults.set(m.toolCallId, m);
   }
+  // a terminal task is no longer working — any tool call without a result was
+  // cut off, so render it as interrupted rather than a perpetual "running…"
+  const live = !task || task.status === "running" || task.status === "pending";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -72,7 +75,7 @@ export function TaskTranscriptDialog({
         <div className="space-y-3">
           {messages.length === 0 && <p className="text-sm text-neutral-500">No transcript yet…</p>}
           {messages.map((m, i) => (
-            <Message key={i} message={m} toolResults={toolResults} />
+            <Message key={i} message={m} toolResults={toolResults} interrupted={!live} />
           ))}
         </div>
       </DialogContent>

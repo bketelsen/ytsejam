@@ -13,9 +13,12 @@ function blocks(message: ChatMessage): ContentBlock[] {
 export function ToolCallCard({
   call,
   result,
+  interrupted = false,
 }: {
   call: ContentBlock;
   result: ChatMessage | undefined;
+  /** the turn ended (task is terminal) with no result — the call never finished */
+  interrupted?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const resultText = result
@@ -31,7 +34,8 @@ export function ToolCallCard({
       >
         <span>{open ? "▾" : "▸"}</span>
         <span className="font-mono">{call.name}</span>
-        {!result && <span className="animate-pulse text-xs text-warning">running…</span>}
+        {!result && !interrupted && <span className="animate-pulse text-xs text-warning">running…</span>}
+        {!result && interrupted && <span className="text-xs text-destructive">interrupted</span>}
         {result?.isError && <span className="text-xs text-destructive">error</span>}
       </button>
       {open && (
@@ -53,11 +57,14 @@ export function Message({
   toolResults,
   tasks,
   onViewTranscript,
+  interrupted = false,
 }: {
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
   tasks?: Record<string, TaskRow>;
   onViewTranscript?: (taskId: string) => void;
+  /** render resultless tool calls as interrupted, not running (terminal transcript) */
+  interrupted?: boolean;
 }) {
   if (message.role === "toolResult") return null; // rendered inside the assistant's tool card
   const isUser = message.role === "user";
@@ -100,7 +107,8 @@ export function Message({
             return <TaskCard key={i} task={taskId ? tasks[taskId] : undefined} onViewTranscript={onViewTranscript} />;
           }
           if (b.type === "toolCall") {
-            return <ToolCallCard key={i} call={b} result={b.id ? toolResults.get(b.id) : undefined} />;
+            const result = b.id ? toolResults.get(b.id) : undefined;
+            return <ToolCallCard key={i} call={b} result={result} interrupted={interrupted && !result} />;
           }
           return null;
         })}
