@@ -8,11 +8,14 @@ import { AgentManager } from "./manager.ts";
 import { resolveModel } from "./models.ts";
 import { PiAuthStore } from "./pi-auth.ts";
 import { PersonaStore } from "./persona.ts";
+import { SchedulerService } from "./scheduler.ts";
+import { ScheduleStore } from "./schedules.ts";
 import { createApp } from "./server.ts";
 import { TaskManager } from "./task-manager.ts";
 import { TaskStore } from "./tasks.ts";
 import { createTools } from "./tools/index.ts";
 import { createDelegationTools } from "./tools/delegation.ts";
+import { createSchedulingTools } from "./tools/scheduling.ts";
 
 const config = loadConfig();
 
@@ -23,9 +26,10 @@ const authStore = new PiAuthStore(config.piAuthPath);
 const indexer = new Indexer(path.join(config.dataDir, "index.db"));
 const bus = new EventBus();
 const persona = new PersonaStore(path.join(config.dataDir, "persona"));
-// taskManager is created after manager (it injects into it); the delegation
-// tools late-bind through the closure, which only runs when a session opens
+// taskManager and scheduler are created after manager (they inject into it);
+// the tools late-bind through closures, which only run when a session opens
 let taskManager!: TaskManager;
+let scheduler!: SchedulerService;
 const manager = new AgentManager({
   dataDir: config.dataDir,
   indexer,
@@ -34,7 +38,10 @@ const manager = new AgentManager({
   resolveModel: (ref) => resolveModel(ref, authStore),
   defaultModel: config.defaultModel,
   tools: createTools(config.dataDir),
-  sessionTools: (sessionId) => createDelegationTools(() => taskManager, sessionId),
+  sessionTools: (sessionId) => [
+    ...createDelegationTools(() => taskManager, sessionId),
+    ...createSchedulingTools(() => scheduler, sessionId),
+  ],
   generateTitles: config.generateTitles,
   authStore,
 });
@@ -54,12 +61,27 @@ taskManager = new TaskManager({
   notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),
 });
 
+scheduler = new SchedulerService({
+  store: new ScheduleStore(path.join(config.dataDir, "schedules")),
+  indexer,
+  bus,
+  inject: (sessionId, text) => manager.injectMessage(sessionId, text),
+  createTargetSession: async (label) => {
+    const row = await manager.createSession();
+    await manager.rename(row.id, label);
+    return row.id;
+  },
+});
+
 // sqlite is derived: rebuild from JSONL on boot so offline JSONL edits are reflected
 await manager.rebuildIndex();
 await taskManager.rebuildIndex();
 await taskManager.recoverInterrupted();
+await scheduler.rebuildIndex();
+await scheduler.catchUp();
+scheduler.start();
 
-const { app, injectWebSocket } = createApp({ manager, taskManager, indexer, bus, persona, config, authStore });
+const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`ytsejam listening on http://localhost:${info.port}`);
   console.log(`data dir: ${config.dataDir}`);

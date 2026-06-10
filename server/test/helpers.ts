@@ -8,6 +8,8 @@ import { AgentManager } from "../src/manager.ts";
 import type { AgentManagerOptions } from "../src/manager.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { PersonaStore } from "../src/persona.ts";
+import { SchedulerService } from "../src/scheduler.ts";
+import { ScheduleStore } from "../src/schedules.ts";
 import { TaskStore } from "../src/tasks.ts";
 import { TaskManager } from "../src/task-manager.ts";
 
@@ -50,7 +52,18 @@ export function makeManager(
     timeoutMs: 10_000,
     notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),
   });
-  return { manager, taskManager, indexer, bus, dataDir };
+  const scheduler = new SchedulerService({
+    store: new ScheduleStore(join(dataDir, "schedules")),
+    indexer,
+    bus,
+    inject: (sessionId, text) => manager.injectMessage(sessionId, text),
+    createTargetSession: async (label) => {
+      const row = await manager.createSession();
+      await manager.rename(row.id, label);
+      return row.id;
+    },
+  });
+  return { manager, taskManager, scheduler, indexer, bus, dataDir };
 }
 
 export { fauxAssistantMessage, fauxToolCall };

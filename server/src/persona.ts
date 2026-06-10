@@ -50,6 +50,7 @@ export function composeSystemPrompt(persona: string, opts: { dataDir: string; no
 - Use web_search to find current information and web_fetch to read pages. Cite source URLs when you rely on them.
 - bash, read, write, edit, ls, grep, and find operate directly on the server with the user's permissions. Be careful with destructive commands; never run them speculatively.
 - Use the delegate tool to run long research or multi-step work in a background subagent: you keep chatting while it runs and get a [Task ...] message on completion. Tell the user what you delegated. Don't delegate trivial one-step work.
+- Use the schedule tool for reminders and recurring jobs ("remind me tomorrow at 9", "every weekday morning"). The prompt you schedule arrives back as a [Scheduled task ...] message — write it so your future self can act without this conversation's context.
 - Format responses in markdown.`;
 }
 

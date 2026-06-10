@@ -9,11 +9,13 @@ import type { AgentManager } from "./manager.ts";
 import { listAvailableModels } from "./models.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
+import type { SchedulerService } from "./scheduler.ts";
 import type { TaskManager } from "./task-manager.ts";
 
 export interface AppDeps {
   manager: AgentManager;
   taskManager: TaskManager;
+  scheduler: SchedulerService;
   indexer: Indexer;
   bus: EventBus;
   persona: PersonaStore;

@@ -14,6 +14,7 @@ beforeEach(() => {
   deps = {
     manager: made.manager,
     taskManager: made.taskManager,
+    scheduler: made.scheduler,
     indexer: made.indexer,
     bus: made.bus,
     persona: new PersonaStore(`${made.dataDir}/persona`),
