@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { Indexer, type SessionRow } from "../src/indexer.ts";
 import type { TaskRow } from "../src/tasks.ts";
+import type { ScheduleRow } from "../src/schedules.ts";
 
 function tempDb(): string {
   return join(mkdtempSync(join(tmpdir(), "idx-")), "index.db");
@@ -82,5 +83,35 @@ describe("tasks table", () => {
     expect(idx.getTask("t1")).toMatchObject({ status: "running", subagentSessionId: "s1" });
     expect(idx.listTasks().map((t) => t.id)).toEqual(["t2", "t1"]); // newest created first
     expect(idx.getTask("missing")).toBeUndefined();
+  });
+});
+
+describe("schedules table", () => {
+  const sched: ScheduleRow = {
+    id: "sch1",
+    label: "daily brief",
+    prompt: "summarize my day",
+    spec: { type: "cron", expr: "0 9 * * *" },
+    targetSessionId: null,
+    enabled: true,
+    cancelled: false,
+    createdAt: "2026-06-09T10:00:00Z",
+    lastFiredAt: null,
+    nextFireAt: "2026-06-10T09:00:00Z",
+    firedCount: 0,
+  };
+
+  test("upsert, get with spec round-trip, list ordering", () => {
+    const idx = new Indexer(tempDb());
+    idx.upsertSchedule(sched);
+    idx.upsertSchedule({ ...sched, id: "sch2", createdAt: "2026-06-09T11:00:00Z" });
+    idx.upsertSchedule({ ...sched, enabled: false, firedCount: 3 });
+    expect(idx.getSchedule("sch1")).toMatchObject({
+      enabled: false,
+      firedCount: 3,
+      spec: { type: "cron", expr: "0 9 * * *" },
+    });
+    expect(idx.listSchedules().map((s) => s.id)).toEqual(["sch2", "sch1"]); // newest first
+    expect(idx.getSchedule("missing")).toBeUndefined();
   });
 });

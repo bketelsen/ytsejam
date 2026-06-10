@@ -13,6 +13,7 @@
     "@earendil-works/pi-ai": "0.79.1",
     "@hono/node-server": "^1.14.0",
     "@hono/node-ws": "^1.1.0",
+    "cron-parser": "^5.5.0",
     "hono": "^4.7.0",
     "html-to-text": "^9.0.5"
   },

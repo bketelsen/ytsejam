@@ -1,7 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import type { TaskRow, TaskStatus } from "./tasks.ts";
+import type { ScheduleRow } from "./schedules.ts";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export interface SessionRow {
   id: string;
@@ -48,6 +49,7 @@ export class Indexer {
     this.db.exec(`
       DROP TABLE IF EXISTS sessions;
       DROP TABLE IF EXISTS tasks;
+      DROP TABLE IF EXISTS schedules;
       DROP TABLE IF EXISTS meta;
       CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE sessions (
@@ -74,6 +76,20 @@ export class Indexer {
       );
       CREATE INDEX tasks_parent ON tasks(parent_session_id);
       CREATE INDEX tasks_created ON tasks(created_at DESC);
+      CREATE TABLE schedules (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        spec_json TEXT NOT NULL,
+        target_session_id TEXT,
+        enabled INTEGER NOT NULL,
+        cancelled INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        last_fired_at TEXT,
+        next_fire_at TEXT,
+        fired_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX schedules_created ON schedules(created_at DESC);
     `);
     this.db
       .prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?)")
@@ -167,6 +183,58 @@ export class Indexer {
     return (this.db.prepare("SELECT * FROM tasks ORDER BY created_at DESC").all() as any[]).map((r) =>
       this.toTaskRow(r),
     );
+  }
+
+  upsertSchedule(row: ScheduleRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO schedules (id, label, prompt, spec_json, target_session_id, enabled, cancelled,
+           created_at, last_fired_at, next_fire_at, fired_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, cancelled=excluded.cancelled,
+           last_fired_at=excluded.last_fired_at, next_fire_at=excluded.next_fire_at,
+           fired_count=excluded.fired_count`,
+      )
+      .run(
+        row.id,
+        row.label,
+        row.prompt,
+        JSON.stringify(row.spec),
+        row.targetSessionId,
+        row.enabled ? 1 : 0,
+        row.cancelled ? 1 : 0,
+        row.createdAt,
+        row.lastFiredAt,
+        row.nextFireAt,
+        row.firedCount,
+      );
+  }
+
+  getSchedule(id: string): ScheduleRow | undefined {
+    const r = this.db.prepare("SELECT * FROM schedules WHERE id=?").get(id) as any;
+    return r ? this.toScheduleRow(r) : undefined;
+  }
+
+  listSchedules(): ScheduleRow[] {
+    return (this.db.prepare("SELECT * FROM schedules ORDER BY created_at DESC").all() as any[]).map(
+      (r) => this.toScheduleRow(r),
+    );
+  }
+
+  private toScheduleRow(r: any): ScheduleRow {
+    return {
+      id: r.id,
+      label: r.label,
+      prompt: r.prompt,
+      spec: JSON.parse(r.spec_json),
+      targetSessionId: r.target_session_id,
+      enabled: Number(r.enabled) === 1,
+      cancelled: Number(r.cancelled) === 1,
+      createdAt: r.created_at,
+      lastFiredAt: r.last_fired_at,
+      nextFireAt: r.next_fire_at,
+      firedCount: Number(r.fired_count),
+    };
   }
 
   private toTaskRow(r: any): TaskRow {
