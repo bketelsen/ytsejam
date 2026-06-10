@@ -157,6 +157,8 @@ export class SchedulerService {
       timestamp: now.toISOString(),
     });
     try {
+      // a createTargetSession failure also counts as a spent fire (fired was
+      // recorded above) — record-first means no retry but never a double-fire
       const sessionId =
         row.targetSessionId ?? (await this.opts.createTargetSession(row.label));
       await this.opts.inject(sessionId, `[Scheduled task "${row.label}"] ${row.prompt}`);

@@ -46,12 +46,20 @@ export function createSchedulingTools(
       "Schedule a one-shot reminder (at) or recurring job (cron) for yourself. When it fires you receive the prompt as a [Scheduled task ...] message and act on it. Use for reminders, recurring briefings, or deferred work.",
     parameters: scheduleParams,
     execute: async (_id, params) => {
-      if (!params.at === !params.cron) {
+      // presence semantics, not truthiness: an empty string is still "provided"
+      if ((params.at == null) === (params.cron == null)) {
         throw new Error("Provide exactly one of `at` (one-shot) or `cron` (recurring)");
       }
-      const spec = params.at
-        ? ({ type: "once", at: new Date(params.at).toISOString() } as const)
-        : ({ type: "cron", expr: params.cron! } as const);
+      let spec: { type: "once"; at: string } | { type: "cron"; expr: string };
+      if (params.at != null) {
+        const at = new Date(params.at);
+        if (Number.isNaN(at.getTime())) {
+          throw new Error(`\`at\` must be a valid ISO 8601 timestamp, got: ${params.at}`);
+        }
+        spec = { type: "once", at: at.toISOString() };
+      } else {
+        spec = { type: "cron", expr: params.cron! };
+      }
       const row = getScheduler().create({
         label: params.label,
         prompt: params.prompt,
