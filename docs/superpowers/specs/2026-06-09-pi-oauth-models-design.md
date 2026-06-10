@@ -50,10 +50,11 @@ refresh token dies, the user re-authenticates with the pi CLI.
 
 - `listAvailableModels(opts?)` gains `oauth?: PiAuthStore`. A provider is
   available when it has an env key OR `oauth.hasCredentials(provider)`.
-  For OAuth-credentialed providers whose pi-ai OAuth provider implements
-  `modifyModels`, apply it to the listed models (correct Copilot baseUrl).
-- `resolveModel(ref, oauth?)` applies the same `modifyModels` adjustment so
-  sessions get models with the right baseUrl.
+  (`ModelInfo` carries no baseUrl, so listing needs no further adjustment.)
+- `resolveModel(ref, oauth?)` applies the OAuth provider's `modifyModels`
+  hook (when credentials exist and the hook is defined) so sessions get
+  models with the right baseUrl — this is what fixes Copilot's
+  individual-vs-business endpoint.
 - With no `oauth` argument, behavior is exactly as today (existing tests
   unchanged).
 
