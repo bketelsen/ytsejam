@@ -41,9 +41,14 @@ export function Settings({
   }
 
   async function cancelSchedule(id: string) {
-    await client.cancelSchedule(id);
-    const r = await client.listSchedules();
-    setSchedules(r.schedules);
+    try {
+      await client.cancelSchedule(id);
+    } finally {
+      // refetch even on 409: the schedule may have fired/cancelled while the
+      // dialog was open, and the list should reflect that
+      const r = await client.listSchedules();
+      setSchedules(r.schedules);
+    }
   }
 
   return (
