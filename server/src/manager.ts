@@ -9,10 +9,12 @@ import {
   type Session,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { completeSimple, getEnvApiKey, type Model } from "@earendil-works/pi-ai";
+import { completeSimple, type Model } from "@earendil-works/pi-ai";
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
+import { resolveApiKey } from "./pi-auth.ts";
+import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
 
@@ -41,6 +43,7 @@ export interface AgentManagerOptions {
   defaultModel: string;
   tools: AgentTool<any>[];
   generateTitles: boolean;
+  authStore: PiAuthStore;
 }
 
 interface OpenSession {
@@ -135,7 +138,7 @@ export class AgentManager {
       systemPrompt: async () =>
         composeSystemPrompt(await this.opts.persona.load(), { dataDir: this.opts.dataDir }),
       getApiKeyAndHeaders: async (m: Model<any>) => {
-        const apiKey = getEnvApiKey(m.provider);
+        const apiKey = await resolveApiKey(m.provider, this.opts.authStore);
         return apiKey ? { apiKey } : undefined;
       },
     });

@@ -5,6 +5,7 @@ import { fauxAssistantMessage, registerFauxProvider, type Model } from "@earendi
 import { EventBus } from "../src/events.ts";
 import { Indexer } from "../src/indexer.ts";
 import { AgentManager } from "../src/manager.ts";
+import { PiAuthStore } from "../src/pi-auth.ts";
 import { PersonaStore } from "../src/persona.ts";
 
 export function setupFaux() {
@@ -26,6 +27,7 @@ export function makeManager(faux: ReturnType<typeof registerFauxProvider>) {
     defaultModel: "faux/faux",
     tools: [],
     generateTitles: false,
+    authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
   });
   return { manager, indexer, bus, dataDir };
 }

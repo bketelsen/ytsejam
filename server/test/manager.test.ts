@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { ServerEvent } from "../src/events.ts";
+import { PiAuthStore } from "../src/pi-auth.ts";
 import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
 
 let faux: ReturnType<typeof setupFaux>;
@@ -68,6 +69,7 @@ describe("AgentManager", () => {
       defaultModel: "faux/faux",
       tools: [],
       generateTitles: false,
+      authStore: new PiAuthStore(join(first.dataDir, "no-auth.json")),
     });
     await manager2.rebuildIndex();
 
@@ -135,6 +137,7 @@ describe("AgentManager", () => {
       defaultModel: "faux/faux",
       tools: [],
       generateTitles: true,
+      authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
     });
 
     faux.setResponses([

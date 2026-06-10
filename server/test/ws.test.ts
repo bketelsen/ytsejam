@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { PiAuthStore } from "../src/pi-auth.ts";
 import { createApp } from "../src/server.ts";
 import { PersonaStore } from "../src/persona.ts";
 import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
@@ -24,7 +25,9 @@ beforeEach(async () => {
       defaultModel: "faux/faux",
       webDistDir: "/tmp/nonexistent",
       generateTitles: false,
+      piAuthPath: `${made.dataDir}/no-auth.json`,
     },
+    authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
   });
   await new Promise<void>((resolve) => {
     server = serve({ fetch: app.fetch, port: 0 }, (info) => {

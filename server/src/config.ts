@@ -1,4 +1,5 @@
 import path from "node:path";
+import { defaultPiAuthPath } from "./pi-auth.ts";
 
 export interface Config {
   port: number;
@@ -9,6 +10,8 @@ export interface Config {
   webDistDir: string;
   /** generate session titles with the LLM after the first exchange */
   generateTitles: boolean;
+  /** pi CLI auth.json with OAuth credentials (Copilot/Codex subscriptions) */
+  piAuthPath: string;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -21,5 +24,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     defaultModel: env.YTSEJAM_DEFAULT_MODEL ?? "anthropic/claude-sonnet-4-6",
     webDistDir: path.resolve(env.YTSEJAM_WEB_DIST ?? "../web/dist"),
     generateTitles: env.YTSEJAM_GENERATE_TITLES !== "false",
+    piAuthPath: env.YTSEJAM_PI_AUTH ?? defaultPiAuthPath(),
   };
 }

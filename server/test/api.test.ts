@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { PiAuthStore } from "../src/pi-auth.ts";
 import { PersonaStore } from "../src/persona.ts";
 import { createApp, type AppDeps } from "../src/server.ts";
 import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
@@ -22,7 +23,9 @@ beforeEach(() => {
       defaultModel: "faux/faux",
       webDistDir: "/tmp/nonexistent",
       generateTitles: false,
+      piAuthPath: `${made.dataDir}/no-auth.json`,
     },
+    authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
   };
   app = createApp(deps).app;
 });

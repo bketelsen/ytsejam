@@ -7,6 +7,7 @@ import type { EventBus, ServerEvent } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { AgentManager } from "./manager.ts";
 import { listAvailableModels } from "./models.ts";
+import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 
 export interface AppDeps {
@@ -15,6 +16,7 @@ export interface AppDeps {
   bus: EventBus;
   persona: PersonaStore;
   config: Config;
+  authStore: PiAuthStore;
 }
 
 export function createApp(deps: AppDeps) {
@@ -138,7 +140,7 @@ export function createApp(deps: AppDeps) {
   });
 
   app.get("/api/models", (c) =>
-    c.json({ models: listAvailableModels(), defaultModel: config.defaultModel }),
+    c.json({ models: listAvailableModels({ oauth: deps.authStore }), defaultModel: config.defaultModel }),
   );
 
   // static web app (built assets); SPA fallback to index.html

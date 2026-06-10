@@ -18,6 +18,7 @@ JSONL files are the source of truth; sqlite is a derived index. Spec and plans i
 | `YTSEJAM_DATA_DIR` | `./data` | JSONL sessions, persona, sqlite index |
 | `YTSEJAM_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | `provider/modelId` |
 | `YTSEJAM_GENERATE_TITLES` | `true` | LLM session titles |
+| `YTSEJAM_PI_AUTH` | `~/.pi/agent/auth.json` | pi CLI OAuth credentials (Copilot/Codex subscriptions) |
 | `ANTHROPIC_API_KEY` etc. | — | enables that provider in the model picker |
 | `BRAVE_API_KEY` | — | enables the web_search tool |
 
