@@ -10,12 +10,12 @@ import net from "node:net";
 
 /** A JSON-RPC error returned by the daemon (RBAC denial, invalid params, store error...). */
 export class CogRpcError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-  ) {
+  readonly code: number;
+
+  constructor(code: number, message: string) {
     super(message);
     this.name = "CogRpcError";
+    this.code = code;
   }
 }
 
@@ -42,8 +42,11 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 
 export class CogClient {
   private nextId = 1;
+  private readonly opts: CogClientOptions;
 
-  constructor(private readonly opts: CogClientOptions) {}
+  constructor(opts: CogClientOptions) {
+    this.opts = opts;
+  }
 
   get socketPath(): string {
     return this.opts.socketPath;

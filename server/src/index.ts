@@ -16,6 +16,11 @@ import { TaskStore } from "./tasks.ts";
 import { createTools } from "./tools/index.ts";
 import { createDelegationTools } from "./tools/delegation.ts";
 import { createSchedulingTools } from "./tools/scheduling.ts";
+import { CogClient } from "./cog/client.ts";
+import { CogBriefProvider } from "./cog/brief.ts";
+import { SkillsStore } from "./skills.ts";
+import { createCogTools } from "./tools/cog.ts";
+import { createSkillTool } from "./tools/skills.ts";
 
 const config = loadConfig();
 
@@ -26,6 +31,10 @@ const authStore = new PiAuthStore(config.piAuthPath);
 const indexer = new Indexer(path.join(config.dataDir, "index.db"));
 const bus = new EventBus();
 const persona = new PersonaStore(path.join(config.dataDir, "persona"));
+const cogClient = new CogClient({ socketPath: config.cogSocket });
+const cogBrief = new CogBriefProvider(cogClient, config.cogRole);
+const skills = new SkillsStore(path.join(config.dataDir, "skills"));
+await skills.seed(path.join(import.meta.dirname, "../skills"));
 // taskManager and scheduler are created after manager (they inject into it);
 // the tools late-bind through closures, which only run when a session opens
 let taskManager!: TaskManager;
@@ -37,13 +46,19 @@ const manager = new AgentManager({
   persona,
   resolveModel: (ref) => resolveModel(ref, authStore),
   defaultModel: config.defaultModel,
-  tools: createTools(config.dataDir),
+  tools: [
+    ...createTools(config.dataDir),
+    ...createCogTools(cogClient, config.cogRole),
+    createSkillTool(skills),
+  ],
   sessionTools: (sessionId) => [
     ...createDelegationTools(() => taskManager, sessionId),
     ...createSchedulingTools(() => scheduler, sessionId),
   ],
   generateTitles: config.generateTitles,
   authStore,
+  cogBrief,
+  skills,
 });
 
 taskManager = new TaskManager({
@@ -80,6 +95,11 @@ await taskManager.recoverInterrupted();
 await scheduler.rebuildIndex();
 await scheduler.catchUp();
 scheduler.start();
+
+// non-blocking memory daemon probe — sessions degrade gracefully without it
+void cogClient.health().then((ok) => {
+  if (!ok) console.warn(`cog memory daemon not reachable at ${config.cogSocket} — memory disabled until it comes up`);
+});
 
 const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

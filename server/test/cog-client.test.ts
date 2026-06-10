@@ -64,7 +64,7 @@ describe("CogClient", () => {
       },
     }));
     const client = new CogClient({ socketPath: sock });
-    const err = await client.call("write", { role: "agent", path: "dakota/INDEX.md", content: "x" }).catch((e) => e);
+    const err: any = await client.call("write", { role: "agent", path: "dakota/INDEX.md", content: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(CogRpcError);
     expect(err.code).toBe(-32602);
     expect(err.message).toContain('lives at "projects/dakota"');
@@ -87,7 +87,7 @@ describe("CogClient", () => {
 
   test("unreachable socket produces a clear error naming the path", async () => {
     const client = new CogClient({ socketPath: "/nonexistent/cog.sock" });
-    const err = await client.call("health", { role: "agent" }).catch((e) => e);
+    const err: any = await client.call("health", { role: "agent" }).catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(CogRpcError);
     expect(err.message).toContain("/nonexistent/cog.sock");
@@ -100,14 +100,14 @@ describe("CogClient", () => {
     server.listen(socketPath);
     servers.push(server);
     const client = new CogClient({ socketPath });
-    const err = await client.call("read", { role: "agent", path: "x.md" }).catch((e) => e);
+    const err: any = await client.call("read", { role: "agent", path: "x.md" }).catch((e) => e);
     expect(err.message).toContain("closed the connection before replying");
   });
 
   test("times out on a hung daemon", async () => {
     const sock = fakeDaemon(() => undefined); // never replies
     const client = new CogClient({ socketPath: sock, timeoutMs: 100 });
-    const err = await client.call("read", { role: "agent", path: "x.md" }).catch((e) => e);
+    const err: any = await client.call("read", { role: "agent", path: "x.md" }).catch((e) => e);
     expect(err.message.toLowerCase()).toContain("timed out");
   });
 
@@ -118,7 +118,7 @@ describe("CogClient", () => {
       return { jsonrpc: "2.0", id: req.id, result: {} };
     });
     const client = new CogClient({ socketPath: sock });
-    const err = await client
+    const err: any = await client
       .call("write", { role: "agent", path: "big.md", content: "x".repeat(70_000) })
       .catch((e) => e);
     expect(err.message).toContain("too large");

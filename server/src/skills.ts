@@ -16,7 +16,11 @@ export interface SkillSummary {
 }
 
 export class SkillsStore {
-  constructor(readonly skillsDir: string) {}
+  readonly skillsDir: string;
+
+  constructor(skillsDir: string) {
+    this.skillsDir = skillsDir;
+  }
 
   /** Copy each seed *.md into the skills dir unless a file with that name exists. */
   async seed(seedDir: string): Promise<void> {
