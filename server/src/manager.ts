@@ -49,6 +49,8 @@ interface OpenSession {
   session: Session;
   harness: AgentHarness;
   running: boolean;
+  /** rename requested while running; flushed to JSONL on agent_end (JSONL is SSOT) */
+  pendingTitle?: string;
 }
 
 export function previewOf(message: AgentMessage): string {
@@ -66,6 +68,7 @@ export class AgentManager {
   private readonly repo: JsonlSessionRepo;
   private readonly env: NodeExecutionEnv;
   private readonly open = new Map<string, OpenSession>();
+  private readonly opening = new Map<string, Promise<OpenSession>>();
 
   constructor(opts: AgentManagerOptions) {
     this.opts = opts;
@@ -98,9 +101,19 @@ export class AgentManager {
     return row;
   }
 
-  private async getOrOpen(id: string): Promise<OpenSession> {
+  private getOrOpen(id: string): Promise<OpenSession> {
     const existing = this.open.get(id);
-    if (existing) return existing;
+    if (existing) return Promise.resolve(existing);
+    // de-dup concurrent opens: a second getOrOpen must not build a second harness
+    let inflight = this.opening.get(id);
+    if (!inflight) {
+      inflight = this.openSession(id).finally(() => this.opening.delete(id));
+      this.opening.set(id, inflight);
+    }
+    return inflight;
+  }
+
+  private async openSession(id: string): Promise<OpenSession> {
     const metadata = (await this.repo.list({ cwd: SESSIONS_CWD })).find((m) => m.id === id);
     if (!metadata) throw new Error(`Session not found: ${id}`);
     const session = await this.repo.open(metadata);
@@ -155,6 +168,18 @@ export class AgentManager {
     }
 
     if (event.type === "agent_end") {
+      // flush a rename that arrived mid-run: index already has it, JSONL (SSOT) does not yet
+      const pending = opened.pendingTitle;
+      if (pending !== undefined) {
+        opened.pendingTitle = undefined;
+        // async flush outside the awaited listener path
+        setTimeout(() => {
+          if (this.open.get(opened.id) !== opened) return; // closed or deleted
+          void opened.session
+            .appendSessionName(pending)
+            .catch((err) => console.error(`failed to flush pending title for ${opened.id}`, err));
+        }, 0);
+      }
       this.emitMeta(opened.id);
       if (this.opts.generateTitles) {
         // outside the run's listener settlement to avoid reentrancy
@@ -212,7 +237,12 @@ export class AgentManager {
 
   async rename(id: string, title: string): Promise<void> {
     const opened = await this.getOrOpen(id);
-    if (!opened.running) await opened.session.appendSessionName(title);
+    if (opened.running) {
+      // defer the JSONL write to agent_end; index + emit immediately for a snappy UI
+      opened.pendingTitle = title;
+    } else {
+      await opened.session.appendSessionName(title);
+    }
     this.opts.indexer.setTitle(id, title);
     this.emitMeta(id);
   }
@@ -278,7 +308,9 @@ export class AgentManager {
 
   private async maybeGenerateTitle(opened: OpenSession): Promise<void> {
     try {
+      if (this.open.get(opened.id) !== opened) return; // closed or deleted
       if (this.opts.indexer.getSession(opened.id)?.title) return;
+      if (opened.pendingTitle !== undefined) return; // a user rename is pending; don't override
       const messages = (await opened.session.buildContext()).messages;
       const firstUser = messages.find((m: any) => m.role === "user");
       if (!firstUser) return;
@@ -297,6 +329,7 @@ export class AgentManager {
           },
         ],
       });
+      if (this.open.get(opened.id) !== opened) return; // deleted/closed while completing
       const title = previewOf(result).split("\n")[0]?.trim().slice(0, 80);
       if (title && !opened.running) {
         await opened.session.appendSessionName(title);

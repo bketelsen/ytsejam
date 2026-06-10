@@ -97,6 +97,68 @@ describe("AgentManager", () => {
     expect(userTexts).toEqual(["one", "two"]);
   });
 
+  test("rename during a run is flushed to JSONL and survives rebuild", async () => {
+    const { manager, indexer } = makeManager(faux);
+    faux.setResponses([
+      async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        return fauxAssistantMessage("slow reply");
+      },
+    ]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.rename(row.id, "Mid-run title"); // while running
+    expect(indexer.getSession(row.id)!.title).toBe("Mid-run title"); // index immediate
+    await manager.waitForIdle(row.id);
+    await new Promise((r) => setTimeout(r, 50)); // let the deferred flush run
+    await manager.rebuildIndex();
+    expect(indexer.getSession(row.id)!.title).toBe("Mid-run title"); // survived = in JSONL
+  });
+
+  test("delete during title generation does not resurrect the session", async () => {
+    const { mkdtempSync, readdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { AgentManager } = await import("../src/manager.ts");
+    const { PersonaStore } = await import("../src/persona.ts");
+    const { EventBus } = await import("../src/events.ts");
+    const { Indexer } = await import("../src/indexer.ts");
+
+    const dataDir = mkdtempSync(join(tmpdir(), "ytsejam-"));
+    const indexer = new Indexer(join(dataDir, "index.db"));
+    const manager = new AgentManager({
+      dataDir,
+      indexer,
+      bus: new EventBus(),
+      persona: new PersonaStore(join(dataDir, "persona")),
+      resolveModel: () => faux.getModel() as any,
+      defaultModel: "faux/faux",
+      tools: [],
+      generateTitles: true,
+    });
+
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      // title-gen completion: delayed so delete races ahead of the appendSessionName
+      async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        return fauxAssistantMessage("Resurrected Title");
+      },
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+    // title generation is now in flight; delete before it completes
+    await manager.deleteSession(row.id);
+    await new Promise((r) => setTimeout(r, 500)); // let title-gen completion settle
+
+    expect(indexer.getSession(row.id)).toBeUndefined();
+    const chatDir = join(dataDir, "sessions", "--chat--");
+    const remaining = readdirSync(chatDir).filter((f) => f.includes(row.id));
+    expect(remaining).toEqual([]);
+  });
+
   test("rename and delete update index and emit events", async () => {
     const { manager, indexer, bus } = makeManager(faux);
     const events: ServerEvent[] = [];
