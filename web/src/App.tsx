@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
+import { Chat } from "./components/Chat";
 import { getToken } from "./lib/api";
 import { useApp } from "./useApp";
 
@@ -23,9 +24,13 @@ function Main() {
         onDeleted={() => void app.refreshSessions()}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      <main className="flex flex-1 items-center justify-center text-neutral-500">
-        chat UI coming in next task
-      </main>
+      <Chat
+        sessionId={app.currentId}
+        messages={app.messages}
+        streaming={app.streaming}
+        running={app.sessions.find((s) => s.id === app.currentId)?.running ?? false}
+        onSend={app.send}
+      />
     </div>
   );
 }
