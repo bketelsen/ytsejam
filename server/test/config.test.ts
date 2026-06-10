@@ -25,6 +25,20 @@ describe("loadConfig", () => {
     expect(over.piAuthPath).toBe("/tmp/custom-auth.json");
   });
 
+  test("cog settings default to the test daemon socket and accept overrides", () => {
+    const def = loadConfig({ YTSEJAM_AUTH_TOKEN: "x" });
+    expect(def.cogSocket.endsWith("/.local/share/cogmemory-test/cog-memory-test.sock")).toBe(true);
+    expect(def.cogSocket.startsWith("/")).toBe(true); // ~ expanded
+    expect(def.cogRole).toBe("agent");
+    const over = loadConfig({
+      YTSEJAM_AUTH_TOKEN: "x",
+      YTSEJAM_COG_SOCKET: "/run/cog.sock",
+      YTSEJAM_COG_ROLE: "ytsejam",
+    });
+    expect(over.cogSocket).toBe("/run/cog.sock");
+    expect(over.cogRole).toBe("ytsejam");
+  });
+
   test("delegation settings default and override", () => {
     const def = loadConfig({ YTSEJAM_AUTH_TOKEN: "x" });
     expect(def.subagentModel).toBe(def.defaultModel);

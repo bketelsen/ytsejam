@@ -46,6 +46,10 @@ export interface AgentManagerOptions {
   sessionTools?: (sessionId: string) => AgentTool<any>[];
   generateTitles: boolean;
   authStore: PiAuthStore;
+  /** renders the "## Memory (cog)" system-prompt section from session_brief */
+  cogBrief?: { promptSection(): Promise<string> };
+  /** renders the "## Skills" routing-table system-prompt section */
+  skills?: { promptSection(): Promise<string> };
 }
 
 interface OpenSession {
@@ -137,8 +141,15 @@ export class AgentManager {
       session,
       model,
       tools: [...this.opts.tools, ...(this.opts.sessionTools?.(metadata.id) ?? [])],
-      systemPrompt: async () =>
-        composeSystemPrompt(await this.opts.persona.load(), { dataDir: this.opts.dataDir }),
+      systemPrompt: async () => {
+        // prompt sections must never block or break a session
+        const [persona, cogSection, skillsSection] = await Promise.all([
+          this.opts.persona.load(),
+          this.opts.cogBrief?.promptSection().catch(() => undefined),
+          this.opts.skills?.promptSection().catch(() => undefined),
+        ]);
+        return composeSystemPrompt(persona, { dataDir: this.opts.dataDir, cogSection, skillsSection });
+      },
       getApiKeyAndHeaders: async (m: Model<any>) => {
         const apiKey = await resolveApiKey(m.provider, this.opts.authStore);
         return apiKey ? { apiKey } : undefined;

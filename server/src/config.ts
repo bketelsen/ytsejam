@@ -1,5 +1,10 @@
+import os from "node:os";
 import path from "node:path";
 import { defaultPiAuthPath } from "./pi-auth.ts";
+
+function expandHome(p: string): string {
+  return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
+}
 
 export interface Config {
   port: number;
@@ -18,6 +23,10 @@ export interface Config {
   taskConcurrency: number;
   /** per-task timeout in minutes */
   taskTimeoutMinutes: number;
+  /** unix socket of the cogmemory daemon */
+  cogSocket: string;
+  /** RBAC role passed on every cogmemory RPC */
+  cogRole: string;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -36,5 +45,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // clamp: NaN/0/negative would silently stall the task pump
     taskConcurrency: Math.max(1, Number(env.YTSEJAM_TASK_CONCURRENCY ?? 4) || 4),
     taskTimeoutMinutes: Math.max(1, Number(env.YTSEJAM_TASK_TIMEOUT_MIN ?? 15) || 15),
+    // test instance by default; point at the prod socket once the integration is proven
+    cogSocket: expandHome(env.YTSEJAM_COG_SOCKET ?? "~/.local/share/cogmemory-test/cog-memory-test.sock"),
+    cogRole: env.YTSEJAM_COG_ROLE ?? "agent",
   };
 }

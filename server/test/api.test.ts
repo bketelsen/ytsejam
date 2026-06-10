@@ -29,6 +29,8 @@ beforeEach(() => {
       subagentModel: "faux/faux",
       taskConcurrency: 4,
       taskTimeoutMinutes: 15,
+    cogSocket: "/tmp/no-cog.sock",
+    cogRole: "agent",
     },
     authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
   };

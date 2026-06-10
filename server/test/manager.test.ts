@@ -235,3 +235,37 @@ describe("sessionTools", () => {
     expect(seen).toEqual([row.id]);
   });
 });
+
+describe("cog brief + skills prompt wiring", () => {
+  test("sections reach the harness system prompt", async () => {
+    const seen: string[] = [];
+    const { manager } = makeManager(faux, {
+      cogBrief: { promptSection: async () => "## Memory (cog)\nHOTMARK" } as any,
+      skills: { promptSection: async () => "## Skills\nSKILLMARK" } as any,
+    });
+    faux.setResponses([
+      (context: any) => {
+        seen.push(context.systemPrompt ?? "");
+        return fauxAssistantMessage("ok") as any;
+      },
+    ]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+    expect(seen[0]).toContain("HOTMARK");
+    expect(seen[0]).toContain("SKILLMARK");
+  });
+
+  test("a throwing brief provider does not break the session", async () => {
+    const { manager } = makeManager(faux, {
+      cogBrief: { promptSection: async () => { throw new Error("boom"); } } as any,
+    });
+    faux.setResponses([fauxAssistantMessage("still alive")]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+    const messages = await manager.getMessages(row.id);
+    const assistant = messages.find((m: any) => m.role === "assistant") as any;
+    expect(assistant.content[0].text).toContain("still alive");
+  });
+});

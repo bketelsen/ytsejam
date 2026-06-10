@@ -36,4 +36,19 @@ describe("composeSystemPrompt", () => {
     expect(prompt).toContain("/data");
     expect(prompt).toContain("web_search");
   });
+
+  test("appends cog and skills sections when provided, omits them otherwise", () => {
+    const bare = composeSystemPrompt("You are Jeeves.", { dataDir: "/data" });
+    expect(bare).not.toContain("## Memory (cog)");
+    expect(bare).not.toContain("## Skills");
+
+    const full = composeSystemPrompt("You are Jeeves.", {
+      dataDir: "/data",
+      cogSection: "## Memory (cog)\nHOTMARK",
+      skillsSection: "## Skills\nSKILLMARK",
+    });
+    expect(full.indexOf("Tool guidance")).toBeLessThan(full.indexOf("HOTMARK"));
+    expect(full).toContain("HOTMARK");
+    expect(full).toContain("SKILLMARK");
+  });
 });
