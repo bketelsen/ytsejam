@@ -24,6 +24,9 @@ beforeEach(() => {
       webDistDir: "/tmp/nonexistent",
       generateTitles: false,
       piAuthPath: `${made.dataDir}/no-auth.json`,
+      subagentModel: "faux/faux",
+      taskConcurrency: 4,
+      taskTimeoutMinutes: 15,
     },
     authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
   };

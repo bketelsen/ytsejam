@@ -9,7 +9,10 @@ import { resolveModel } from "./models.ts";
 import { PiAuthStore } from "./pi-auth.ts";
 import { PersonaStore } from "./persona.ts";
 import { createApp } from "./server.ts";
+import { TaskManager } from "./task-manager.ts";
+import { TaskStore } from "./tasks.ts";
 import { createTools } from "./tools/index.ts";
+import { createDelegationTools } from "./tools/delegation.ts";
 
 const config = loadConfig();
 
@@ -20,6 +23,9 @@ const authStore = new PiAuthStore(config.piAuthPath);
 const indexer = new Indexer(path.join(config.dataDir, "index.db"));
 const bus = new EventBus();
 const persona = new PersonaStore(path.join(config.dataDir, "persona"));
+// taskManager is created after manager (it injects into it); the delegation
+// tools late-bind through the closure, which only runs when a session opens
+let taskManager!: TaskManager;
 const manager = new AgentManager({
   dataDir: config.dataDir,
   indexer,
@@ -28,12 +34,30 @@ const manager = new AgentManager({
   resolveModel: (ref) => resolveModel(ref, authStore),
   defaultModel: config.defaultModel,
   tools: createTools(config.dataDir),
+  sessionTools: (sessionId) => createDelegationTools(() => taskManager, sessionId),
   generateTitles: config.generateTitles,
   authStore,
 });
 
+taskManager = new TaskManager({
+  dataDir: config.dataDir,
+  store: new TaskStore(path.join(config.dataDir, "tasks")),
+  indexer,
+  bus,
+  persona,
+  authStore,
+  resolveModel: (ref) => resolveModel(ref, authStore),
+  subagentModel: config.subagentModel,
+  workerTools: createTools(config.dataDir), // web + system tools; no delegation (no recursion)
+  concurrency: config.taskConcurrency,
+  timeoutMs: config.taskTimeoutMinutes * 60_000,
+  notifyParent: (sessionId, text) => manager.injectTaskResult(sessionId, text),
+});
+
 // sqlite is derived: rebuild from JSONL on boot so offline JSONL edits are reflected
 await manager.rebuildIndex();
+await taskManager.rebuildIndex();
+await taskManager.recoverInterrupted();
 
 const { app, injectWebSocket } = createApp({ manager, indexer, bus, persona, config, authStore });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {

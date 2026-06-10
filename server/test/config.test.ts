@@ -24,4 +24,20 @@ describe("loadConfig", () => {
     const over = loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_PI_AUTH: "/tmp/custom-auth.json" });
     expect(over.piAuthPath).toBe("/tmp/custom-auth.json");
   });
+
+  test("delegation settings default and override", () => {
+    const def = loadConfig({ YTSEJAM_AUTH_TOKEN: "x" });
+    expect(def.subagentModel).toBe(def.defaultModel);
+    expect(def.taskConcurrency).toBe(4);
+    expect(def.taskTimeoutMinutes).toBe(15);
+    const over = loadConfig({
+      YTSEJAM_AUTH_TOKEN: "x",
+      YTSEJAM_SUBAGENT_MODEL: "faux/faux",
+      YTSEJAM_TASK_CONCURRENCY: "2",
+      YTSEJAM_TASK_TIMEOUT_MIN: "5",
+    });
+    expect(over.subagentModel).toBe("faux/faux");
+    expect(over.taskConcurrency).toBe(2);
+    expect(over.taskTimeoutMinutes).toBe(5);
+  });
 });
