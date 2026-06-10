@@ -42,6 +42,8 @@ export interface AgentManagerOptions {
   resolveModel: ModelResolver;
   defaultModel: string;
   tools: AgentTool<any>[];
+  /** extra tools built per session (e.g. delegation tools that need the session id) */
+  sessionTools?: (sessionId: string) => AgentTool<any>[];
   generateTitles: boolean;
   authStore: PiAuthStore;
 }
@@ -134,7 +136,7 @@ export class AgentManager {
       env: this.env,
       session,
       model,
-      tools: this.opts.tools,
+      tools: [...this.opts.tools, ...(this.opts.sessionTools?.(metadata.id) ?? [])],
       systemPrompt: async () =>
         composeSystemPrompt(await this.opts.persona.load(), { dataDir: this.opts.dataDir }),
       getApiKeyAndHeaders: async (m: Model<any>) => {
@@ -204,6 +206,24 @@ export class AgentManager {
       // run failures already surface as assistant error messages via events;
       // this catches pre-run rejections (e.g. "busy") so they don't crash the process
       console.error(`prompt failed for session ${id}`, err);
+      opened.running = false;
+    });
+  }
+
+  /**
+   * Inject a background-task result. The assistant always takes a turn on it:
+   * queued as a follow-up when a run is active (processed when the run would
+   * otherwise stop), or started as a fresh turn when idle.
+   */
+  async injectTaskResult(id: string, text: string): Promise<void> {
+    const opened = await this.getOrOpen(id);
+    if (opened.running) {
+      await opened.harness.followUp(text);
+      return;
+    }
+    opened.running = true;
+    opened.harness.prompt(text).catch((err) => {
+      console.error(`task result injection failed for session ${id}`, err);
       opened.running = false;
     });
   }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { ServerEvent } from "../src/events.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
-import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
+import { fauxAssistantMessage, fauxToolCall, makeManager, setupFaux } from "./helpers.ts";
 
 let faux: ReturnType<typeof setupFaux>;
 beforeEach(() => {
@@ -172,5 +172,66 @@ describe("AgentManager", () => {
     await manager.deleteSession(row.id);
     expect(indexer.getSession(row.id)).toBeUndefined();
     expect(events.some((e) => e.type === "session_deleted")).toBe(true);
+  });
+});
+
+describe("injectTaskResult", () => {
+  test("starts a turn when the session is idle", async () => {
+    const { manager } = makeManager(faux);
+    faux.setResponses([fauxAssistantMessage("noted the result")]);
+    const row = await manager.createSession();
+    await manager.injectTaskResult(row.id, '[Task "x" completed] all done');
+    await manager.waitForIdle(row.id);
+    const messages = await manager.getMessages(row.id);
+    const userTexts = messages.filter((m: any) => m.role === "user").map((m: any) => m.content[0].text);
+    expect(userTexts).toEqual(['[Task "x" completed] all done']);
+    expect(messages.some((m: any) => m.role === "assistant")).toBe(true);
+  });
+
+  test("queues as follow-up when the session is running", async () => {
+    const { manager } = makeManager(faux);
+    faux.setResponses([
+      async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        return fauxAssistantMessage("first reply");
+      },
+      fauxAssistantMessage("handled the task result"),
+    ]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hello");
+    await manager.injectTaskResult(row.id, '[Task "y" completed] result'); // mid-run
+    await manager.waitForIdle(row.id);
+    const messages = await manager.getMessages(row.id);
+    const texts = messages.map((m: any) =>
+      Array.isArray(m.content) ? m.content.map((c: any) => c.text ?? "").join("") : m.content,
+    );
+    // follow-up processed after the first turn: hello, first reply, [Task...], handled...
+    expect(texts.filter((t) => t.includes("[Task"))).toHaveLength(1);
+    expect(messages.filter((m: any) => m.role === "assistant")).toHaveLength(2);
+  });
+});
+
+describe("sessionTools", () => {
+  test("per-session tools are available to the harness and receive the session id", async () => {
+    const seen: string[] = [];
+    const probeTool = (sessionId: string) => ({
+      name: "probe",
+      label: "Probe",
+      description: "test tool",
+      parameters: { type: "object", properties: {} } as any,
+      execute: async () => {
+        seen.push(sessionId);
+        return { content: [{ type: "text" as const, text: "probed" }], details: {} };
+      },
+    });
+    const { manager } = makeManager(faux, { sessionTools: (id) => [probeTool(id) as any] });
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("probe", {})]),
+      fauxAssistantMessage("done"),
+    ]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "use the probe");
+    await manager.waitForIdle(row.id);
+    expect(seen).toEqual([row.id]);
   });
 });

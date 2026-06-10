@@ -1,10 +1,11 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, registerFauxProvider, type Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider, type Model } from "@earendil-works/pi-ai";
 import { EventBus } from "../src/events.ts";
 import { Indexer } from "../src/indexer.ts";
 import { AgentManager } from "../src/manager.ts";
+import type { AgentManagerOptions } from "../src/manager.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { PersonaStore } from "../src/persona.ts";
 
@@ -13,7 +14,10 @@ export function setupFaux() {
   return faux;
 }
 
-export function makeManager(faux: ReturnType<typeof registerFauxProvider>) {
+export function makeManager(
+  faux: ReturnType<typeof registerFauxProvider>,
+  overrides: Partial<AgentManagerOptions> = {},
+) {
   const dataDir = mkdtempSync(join(tmpdir(), "ytsejam-"));
   const indexer = new Indexer(join(dataDir, "index.db"));
   const bus = new EventBus();
@@ -28,8 +32,9 @@ export function makeManager(faux: ReturnType<typeof registerFauxProvider>) {
     tools: [],
     generateTitles: false,
     authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
+    ...overrides,
   });
   return { manager, indexer, bus, dataDir };
 }
 
-export { fauxAssistantMessage };
+export { fauxAssistantMessage, fauxToolCall };
