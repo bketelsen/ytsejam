@@ -44,3 +44,22 @@ Hover/selected surfaces: `hover:bg-accent`, `bg-accent text-accent-foreground`
   colors either.
 - Before committing UI changes, run `npm test` (theme + UI tests) and
   `npm run build` in this workspace.
+
+### Theme class placement (portals)
+
+The `dark` class lives ONLY on the `<html>` tag in `index.html`. Never put
+`dark` (or theme classes) on inner containers like the App or Login root divs:
+Radix Dialog/Select/Popover render through portals into `document.body`, which
+sits OUTSIDE any inner div — portaled content would resolve the light `:root`
+variables and render light-on-dark. Applying the class at the html level is
+what makes every portal inherit the theme.
+
+### color-scheme must match the theme
+
+`src/index.css` declares `color-scheme: light` in `:root` and
+`color-scheme: dark` in `.dark`. Keep these in sync with the variable blocks.
+Native browser UI — `<select>` dropdown popups, scrollbars, form-control
+chrome, autofill — is painted from `color-scheme`, NOT from the CSS variables,
+so without it native popups render light inside the dark app. Note: headless
+Chrome ignores `color-scheme` for native select popups, so a light dropdown in
+a headless screenshot is not proof of a regression — verify in headed Chrome.
