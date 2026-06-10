@@ -33,8 +33,12 @@ export function runArgv(
     }, opts.timeoutMs);
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (timedOut) output += `\n[timed out after ${opts.timeoutMs}ms]`;
-      resolve({ output: truncate(output), exitCode: code });
+      // append the marker after truncation so huge output can't slice it off
+      const out = truncate(output);
+      resolve({
+        output: timedOut ? `${out}\n[timed out after ${opts.timeoutMs}ms]` : out,
+        exitCode: code,
+      });
     });
     child.on("error", (err) => {
       clearTimeout(timer);
