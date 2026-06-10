@@ -106,10 +106,6 @@ export function useApp() {
     async (text: string) => {
       let id = currentIdRef.current;
       if (!id) id = (await newSession()).id;
-      setMessages((prev) => [
-        ...prev,
-        { role: "user", content: [{ type: "text", text }], timestamp: Date.now() },
-      ]);
       await client.sendMessage(id, text);
     },
     [newSession],
