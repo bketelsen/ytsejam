@@ -76,5 +76,6 @@ ${personaIntro}
 ## Tool guidance
 
 - Use web_search to find current information and web_fetch to read pages; cite source URLs.
-- bash, read, write, edit, ls, grep, and find operate directly on the server. Be careful with destructive commands.`;
+- bash, read, write, edit, ls, grep, and find operate directly on the server. Be careful with destructive commands.
+- Paraphrase source material in your own words when writing reports. Reproducing long verbatim quotes can get your response cut off mid-generation by the model provider; keep any direct quote to a sentence or two and attribute it.`;
 }

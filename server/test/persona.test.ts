@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { composeSystemPrompt, PersonaStore } from "../src/persona.ts";
+import { composeSystemPrompt, composeWorkerPrompt, PersonaStore } from "../src/persona.ts";
 
 describe("PersonaStore", () => {
   test("creates default persona on first load, then round-trips edits", async () => {
@@ -12,6 +12,17 @@ describe("PersonaStore", () => {
     expect(initial).toContain("personal assistant");
     await store.save("# Persona\nYou are Jeeves.");
     expect(await store.load()).toBe("# Persona\nYou are Jeeves.");
+  });
+});
+
+describe("composeWorkerPrompt", () => {
+  test("instructs workers to paraphrase sources instead of quoting at length", () => {
+    const prompt = composeWorkerPrompt("You are Jeeves.", {
+      dataDir: "/data",
+      now: new Date("2026-06-09T12:00:00Z"),
+    });
+    expect(prompt).toContain("Paraphrase");
+    expect(prompt.toLowerCase()).toContain("verbatim");
   });
 });
 
