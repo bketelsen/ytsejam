@@ -112,8 +112,13 @@ export class TaskManager {
     if (queued >= 0) this.queue.splice(queued, 1);
     // record cancellation BEFORE aborting so run() sees it and skips fail/notify
     this.record({ type: "cancelled", taskId, timestamp: new Date().toISOString() });
+    // fire-and-forget: abort() resolves only when the run settles, which a tool
+    // mid-execution can hold for minutes; the cancellation is already durable
+    // and cancel-wins makes the eventual outcome a no-op
     const harness = this.active.get(taskId);
-    if (harness) await harness.abort();
+    if (harness) {
+      void harness.abort().catch((err) => console.error(`abort failed for task ${taskId}`, err));
+    }
     return true;
   }
 

@@ -33,7 +33,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     generateTitles: env.YTSEJAM_GENERATE_TITLES !== "false",
     piAuthPath: env.YTSEJAM_PI_AUTH ?? defaultPiAuthPath(),
     subagentModel: env.YTSEJAM_SUBAGENT_MODEL ?? defaultModel,
-    taskConcurrency: Number(env.YTSEJAM_TASK_CONCURRENCY ?? 4),
-    taskTimeoutMinutes: Number(env.YTSEJAM_TASK_TIMEOUT_MIN ?? 15),
+    // clamp: NaN/0/negative would silently stall the task pump
+    taskConcurrency: Math.max(1, Number(env.YTSEJAM_TASK_CONCURRENCY ?? 4) || 4),
+    taskTimeoutMinutes: Math.max(1, Number(env.YTSEJAM_TASK_TIMEOUT_MIN ?? 15) || 15),
   };
 }
