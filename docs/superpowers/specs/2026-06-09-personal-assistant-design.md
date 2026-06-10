@@ -49,7 +49,8 @@ web/      React + Vite + shadcn/ui, built to static assets served by server/
 ```
 
 Key dependencies: `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`,
-`hono`, `better-sqlite3`, `react`, `vitest`, `biome`.
+`hono`, `react`, `vitest`, `biome`. SQLite access uses Node's built-in
+`node:sqlite` (no native build step, FTS5 included).
 
 **Deployment:** Docker container (or systemd service) on a home server,
 reached over LAN/Tailscale. Auth is a single shared bearer token from an env
