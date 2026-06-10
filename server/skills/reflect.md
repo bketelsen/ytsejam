@@ -14,7 +14,7 @@ Self-reflection and memory consolidation. Past-facing — mines interactions, fi
 
 All memory operations go through the cog tools (`cog_read`, `cog_write`, `cog_append`, `cog_patch`, `cog_outline`, `cog_search`, `cog_list`, `cog_move`) and `cog_rpc` envelopes. Paths are relative to the memory root (e.g. `cog-meta/patterns.md`, `projects/foo/observations.md`). Always address files by their domain **path**, never by domain id.
 
-Session transcripts are NOT in memory — they live in the ytsejam data dir under `sessions/chat/*.jsonl` and are read with the local `ls`/`grep`/`read` tools.
+Session transcripts are NOT in memory — they live in the ytsejam data dir under `sessions/--chat--/*.jsonl` (yes, double dashes — the harness encodes the session cwd into the directory name) and are read with the local `ls`/`grep`/`read`/`bash` tools.
 
 **Write discipline:**
 - `cog_append` for observations and self-observations (additive entries)
@@ -55,10 +55,21 @@ Don't produce low-quality output from insufficient data. It's better to say "not
 
 ### 1. Review Recent Interactions
 
-Mine recent ytsejam session transcripts. These are JSONL files under `sessions/chat/*.jsonl` in the data dir — use the local `ls`/`grep`/`read` tools, NOT cog tools.
+Mine recent ytsejam session transcripts. These are JSONL files under `sessions/--chat--/*.jsonl` in the data dir (directory really is named `--chat--`; the sibling `--subagent--/` holds background-worker transcripts — skip it by default, worker reports are injected back into the parent chat as `[Task ...]` messages) — use the local `ls`/`grep`/`read`/`bash` tools, NOT cog tools.
 
-- Use the cursor from `cog-meta/reflect-cursor.md` to bound the work: only process sessions newer than the cursor.
-- `ls` the `sessions/chat/` directory, sort by date, read the new transcripts.
+- Use the cursor from `cog-meta/reflect-cursor.md` to bound the work: only process sessions newer than the cursor. Filenames sort chronologically (`<ISO-timestamp>_<session-id>.jsonl`).
+- `ls` the `sessions/--chat--/` directory, sort by date, read the new transcripts.
+
+**Transcript record shape** — each line is a typed record, NOT a flat message. Filter on the `.type` discriminator first (`session`, `model_change`, `message`, ...) or you'll choke on non-message rows. Messages nest under `.message`, and `content` is an array of typed parts. Working extraction filters:
+
+```bash
+# user messages
+jq -r 'select(.type=="message" and .message.role=="user") | .message.content[]? | select(.type=="text") | .text' <file>
+# assistant text
+jq -r 'select(.type=="message" and .message.role=="assistant") | .message.content[]? | select(.type=="text") | .text' <file>
+```
+
+(`.role` at the top level returns nothing — it lives at `.message.role`.)
 
 Look for:
 - **Unresolved threads** — questions asked but never answered
