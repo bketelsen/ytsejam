@@ -34,7 +34,12 @@ const persona = new PersonaStore(path.join(config.dataDir, "persona"));
 const cogClient = new CogClient({ socketPath: config.cogSocket });
 const cogBrief = new CogBriefProvider(cogClient, config.cogRole);
 const skills = new SkillsStore(path.join(config.dataDir, "skills"));
-await skills.seed(path.join(import.meta.dirname, "../skills"));
+try {
+  await skills.seed(path.join(import.meta.dirname, "../skills"));
+} catch (err) {
+  // skills are optional, like memory — never block boot on seeding
+  console.warn(`skill seeding failed: ${(err as Error).message}`);
+}
 // taskManager and scheduler are created after manager (they inject into it);
 // the tools late-bind through closures, which only run when a session opens
 let taskManager!: TaskManager;

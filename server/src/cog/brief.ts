@@ -72,11 +72,18 @@ interface BriefProviderOptions {
   ttlMs?: number;
   /** per-fetch cap so a hung daemon can't stall session start; default 1500ms */
   timeoutMs?: number;
+  /** how long a failure-derived section is served before retrying; default 5s */
+  failureTtlMs?: number;
 }
 
+// A failed fetch is cached only briefly — a daemon that was momentarily busy
+// shouldn't leave sessions memory-less for the full success TTL.
+const FAILURE_TTL_MS = 5_000;
+
 export class CogBriefProvider {
-  private cached?: { section: string; at: number };
+  private cached?: { section: string; at: number; ttl: number };
   private lastGood?: SessionBrief;
+  private inflight?: Promise<string>;
 
   private readonly client: CogClient;
   private readonly role: string;
@@ -89,32 +96,43 @@ export class CogBriefProvider {
   }
 
   /** Render the "## Memory (cog)" prompt section. Never throws. */
-  async promptSection(): Promise<string> {
-    const ttl = this.opts.ttlMs ?? 60_000;
-    if (this.cached && Date.now() - this.cached.at < ttl) return this.cached.section;
+  promptSection(): Promise<string> {
+    if (this.cached && Date.now() - this.cached.at < this.cached.ttl) {
+      return Promise.resolve(this.cached.section);
+    }
+    // concurrent cold-cache callers share one fetch
+    this.inflight ??= this.refresh().finally(() => {
+      this.inflight = undefined;
+    });
+    return this.inflight;
+  }
 
+  private async refresh(): Promise<string> {
+    const ttl = this.opts.ttlMs ?? 60_000;
     let section: string;
     try {
       const brief = await this.fetchBrief();
       this.lastGood = brief;
       section = renderSection(brief);
+      this.cached = { section, at: Date.now(), ttl };
     } catch {
       section = this.lastGood
         ? renderSection(this.lastGood, "(memory snapshot may be stale — daemon unreachable)")
         : renderUnavailable(this.client.socketPath);
+      this.cached = { section, at: Date.now(), ttl: Math.min(this.opts.failureTtlMs ?? FAILURE_TTL_MS, ttl) };
     }
-    this.cached = { section, at: Date.now() };
     return section;
   }
 
   private fetchBrief(): Promise<SessionBrief> {
     const timeoutMs = this.opts.timeoutMs ?? 1_500;
+    let timer: NodeJS.Timeout;
     return Promise.race([
       this.client.sessionBrief(this.role),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("session_brief fetch cap exceeded")), timeoutMs),
-      ),
-    ]);
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("session_brief fetch cap exceeded")), timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
   }
 }
 

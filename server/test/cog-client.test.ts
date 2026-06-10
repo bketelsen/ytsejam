@@ -150,3 +150,29 @@ describe("CogClient", () => {
     expect(await new CogClient({ socketPath: "/nonexistent/cog.sock" }).health()).toBe(false);
   });
 });
+
+describe("audit regressions", () => {
+  test("multibyte UTF-8 split across chunks decodes intact", async () => {
+    const socketPath = join(mkdtempSync(join(tmpdir(), "cog-")), "fake.sock");
+    const server = net.createServer((conn) => {
+      conn.on("data", () => {
+        const payload = Buffer.from(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: "héllo — émoji 🎉" } }) + "\n",
+          "utf8",
+        );
+        // split mid-sequence: one byte into the é (0xC3 0xA9), two bytes into the 🎉
+        const eAcute = payload.indexOf(0xc3) + 1;
+        const emoji = payload.indexOf(0xf0) + 2;
+        conn.write(payload.subarray(0, eAcute));
+        setTimeout(() => conn.write(payload.subarray(eAcute, emoji)), 10);
+        setTimeout(() => conn.write(payload.subarray(emoji)), 20);
+      });
+    });
+    server.listen(socketPath);
+    servers.push(server);
+    const client = new CogClient({ socketPath });
+    const r = await client.call<{ content: string }>("read", { role: "agent", path: "x.md" });
+    expect(r.content).toBe("héllo — émoji 🎉");
+    expect(r.content).not.toContain("�");
+  });
+});

@@ -44,8 +44,9 @@ function jsonResult(value: unknown) {
 }
 
 export function createCogTools(client: CogClient, role: string): AgentTool<any>[] {
+  // role is spread LAST so a model-supplied "role" param can never override it
   const call = (method: string, params: Record<string, unknown>) =>
-    client.call<Record<string, unknown>>(method, { role, ...params });
+    client.call<Record<string, unknown>>(method, { ...params, role });
 
   const readParams = Type.Object({
     path: Type.String({ description: "memory-root-relative path, e.g. personal/observations.md" }),
@@ -94,7 +95,7 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       parameters: readParams,
       execute: async (_id, p) => {
         const r = await call("read", p as Record<string, unknown>);
-        return textResult(String(r.content ?? ""));
+        return textResult(String(r?.content ?? ""));
       },
     },
     {

@@ -92,3 +92,35 @@ describe("CogBriefProvider", () => {
     expect(section.toLowerCase()).toContain("unreachable");
   });
 });
+
+describe("audit regressions", () => {
+  test("a transient failure does not poison the cache for the full TTL", async () => {
+    let fail = true;
+    const { client } = fakeClient(async () => {
+      if (fail) throw new Error("momentarily busy");
+      return BRIEF;
+    });
+    const provider = new CogBriefProvider(client, "agent", { ttlMs: 60_000, failureTtlMs: 10 });
+    const first = await provider.promptSection();
+    expect(first.toLowerCase()).toContain("unreachable");
+    fail = false;
+    await new Promise((r) => setTimeout(r, 30));
+    const second = await provider.promptSection();
+    expect(second).toContain("HOTMARK"); // recovered well before the 60s success TTL
+  });
+
+  test("concurrent cold-cache calls share one fetch", async () => {
+    const { client, calls } = fakeClient(
+      () => new Promise((r) => setTimeout(() => r(BRIEF), 20)),
+    );
+    const provider = new CogBriefProvider(client, "agent");
+    const [a, b, c] = await Promise.all([
+      provider.promptSection(),
+      provider.promptSection(),
+      provider.promptSection(),
+    ]);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+    expect(calls()).toBe(1);
+  });
+});

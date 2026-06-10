@@ -91,6 +91,9 @@ export class CogClient {
   private exchange(request: string, timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection({ path: this.opts.socketPath });
+      // StringDecoder semantics: multibyte UTF-8 sequences split across
+      // chunks decode intact instead of becoming U+FFFD.
+      socket.setEncoding("utf8");
       let buf = "";
       let settled = false;
       const finish = (fn: () => void) => {
@@ -105,8 +108,8 @@ export class CogClient {
         timeoutMs,
       );
       socket.on("connect", () => socket.write(request));
-      socket.on("data", (chunk) => {
-        buf += chunk.toString("utf8");
+      socket.on("data", (chunk: string) => {
+        buf += chunk;
         const nl = buf.indexOf("\n");
         if (nl >= 0) finish(() => resolve(buf.slice(0, nl)));
       });
