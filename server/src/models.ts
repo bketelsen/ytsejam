@@ -22,10 +22,12 @@ export function resolveModel(ref: string): Model<any> {
   return model;
 }
 
-export function listAvailableModels(opts?: { env?: Record<string, string | undefined> }): ModelInfo[] {
-  // getEnvApiKey reads process.env; allow injecting an empty env for tests
-  const hasKey = (provider: string) =>
-    opts?.env ? Object.keys(opts.env).length > 0 : getEnvApiKey(provider) !== undefined;
+export function listAvailableModels(opts?: {
+  /** key lookup per provider; defaults to pi-ai's process.env-based getEnvApiKey */
+  getKey?: (provider: string) => string | undefined;
+}): ModelInfo[] {
+  const getKey = opts?.getKey ?? getEnvApiKey;
+  const hasKey = (provider: string) => getKey(provider) !== undefined;
   return (getProviders() as string[])
     .filter(hasKey)
     .flatMap((p) =>

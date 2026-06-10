@@ -15,8 +15,16 @@ describe("resolveModel", () => {
 });
 
 describe("listAvailableModels", () => {
-  test("only lists providers that have API keys in env", () => {
-    const models = listAvailableModels({ env: {} });
+  test("only lists providers that have API keys", () => {
+    const models = listAvailableModels({ getKey: () => undefined });
     expect(models).toEqual([]);
+  });
+
+  test("a key enables only that provider's models", () => {
+    const models = listAvailableModels({
+      getKey: (p) => (p === "anthropic" ? "k" : undefined),
+    });
+    expect(models.length).toBeGreaterThan(0);
+    expect(new Set(models.map((m) => m.provider))).toEqual(new Set(["anthropic"]));
   });
 });
