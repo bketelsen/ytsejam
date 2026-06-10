@@ -18,9 +18,9 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-neutral-950">
-      <form onSubmit={submit} className="w-80 space-y-3 rounded-lg border border-neutral-800 p-6">
-        <h1 className="text-lg font-semibold text-neutral-100">ytsejam</h1>
+    <div className="dark flex h-screen items-center justify-center bg-background text-foreground">
+      <form onSubmit={submit} className="w-80 space-y-3 rounded-lg border border-border bg-card p-6 text-card-foreground shadow-xl">
+        <h1 className="text-lg font-semibold">ytsejam</h1>
         <Input
           type="password"
           placeholder="Access token"
@@ -28,7 +28,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           onChange={(e) => setValue(e.target.value)}
           autoFocus
         />
-        {error && <p className="text-sm text-red-400">Invalid token</p>}
+        {error && <p className="text-sm text-destructive">Invalid token</p>}
         <Button type="submit" className="w-full">
           Sign in
         </Button>

@@ -23,23 +23,23 @@ export function ToolCallCard({
         .join("\n")
     : null;
   return (
-    <div className="my-1 rounded-md border border-neutral-700 bg-neutral-900 text-sm">
+    <div className="my-1 rounded-md border border-border bg-background text-sm text-foreground">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 p-2 text-left text-neutral-300"
+        className="flex w-full items-center gap-2 p-2 text-left text-foreground"
       >
         <span>{open ? "▾" : "▸"}</span>
         <span className="font-mono">{call.name}</span>
-        {!result && <span className="animate-pulse text-xs text-yellow-400">running…</span>}
-        {result?.isError && <span className="text-xs text-red-400">error</span>}
+        {!result && <span className="animate-pulse text-xs text-warning">running…</span>}
+        {result?.isError && <span className="text-xs text-destructive">error</span>}
       </button>
       {open && (
-        <div className="space-y-2 border-t border-neutral-800 p-2 font-mono text-xs">
-          <pre className="overflow-x-auto whitespace-pre-wrap text-neutral-400">
+        <div className="space-y-2 border-t border-border p-2 font-mono text-xs">
+          <pre className="overflow-x-auto whitespace-pre-wrap text-muted-foreground">
             {JSON.stringify(call.arguments, null, 2)}
           </pre>
           {resultText && (
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-neutral-300">{resultText}</pre>
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-foreground">{resultText}</pre>
           )}
         </div>
       )}
@@ -60,11 +60,11 @@ export function Message({
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         className={`max-w-[80%] rounded-lg px-3 py-2 ${
-          isUser ? "bg-blue-900/60" : "bg-neutral-900"
+          isUser ? "bg-primary text-primary-foreground" : "border border-border bg-card text-card-foreground"
         }`}
       >
         {message.errorMessage && (
-          <p className="mb-1 rounded bg-red-950 p-2 text-sm text-red-300">
+          <p className="mb-1 rounded bg-destructive/15 p-2 text-sm text-destructive">
             {message.stopReason === "aborted" ? "Aborted" : `Error: ${message.errorMessage}`}
           </p>
         )}
@@ -78,7 +78,7 @@ export function Message({
           }
           if (b.type === "thinking" && b.thinking) {
             return (
-              <p key={i} className="border-l-2 border-neutral-700 pl-2 text-sm italic text-neutral-500">
+              <p key={i} className="border-l-2 border-border pl-2 text-sm italic text-muted-foreground">
                 {b.thinking}
               </p>
             );

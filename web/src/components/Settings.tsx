@@ -50,14 +50,14 @@ export function Settings({
             <Textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={12} className="font-mono text-sm" />
             <div className="mt-2 flex items-center gap-2">
               <Button onClick={() => void save()}>Save persona</Button>
-              {saved && <span className="text-sm text-green-400">Saved — applies from the next turn</span>}
+              {saved && <span className="text-sm text-success">Saved — applies from the next turn</span>}
             </div>
           </div>
           <div>
             <h3 className="mb-1 text-sm font-medium">Model for current session</h3>
             {currentSessionId ? (
               <select
-                className="w-full rounded-md border border-neutral-700 bg-neutral-900 p-2 text-sm"
+                className="w-full rounded-md border border-input bg-background p-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 defaultValue=""
                 onChange={(e) => {
                   if (e.target.value) void switchModel(e.target.value);
@@ -73,7 +73,7 @@ export function Settings({
                 ))}
               </select>
             ) : (
-              <p className="text-sm text-neutral-500">Open a session to switch its model.</p>
+              <p className="text-sm text-muted-foreground">Open a session to switch its model.</p>
             )}
           </div>
         </div>

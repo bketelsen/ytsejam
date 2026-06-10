@@ -41,7 +41,7 @@ export function Chat({
     <main className="flex flex-1 flex-col">
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 && !streaming && (
-          <p className="pt-20 text-center text-neutral-600">Start a conversation</p>
+          <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
         )}
         {messages.map((m, i) => (
           <Message key={i} message={m} toolResults={toolResults} />
@@ -49,7 +49,7 @@ export function Chat({
         {streaming && <Message message={streaming} toolResults={toolResults} />}
         <div ref={bottomRef} />
       </div>
-      <div className="border-t border-neutral-800 p-3">
+      <div className="border-t border-border bg-background p-3">
         <div className="flex gap-2">
           <Textarea
             value={draft}

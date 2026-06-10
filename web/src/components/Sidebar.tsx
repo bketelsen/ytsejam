@@ -33,7 +33,7 @@ export function Sidebar({
   }
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r border-neutral-800">
+    <aside className="flex w-72 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-2 p-3">
         <Button onClick={onNew} className="flex-1">
           New chat
@@ -48,26 +48,26 @@ export function Sidebar({
             key={s.id}
             onClick={() => onSelect(s.id)}
             className={`group cursor-pointer rounded-md p-2 ${
-              s.id === currentId ? "bg-neutral-800" : "hover:bg-neutral-900"
+              s.id === currentId ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent"
             }`}
           >
             <div className="flex items-center gap-2">
-              {s.running && <span className="size-2 shrink-0 animate-pulse rounded-full bg-green-400" />}
-              {s.unread && !s.running && <span className="size-2 shrink-0 rounded-full bg-blue-400" />}
+              {s.running && <span className="size-2 shrink-0 animate-pulse rounded-full bg-success" />}
+              {s.unread && !s.running && <span className="size-2 shrink-0 rounded-full bg-primary" />}
               <span className="flex-1 truncate text-sm">{s.title ?? "New session"}</span>
-              <span className="text-xs text-neutral-500">{timeAgo(s.updatedAt)}</span>
+              <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>
               <button
                 onClick={(e) => remove(s.id, e)}
-                className="hidden text-neutral-500 hover:text-red-400 group-hover:block"
+                className="hidden text-muted-foreground hover:text-destructive group-hover:block"
                 title="Delete"
               >
                 ×
               </button>
             </div>
-            <p className="truncate text-xs text-neutral-500">{s.preview}</p>
+            <p className="truncate text-xs text-muted-foreground">{s.preview}</p>
           </div>
         ))}
-        {sessions.length === 0 && <p className="p-2 text-sm text-neutral-600">No sessions yet</p>}
+        {sessions.length === 0 && <p className="p-2 text-sm text-muted-foreground">No sessions yet</p>}
       </nav>
     </aside>
   );
