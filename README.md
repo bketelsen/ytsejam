@@ -3,6 +3,7 @@
 Web-based personal AI assistant built on the [pi agent harness](https://github.com/earendil-works/pi).
 JSONL files are the source of truth; sqlite is a derived index. Spec and plans in `docs/superpowers/`.
 The assistant can delegate long-running research or multi-step work to background subagents via the `delegate` tool; subagents run concurrently, and the assistant is notified and takes a turn when each completes or fails.
+It can also schedule reminders and recurring jobs that wake it up (cron times are server-local).
 
 ## Run
 
