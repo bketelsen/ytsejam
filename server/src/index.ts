@@ -51,7 +51,7 @@ taskManager = new TaskManager({
   workerTools: createTools(config.dataDir), // web + system tools; no delegation (no recursion)
   concurrency: config.taskConcurrency,
   timeoutMs: config.taskTimeoutMinutes * 60_000,
-  notifyParent: (sessionId, text) => manager.injectTaskResult(sessionId, text),
+  notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),
 });
 
 // sqlite is derived: rebuild from JSONL on boot so offline JSONL edits are reflected

@@ -211,11 +211,11 @@ export class AgentManager {
   }
 
   /**
-   * Inject a background-task result. The assistant always takes a turn on it:
-   * queued as a follow-up when a run is active (processed when the run would
-   * otherwise stop), or started as a fresh turn when idle.
+   * Inject an out-of-band message (task result, scheduled prompt). The
+   * assistant always takes a turn on it: queued as a follow-up when a run is
+   * active, or started as a fresh turn when idle.
    */
-  async injectTaskResult(id: string, text: string): Promise<void> {
+  async injectMessage(id: string, text: string): Promise<void> {
     const opened = await this.getOrOpen(id);
     if (opened.running) {
       await opened.harness.followUp(text);

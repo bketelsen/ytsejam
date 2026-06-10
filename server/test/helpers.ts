@@ -48,7 +48,7 @@ export function makeManager(
     workerTools: [],
     concurrency: 2,
     timeoutMs: 10_000,
-    notifyParent: (sessionId, text) => manager.injectTaskResult(sessionId, text),
+    notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),
   });
   return { manager, taskManager, indexer, bus, dataDir };
 }

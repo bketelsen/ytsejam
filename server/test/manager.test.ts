@@ -175,12 +175,12 @@ describe("AgentManager", () => {
   });
 });
 
-describe("injectTaskResult", () => {
+describe("injectMessage", () => {
   test("starts a turn when the session is idle", async () => {
     const { manager } = makeManager(faux);
     faux.setResponses([fauxAssistantMessage("noted the result")]);
     const row = await manager.createSession();
-    await manager.injectTaskResult(row.id, '[Task "x" completed] all done');
+    await manager.injectMessage(row.id, '[Task "x" completed] all done');
     await manager.waitForIdle(row.id);
     const messages = await manager.getMessages(row.id);
     const userTexts = messages.filter((m: any) => m.role === "user").map((m: any) => m.content[0].text);
@@ -199,7 +199,7 @@ describe("injectTaskResult", () => {
     ]);
     const row = await manager.createSession();
     await manager.sendMessage(row.id, "hello");
-    await manager.injectTaskResult(row.id, '[Task "y" completed] result'); // mid-run
+    await manager.injectMessage(row.id, '[Task "y" completed] result'); // mid-run
     await manager.waitForIdle(row.id);
     const messages = await manager.getMessages(row.id);
     const texts = messages.map((m: any) =>

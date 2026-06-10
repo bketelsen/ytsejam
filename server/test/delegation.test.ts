@@ -76,7 +76,7 @@ test("full delegation loop: chat turn → subagent → parent notified and repli
     workerTools: [],
     concurrency: 2,
     timeoutMs: 10_000,
-    notifyParent: (sessionId, text) => manager.injectTaskResult(sessionId, text),
+    notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),
   });
 
   // enough routed responses for: parent toolCall turn, parent post-tool turn,
