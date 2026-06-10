@@ -57,7 +57,7 @@ export function createApp(deps: AppDeps) {
               event.type !== "agent" ||
               event.sessionId === subscribed ||
               LIGHTWEIGHT.has(event.event.type);
-            if (send) ws.send(JSON.stringify(event));
+            if (send && ws.readyState === 1 /* OPEN */) ws.send(JSON.stringify(event));
           });
         },
         onMessage: (evt) => {
