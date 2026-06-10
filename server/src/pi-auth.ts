@@ -48,6 +48,9 @@ export class PiAuthStore {
    * Returns undefined on any failure — callers treat that as "no key".
    */
   async getApiKey(provider: string): Promise<string | undefined> {
+    // the read-modify-write below is not concurrency-safe: simultaneous
+    // refreshes (in-process or vs the pi CLI) are last-writer-wins; the
+    // loser self-heals by refreshing again on its next request
     const file = this.readFile();
     const entry = file[provider];
     if (entry?.type !== "oauth") return undefined;
