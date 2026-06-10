@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Login } from "./components/Login";
+import { Sidebar } from "./components/Sidebar";
 import { getToken } from "./lib/api";
 import { useApp } from "./useApp";
 
@@ -11,13 +12,17 @@ export default function App() {
 
 function Main() {
   const app = useApp();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
-    <div className="flex h-screen bg-neutral-950 text-neutral-100">
-      <aside className="w-72 shrink-0 border-r border-neutral-800 p-3">
-        <p className="text-sm text-neutral-400">
-          {app.connected ? "connected" : "reconnecting…"} · {app.sessions.length} sessions
-        </p>
-      </aside>
+    <div className="flex h-screen bg-neutral-950 text-neutral-100" data-settings-open={settingsOpen}>
+      <Sidebar
+        sessions={app.sessions}
+        currentId={app.currentId}
+        onSelect={(id) => void app.selectSession(id)}
+        onNew={() => void app.newSession()}
+        onDeleted={() => void app.refreshSessions()}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
       <main className="flex flex-1 items-center justify-center text-neutral-500">
         chat UI coming in next task
       </main>
