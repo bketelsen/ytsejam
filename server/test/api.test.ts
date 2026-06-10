@@ -161,3 +161,26 @@ describe("tasks api", () => {
     expect((await app.request("/api/tasks/nope/cancel", { method: "POST", headers: auth })).status).toBe(404);
   });
 });
+
+describe("schedules api", () => {
+  test("list and cancel", async () => {
+    const row = deps.scheduler.create({
+      label: "api sched",
+      prompt: "p",
+      spec: { type: "once", at: new Date(Date.now() + 3_600_000).toISOString() },
+      targetSessionId: null,
+    });
+
+    const list = (await (await app.request("/api/schedules", { headers: auth })).json()) as any;
+    expect(list.schedules).toHaveLength(1);
+    expect(list.schedules[0]).toMatchObject({ id: row.id, label: "api sched", enabled: true });
+
+    const del = await app.request(`/api/schedules/${row.id}`, { method: "DELETE", headers: auth });
+    expect(del.status).toBe(200);
+    const after = (await (await app.request("/api/schedules", { headers: auth })).json()) as any;
+    expect(after.schedules[0]).toMatchObject({ cancelled: true });
+
+    expect((await app.request(`/api/schedules/${row.id}`, { method: "DELETE", headers: auth })).status).toBe(409);
+    expect((await app.request("/api/schedules/nope", { method: "DELETE", headers: auth })).status).toBe(409);
+  });
+});

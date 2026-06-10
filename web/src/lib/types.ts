@@ -51,8 +51,25 @@ export interface ModelInfo {
   ref: string;
 }
 
+export type ScheduleSpec = { type: "once"; at: string } | { type: "cron"; expr: string };
+
+export interface ScheduleRow {
+  id: string;
+  label: string;
+  prompt: string;
+  spec: ScheduleSpec;
+  targetSessionId: string | null;
+  enabled: boolean;
+  cancelled: boolean;
+  createdAt: string;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+  firedCount: number;
+}
+
 export type ServerEvent =
   | { type: "agent"; sessionId: string; event: { type: string; message?: ChatMessage; [k: string]: unknown } }
   | { type: "session_meta"; session: SessionRow }
   | { type: "session_deleted"; sessionId: string }
-  | { type: "task"; task: TaskRow };
+  | { type: "task"; task: TaskRow }
+  | { type: "schedule"; schedule: ScheduleRow };

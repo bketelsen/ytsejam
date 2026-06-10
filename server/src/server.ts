@@ -152,6 +152,14 @@ export function createApp(deps: AppDeps) {
     return c.json({ task, messages });
   });
 
+  app.get("/api/schedules", (c) => c.json({ schedules: indexer.listSchedules() }));
+
+  app.delete("/api/schedules/:id", (c) => {
+    const ok = deps.scheduler.cancel(c.req.param("id"));
+    if (!ok) return c.json({ error: "not cancellable" }, 409);
+    return c.json({ ok: true });
+  });
+
   app.get("/api/persona", async (c) => c.json({ content: await persona.load() }));
 
   app.put("/api/persona", async (c) => {

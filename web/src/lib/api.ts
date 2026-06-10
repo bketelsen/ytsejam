@@ -1,4 +1,4 @@
-import type { ChatMessage, ModelInfo, SessionRow, TaskRow } from "./types";
+import type { ChatMessage, ModelInfo, ScheduleRow, SessionRow, TaskRow } from "./types";
 
 const TOKEN_KEY = "ytsejam-token";
 
@@ -56,4 +56,6 @@ export const client = {
   cancelTask: (id: string) => api<{ ok: true }>(`/api/tasks/${id}/cancel`, { method: "POST" }),
   getTaskTranscript: (id: string) =>
     api<{ task: TaskRow; messages: ChatMessage[] }>(`/api/tasks/${id}/transcript`),
+  listSchedules: () => api<{ schedules: ScheduleRow[] }>("/api/schedules"),
+  cancelSchedule: (id: string) => api<{ ok: true }>(`/api/schedules/${id}`, { method: "DELETE" }),
 };

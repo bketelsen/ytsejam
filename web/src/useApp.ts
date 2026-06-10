@@ -44,6 +44,7 @@ export function useApp() {
       if (event.sessionId === currentIdRef.current) setCurrentId(null);
       return;
     }
+    if (event.type === "schedule") return; // Settings refetches on open
     // agent events
     if (event.sessionId !== currentIdRef.current) {
       if (event.event.type === "agent_start" || event.event.type === "agent_end") {

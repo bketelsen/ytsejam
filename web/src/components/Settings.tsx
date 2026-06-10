@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/api";
-import type { ModelInfo } from "@/lib/types";
+import type { ModelInfo, ScheduleRow } from "@/lib/types";
 
 export function Settings({
   open,
@@ -18,6 +18,7 @@ export function Settings({
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [defaultModel, setDefaultModel] = useState("");
   const [saved, setSaved] = useState(false);
+  const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -26,6 +27,7 @@ export function Settings({
       setModels(r.models);
       setDefaultModel(r.defaultModel);
     });
+    void client.listSchedules().then((r) => setSchedules(r.schedules));
     setSaved(false);
   }, [open]);
 
@@ -36,6 +38,12 @@ export function Settings({
 
   async function switchModel(ref: string) {
     if (currentSessionId) await client.patchSession(currentSessionId, { model: ref });
+  }
+
+  async function cancelSchedule(id: string) {
+    await client.cancelSchedule(id);
+    const r = await client.listSchedules();
+    setSchedules(r.schedules);
   }
 
   return (
@@ -74,6 +82,38 @@ export function Settings({
               </select>
             ) : (
               <p className="text-sm text-muted-foreground">Open a session to switch its model.</p>
+            )}
+          </div>
+          <div>
+            <h3 className="mb-1 text-sm font-medium">Schedules</h3>
+            {schedules.length === 0 ? (
+              <p className="text-sm text-neutral-500">No schedules. Ask the assistant to remind you about something.</p>
+            ) : (
+              <ul className="space-y-1">
+                {schedules.map((s) => (
+                  <li key={s.id} className="flex items-center gap-2 rounded-md border border-neutral-800 p-2 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2">
+                        <span className="truncate font-medium">{s.label}</span>
+                        <span className="text-xs text-neutral-500">
+                          {s.spec.type === "once" ? "once" : s.spec.expr}
+                          {s.cancelled
+                            ? " · cancelled"
+                            : s.enabled
+                              ? ` · next ${s.nextFireAt ? new Date(s.nextFireAt).toLocaleString() : "—"}`
+                              : " · completed"}
+                        </span>
+                      </div>
+                      <p className="truncate text-xs text-neutral-500">{s.prompt}</p>
+                    </div>
+                    {s.enabled && (
+                      <Button variant="outline" size="sm" onClick={() => void cancelSchedule(s.id)}>
+                        Cancel
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </div>
