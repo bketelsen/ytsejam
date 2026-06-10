@@ -124,3 +124,20 @@ describe("createCogTools", () => {
     }
   });
 });
+
+describe("audit regressions", () => {
+  test("model-supplied role cannot override the injected role", async () => {
+    const { client, calls } = fakeClient({ content: "" });
+    const tools = createCogTools(client, "agent");
+    await tool(tools, "cog_read").execute("t1", { path: "a.md", role: "owner" } as any);
+    await tool(tools, "cog_rpc").execute("t2", { method: "domains.list", params: { role: "owner" } });
+    expect(calls[0].params.role).toBe("agent");
+    expect(calls[1].params.role).toBe("agent");
+  });
+
+  test("cog_read tolerates a null result", async () => {
+    const { client } = fakeClient(null);
+    const r = await tool(createCogTools(client, "agent"), "cog_read").execute("t1", { path: "a.md" });
+    expect(text(r)).toBe("");
+  });
+});

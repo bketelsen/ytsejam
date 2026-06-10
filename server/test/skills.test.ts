@@ -105,3 +105,30 @@ describe("skill tool", () => {
     expect((r.content[0] as any).text).toContain("Do the reflect pipeline");
   });
 });
+
+describe("audit regressions", () => {
+  test("pipe characters in description/triggers don't break the routing table", async () => {
+    const { skillsDir } = dirs();
+    mkdirSync(skillsDir, { recursive: true });
+    writeFileSync(
+      join(skillsDir, "piped.md"),
+      `---\nname: piped\ndescription: does a | b routing\ntriggers: [x|y]\n---\n\nbody\n`,
+    );
+    const section = await new SkillsStore(skillsDir).promptSection();
+    const row = section.split("\n").find((l) => l.includes("piped"))!;
+    // unescaped pipes delimit exactly 3 cells: ["", name, purpose, when, ""]
+    expect(row.split(/(?<!\\)\|/).length).toBe(5);
+    expect(row).toContain("\\|");
+  });
+
+  test("quoted flow-list triggers lose their quotes", async () => {
+    const { skillsDir } = dirs();
+    mkdirSync(skillsDir, { recursive: true });
+    writeFileSync(
+      join(skillsDir, "quoted.md"),
+      `---\nname: quoted\ndescription: q\ntriggers: ["remember when", 'timeline']\n---\n\nbody\n`,
+    );
+    const [s] = await new SkillsStore(skillsDir).list();
+    expect(s.triggers).toEqual(["remember when", "timeline"]);
+  });
+});

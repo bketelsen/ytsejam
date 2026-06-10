@@ -47,6 +47,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     taskTimeoutMinutes: Math.max(1, Number(env.YTSEJAM_TASK_TIMEOUT_MIN ?? 15) || 15),
     // test instance by default; point at the prod socket once the integration is proven
     cogSocket: expandHome(env.YTSEJAM_COG_SOCKET ?? "~/.local/share/cogmemory-test/cog-memory-test.sock"),
-    cogRole: env.YTSEJAM_COG_ROLE ?? "agent",
+    cogRole: env.YTSEJAM_COG_ROLE || "agent",
   };
 }

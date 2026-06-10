@@ -75,11 +75,12 @@ export class SkillsStore {
   async promptSection(): Promise<string> {
     const skills = await this.list();
     if (skills.length === 0) return "";
+    const cell = (v: string) => v.replaceAll("|", "\\|");
     const rows = skills.map((s) => {
       const when = s.triggers.length
-        ? `user types /${s.name}, or conversation touches: ${s.triggers.join(", ")}`
+        ? `user types /${s.name}, or conversation touches: ${s.triggers.map(cell).join(", ")}`
         : `user types /${s.name} or asks for it`;
-      return `| ${s.name} | ${s.description} | ${when} |`;
+      return `| ${cell(s.name)} | ${cell(s.description)} | ${when} |`;
     });
     return `## Skills
 
@@ -124,7 +125,7 @@ function parseSummary(stem: string, content: string): SkillSummary {
   const triggers = (fields.triggers ?? "")
     .replace(/^\[|\]$/g, "")
     .split(",")
-    .map((t) => t.trim())
+    .map((t) => t.trim().replace(/^["']|["']$/g, ""))
     .filter(Boolean);
 
   return {

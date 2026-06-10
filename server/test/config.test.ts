@@ -55,3 +55,10 @@ describe("loadConfig", () => {
     expect(over.taskTimeoutMinutes).toBe(5);
   });
 });
+
+describe("audit regressions", () => {
+  test("empty YTSEJAM_COG_ROLE falls back to agent", () => {
+    const cfg = loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_COG_ROLE: "" });
+    expect(cfg.cogRole).toBe("agent");
+  });
+});

@@ -24,11 +24,12 @@ Evolve audits rules — there need to be rules to audit.
 
 ## Orientation (run FIRST, before audit work)
 
-Three RPCs cover the architectural envelope:
+Four RPCs cover the architectural envelope:
 
-1. `cog_rpc("session_brief")` — the session-start envelope. The field that drives evolve's downstream decisions is `recent_observations` (what did housekeeping/reflect actually do?). Hot-memory body and the **domain list with paths** come back in the same envelope — keep the domain paths, you need them for INDEX freshness below.
+1. `cog_rpc("session_brief")` — the session-start envelope: hot-memory body, patterns, and the **domain list with paths** (keep the paths, you need them for INDEX freshness below). What housekeeping/reflect actually did comes from a SEPARATE call: `cog_rpc("recent_observations", {"since": "30d"})` — it is NOT a field of session_brief.
 2. `cog_rpc("housekeeping_scan")` — the structural-health envelope. Fields: `since`, `changed_recently[]`, `thresholds{observations_over_cap[], completed_actions_over_cap, improvements_implemented_over_cap, hot_memory_over_cap, patterns_over_cap[]}`, `dormant_domains[]`, `stale_action_items[]`. This is the scorecard substrate and the bloat signal in one call.
 3. `cog_rpc("entity_audit")` — returns `total_entries` and `total_lines`; the entity compression ratio is `total_lines / total_entries`, a divide on the response, not a multi-file scan.
+4. `cog_rpc("recent_observations", {"since": "30d"})` — what housekeeping/reflect/you actually did recently; drives the process-effectiveness audit (§2) and rule-drift detection.
 
 Plus direct reads for evolve's own continuity (rule references, not memory content):
 
@@ -55,7 +56,7 @@ Evaluate structural design:
 
 ### 2. Process Effectiveness Audit
 
-Review output of recent housekeeping and reflect runs (the `recent_observations` tail from session_brief, diffed against the housekeeping_scan thresholds):
+Review output of recent housekeeping and reflect runs (the `recent_observations` envelope from orientation, diffed against the housekeeping_scan thresholds):
 
 **Housekeeping check:**
 - Did pruning priority order work?
@@ -86,7 +87,7 @@ This is the critical difference between theatrical evolve (reporting problems) a
 | `patterns.md` line ratio > 1.0 | Exceeds 70 lines | → `cog-meta/action-items.md`: "Merge or replace patterns to bring below 70 lines" |
 | Satellite pattern file > 30 lines | Exceeds soft cap | → domain `action-items.md`: "Compress {domain} patterns" |
 | Entity compression > 3.0 | Entries too verbose | → domain `action-items.md`: "Compress entities or promote to threads" |
-| Hot-memory > 50 lines | Exceeds cap | → `action-items.md`: "Prune hot-memory (run housekeeping)" |
+| Hot-memory > 50 lines | Exceeds cap | → `cog-meta/action-items.md`: "Prune {domain} hot-memory (run housekeeping)" |
 | INDEX.md > 14 days stale | Drift risk | → `cog-meta/action-items.md`: "Rebuild domain indexes (run housekeeping)" |
 | Expired temporal markers > 0 | Stale facts | → `cog-meta/action-items.md`: "Sweep expired temporal markers (run housekeeping)" |
 | Same issue logged 3+ times in self-observations | Recurring unresolved | → Escalate: propose rule change that prevents recurrence |
