@@ -8,16 +8,22 @@ export function truncate(text: string, max = MAX_TOOL_OUTPUT): string {
   return text.length <= max ? text : `${text.slice(0, max)}\n[truncated ${text.length - max} chars]`;
 }
 
-export function runCommand(
-  command: string,
+export function runArgv(
+  file: string,
+  args: string[],
   opts: { cwd: string; timeoutMs: number },
 ): Promise<{ output: string; exitCode: number | null }> {
   return new Promise((resolve) => {
-    const child = spawn("bash", ["-c", command], { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
+    let capped = false;
     let timedOut = false;
     const append = (chunk: Buffer) => {
+      if (capped) return;
       output += chunk.toString("utf8");
+      if (output.length > MAX_TOOL_OUTPUT) {
+        capped = true;
+      }
     };
     child.stdout.on("data", append);
     child.stderr.on("data", append);
@@ -35,6 +41,13 @@ export function runCommand(
       resolve({ output: String(err), exitCode: null });
     });
   });
+}
+
+export function runCommand(
+  command: string,
+  opts: { cwd: string; timeoutMs: number },
+): Promise<{ output: string; exitCode: number | null }> {
+  return runArgv("bash", ["-c", command], opts);
 }
 
 const bashParams = Type.Object({
