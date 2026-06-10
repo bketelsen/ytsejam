@@ -1,7 +1,8 @@
 import { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage, ContentBlock } from "@/lib/types";
+import type { ChatMessage, ContentBlock, TaskRow } from "@/lib/types";
+import { TaskCard } from "./TaskCard";
 
 function blocks(message: ChatMessage): ContentBlock[] {
   return typeof message.content === "string"
@@ -50,9 +51,13 @@ export function ToolCallCard({
 export function Message({
   message,
   toolResults,
+  tasks,
+  onViewTranscript,
 }: {
   message: ChatMessage;
   toolResults: Map<string, ChatMessage>;
+  tasks?: Record<string, TaskRow>;
+  onViewTranscript?: (taskId: string) => void;
 }) {
   if (message.role === "toolResult") return null; // rendered inside the assistant's tool card
   const isUser = message.role === "user";
@@ -82,6 +87,17 @@ export function Message({
                 {b.thinking}
               </p>
             );
+          }
+          if (b.type === "toolCall" && b.name === "delegate" && tasks && onViewTranscript) {
+            const result = b.id ? toolResults.get(b.id) : undefined;
+            const taskId =
+              (result?.details as any)?.taskId ??
+              /task ([0-9a-f-]{16,})/i.exec(
+                typeof result?.content === "string"
+                  ? result.content
+                  : (result?.content ?? []).map((c) => c.text ?? "").join(" "),
+              )?.[1];
+            return <TaskCard key={i} task={taskId ? tasks[taskId] : undefined} onViewTranscript={onViewTranscript} />;
           }
           if (b.type === "toolCall") {
             return <ToolCallCard key={i} call={b} result={b.id ? toolResults.get(b.id) : undefined} />;

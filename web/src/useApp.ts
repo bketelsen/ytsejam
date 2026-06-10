@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { client } from "./lib/api";
 import { connectWs } from "./lib/ws";
-import type { ChatMessage, ServerEvent, SessionRow } from "./lib/types";
+import type { ChatMessage, ServerEvent, SessionRow, TaskRow } from "./lib/types";
 
 export function useApp() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
@@ -9,6 +9,7 @@ export function useApp() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState<ChatMessage | null>(null);
   const [connected, setConnected] = useState(false);
+  const [tasks, setTasks] = useState<Record<string, TaskRow>>({});
   const wsRef = useRef<ReturnType<typeof connectWs> | null>(null);
   const currentIdRef = useRef<string | null>(null);
   currentIdRef.current = currentId;
@@ -18,6 +19,10 @@ export function useApp() {
   }, []);
 
   const onEvent = useCallback((event: ServerEvent) => {
+    if (event.type === "task") {
+      setTasks((prev) => ({ ...prev, [event.task.id]: event.task }));
+      return;
+    }
     if (event.type === "session_meta") {
       setSessions((prev) => {
         const rest = prev.filter((s) => s.id !== event.session.id);
@@ -69,6 +74,9 @@ export function useApp() {
   useEffect(() => {
     wsRef.current = connectWs({ onEvent, onStatus: setConnected });
     void refreshSessions();
+    void client.listTasks().then((r) => {
+      setTasks(Object.fromEntries(r.tasks.map((t) => [t.id, t])));
+    });
     if ("Notification" in window && Notification.permission === "default") {
       void Notification.requestPermission();
     }
@@ -117,6 +125,7 @@ export function useApp() {
     messages,
     streaming,
     connected,
+    tasks,
     selectSession,
     newSession,
     send,

@@ -2,24 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/api";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, TaskRow } from "@/lib/types";
 import { Message } from "./Message";
+import { TaskTranscriptDialog } from "./TaskCard";
 
 export function Chat({
   sessionId,
   messages,
   streaming,
   running,
+  tasks,
   onSend,
 }: {
   sessionId: string | null;
   messages: ChatMessage[];
   streaming: ChatMessage | null;
   running: boolean;
+  tasks: Record<string, TaskRow>;
   onSend: (text: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -44,9 +48,9 @@ export function Chat({
           <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
         )}
         {messages.map((m, i) => (
-          <Message key={i} message={m} toolResults={toolResults} />
+          <Message key={i} message={m} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />
         ))}
-        {streaming && <Message message={streaming} toolResults={toolResults} />}
+        {streaming && <Message message={streaming} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />}
         <div ref={bottomRef} />
       </div>
       <div className="border-t border-border bg-background p-3">
@@ -73,6 +77,13 @@ export function Chat({
           )}
         </div>
       </div>
+      <TaskTranscriptDialog
+        taskId={transcriptTaskId}
+        open={transcriptTaskId !== null}
+        onOpenChange={(open) => {
+          if (!open) setTranscriptTaskId(null);
+        }}
+      />
     </main>
   );
 }

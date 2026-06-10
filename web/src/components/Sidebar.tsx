@@ -17,6 +17,8 @@ export function Sidebar({
   onNew,
   onDeleted,
   onOpenSettings,
+  onOpenTasks,
+  runningTasks,
 }: {
   sessions: SessionRow[];
   currentId: string | null;
@@ -24,6 +26,8 @@ export function Sidebar({
   onNew: () => void;
   onDeleted: (id: string) => void;
   onOpenSettings: () => void;
+  onOpenTasks: () => void;
+  runningTasks: number;
 }) {
   async function remove(id: string, e: React.MouseEvent) {
     e.stopPropagation();
@@ -37,6 +41,9 @@ export function Sidebar({
       <div className="flex items-center gap-2 p-3">
         <Button onClick={onNew} className="flex-1">
           New chat
+        </Button>
+        <Button variant="outline" onClick={onOpenTasks}>
+          Tasks{runningTasks > 0 ? ` (${runningTasks})` : ""}
         </Button>
         <Button variant="outline" onClick={onOpenSettings}>
           ⚙

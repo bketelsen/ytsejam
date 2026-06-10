@@ -26,6 +26,22 @@ export interface ChatMessage {
   errorMessage?: string;
   stopReason?: string;
   timestamp?: number;
+  details?: unknown;
+}
+
+export type TaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+
+export interface TaskRow {
+  id: string;
+  parentSessionId: string;
+  subagentSessionId: string | null;
+  label: string;
+  status: TaskStatus;
+  model: string;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  resultSummary: string;
 }
 
 export interface ModelInfo {
@@ -38,4 +54,5 @@ export interface ModelInfo {
 export type ServerEvent =
   | { type: "agent"; sessionId: string; event: { type: string; message?: ChatMessage; [k: string]: unknown } }
   | { type: "session_meta"; session: SessionRow }
-  | { type: "session_deleted"; sessionId: string };
+  | { type: "session_deleted"; sessionId: string }
+  | { type: "task"; task: TaskRow };
