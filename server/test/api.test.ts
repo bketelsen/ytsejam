@@ -13,6 +13,7 @@ beforeEach(() => {
   const made = makeManager(faux);
   deps = {
     manager: made.manager,
+    taskManager: made.taskManager,
     indexer: made.indexer,
     bus: made.bus,
     persona: new PersonaStore(`${made.dataDir}/persona`),
@@ -121,5 +122,41 @@ describe("persona and models", () => {
     const body = (await res.json()) as any;
     expect(Array.isArray(body.models)).toBe(true);
     expect(body.defaultModel).toBe("faux/faux");
+  });
+});
+
+describe("tasks api", () => {
+  test("list, transcript, cancel", async () => {
+    faux.setResponses([fauxAssistantMessage("task report"), fauxAssistantMessage("ack")]);
+    const row = await deps.manager.createSession();
+    const task = await deps.taskManager.delegate({
+      parentSessionId: row.id,
+      task: "do it",
+      label: "do it",
+    });
+
+    // wait for completion
+    for (let i = 0; i < 200 && deps.indexer.getTask(task.id)?.status !== "completed"; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(deps.indexer.getTask(task.id)?.status).toBe("completed");
+
+    const list = (await (await app.request("/api/tasks", { headers: auth })).json()) as any;
+    expect(list.tasks).toHaveLength(1);
+    expect(list.tasks[0]).toMatchObject({ id: task.id, status: "completed" });
+
+    const transcript = (await (
+      await app.request(`/api/tasks/${task.id}/transcript`, { headers: auth })
+    ).json()) as any;
+    expect(transcript.task.id).toBe(task.id);
+    expect(transcript.messages.some((m: any) => m.role === "assistant")).toBe(true);
+
+    // cancel on a finished task → 409
+    const cancel = await app.request(`/api/tasks/${task.id}/cancel`, { method: "POST", headers: auth });
+    expect(cancel.status).toBe(409);
+
+    // unknown ids → 404
+    expect((await app.request("/api/tasks/nope/transcript", { headers: auth })).status).toBe(404);
+    expect((await app.request("/api/tasks/nope/cancel", { method: "POST", headers: auth })).status).toBe(404);
   });
 });

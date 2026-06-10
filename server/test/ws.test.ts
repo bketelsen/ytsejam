@@ -15,6 +15,7 @@ beforeEach(async () => {
   made = makeManager(faux);
   const { app, injectWebSocket } = createApp({
     manager: made.manager,
+    taskManager: made.taskManager,
     indexer: made.indexer,
     bus: made.bus,
     persona: new PersonaStore(`${made.dataDir}/persona`),

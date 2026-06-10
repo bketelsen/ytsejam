@@ -59,7 +59,7 @@ await manager.rebuildIndex();
 await taskManager.rebuildIndex();
 await taskManager.recoverInterrupted();
 
-const { app, injectWebSocket } = createApp({ manager, indexer, bus, persona, config, authStore });
+const { app, injectWebSocket } = createApp({ manager, taskManager, indexer, bus, persona, config, authStore });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`ytsejam listening on http://localhost:${info.port}`);
   console.log(`data dir: ${config.dataDir}`);

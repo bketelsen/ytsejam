@@ -8,6 +8,8 @@ import { AgentManager } from "../src/manager.ts";
 import type { AgentManagerOptions } from "../src/manager.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { PersonaStore } from "../src/persona.ts";
+import { TaskStore } from "../src/tasks.ts";
+import { TaskManager } from "../src/task-manager.ts";
 
 export function setupFaux() {
   const faux = registerFauxProvider();
@@ -34,7 +36,21 @@ export function makeManager(
     authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
     ...overrides,
   });
-  return { manager, indexer, bus, dataDir };
+  const taskManager = new TaskManager({
+    dataDir,
+    store: new TaskStore(join(dataDir, "tasks")),
+    indexer,
+    bus,
+    persona: new PersonaStore(join(dataDir, "persona")),
+    authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
+    resolveModel: () => fauxModel,
+    subagentModel: "faux/faux",
+    workerTools: [],
+    concurrency: 2,
+    timeoutMs: 10_000,
+    notifyParent: (sessionId, text) => manager.injectTaskResult(sessionId, text),
+  });
+  return { manager, taskManager, indexer, bus, dataDir };
 }
 
 export { fauxAssistantMessage, fauxToolCall };

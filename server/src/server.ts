@@ -9,9 +9,11 @@ import type { AgentManager } from "./manager.ts";
 import { listAvailableModels } from "./models.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
+import type { TaskManager } from "./task-manager.ts";
 
 export interface AppDeps {
   manager: AgentManager;
+  taskManager: TaskManager;
   indexer: Indexer;
   bus: EventBus;
   persona: PersonaStore;
@@ -128,6 +130,24 @@ export function createApp(deps: AppDeps) {
     if (!indexer.getSession(id)) return c.json({ error: "not found" }, 404);
     await manager.deleteSession(id);
     return c.json({ ok: true });
+  });
+
+  app.get("/api/tasks", (c) => c.json({ tasks: indexer.listTasks() }));
+
+  app.post("/api/tasks/:id/cancel", async (c) => {
+    const id = c.req.param("id");
+    if (!indexer.getTask(id)) return c.json({ error: "not found" }, 404);
+    const ok = await deps.taskManager.cancel(id);
+    if (!ok) return c.json({ error: "not cancellable" }, 409);
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/tasks/:id/transcript", async (c) => {
+    const id = c.req.param("id");
+    const task = indexer.getTask(id);
+    if (!task) return c.json({ error: "not found" }, 404);
+    const messages = await deps.taskManager.getTranscript(id);
+    return c.json({ task, messages });
   });
 
   app.get("/api/persona", async (c) => c.json({ content: await persona.load() }));
