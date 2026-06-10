@@ -1,0 +1,31 @@
+diff --git a/node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js b/node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js
+index cbc1281..5f9063b 100644
+--- a/node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js
++++ b/node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js
+@@ -299,6 +299,7 @@ export const streamAnthropic = (model, context, options) => {
+             stopReason: "stop",
+             timestamp: Date.now(),
+         };
++        let rawStopReason;
+         try {
+             let client;
+             let isOAuth;
+@@ -486,6 +487,7 @@ export const streamAnthropic = (model, context, options) => {
+                 }
+                 else if (event.type === "message_delta") {
+                     if (event.delta.stop_reason) {
++                        rawStopReason = event.delta.stop_reason;
+                         output.stopReason = mapStopReason(event.delta.stop_reason);
+                     }
+                     // Only update usage fields if present (not null).
+@@ -512,7 +514,9 @@ export const streamAnthropic = (model, context, options) => {
+                 throw new Error("Request was aborted");
+             }
+             if (output.stopReason === "aborted" || output.stopReason === "error") {
+-                throw new Error("An unknown error occurred");
++                throw new Error(rawStopReason
++                    ? `Generation stopped by the API with stop_reason "${rawStopReason}"`
++                    : "An unknown error occurred");
+             }
+             stream.push({ type: "done", reason: output.stopReason, message: output });
+             stream.end();

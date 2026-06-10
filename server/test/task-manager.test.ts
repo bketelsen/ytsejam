@@ -8,7 +8,7 @@ import { PersonaStore } from "../src/persona.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { TaskStore } from "../src/tasks.ts";
 import { TaskManager } from "../src/task-manager.ts";
-import { fauxAssistantMessage, setupFaux } from "./helpers.ts";
+import { fauxAssistantMessage, fauxToolCall, setupFaux } from "./helpers.ts";
 
 let faux: ReturnType<typeof setupFaux>;
 beforeEach(() => {
@@ -166,6 +166,48 @@ describe("TaskManager", () => {
     await new Promise((r) => setTimeout(r, 200)); // give any stray notify a chance to fire
     expect(notified).toEqual([]);
     expect(await tm.cancel(running.id)).toBe(false); // already terminal
+  });
+
+  test("retries once when the provider kills generation mid-stream", async () => {
+    const { tm, indexer, notified } = makeTaskManager();
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("write", { path: "/tmp/report.md", content: "partial" })], {
+        stopReason: "error",
+        errorMessage: "An unknown error occurred",
+      }),
+      fauxAssistantMessage("REPORT: recovered after retry"),
+    ]);
+
+    const row = await tm.delegate({ parentSessionId: "p", task: "research", label: "research" });
+    await waitFor(() => indexer.getTask(row.id)?.status === "completed");
+    expect(indexer.getTask(row.id)!.resultSummary).toContain("recovered after retry");
+    expect(notified).toHaveLength(1);
+    expect(notified[0]!.text).toContain('[Task "research" completed]');
+
+    const messages = (await tm.getTranscript(row.id)) as any[];
+    // the dangling tool call from the cut-off response was answered with an error result
+    const synthetic = messages.find((m) => m.role === "toolResult" && m.isError);
+    expect(synthetic).toBeTruthy();
+    expect(synthetic.toolName).toBe("write");
+    // and the retry prompt told the model why and how to proceed
+    const nudge = messages.find(
+      (m) => m.role === "user" && JSON.stringify(m.content).toLowerCase().includes("cut off"),
+    );
+    expect(nudge).toBeTruthy();
+  });
+
+  test("fails the task when the retry errors too", async () => {
+    const { tm, indexer, notified } = makeTaskManager();
+    faux.setResponses([
+      fauxAssistantMessage("first attempt", { stopReason: "error", errorMessage: "boom one" }),
+      fauxAssistantMessage("second attempt", { stopReason: "error", errorMessage: "boom two" }),
+    ]);
+
+    const row = await tm.delegate({ parentSessionId: "p", task: "research", label: "research" });
+    await waitFor(() => indexer.getTask(row.id)?.status === "failed");
+    expect(indexer.getTask(row.id)!.resultSummary).toContain("boom two");
+    expect(notified).toHaveLength(1);
+    expect(notified[0]!.text).toContain('[Task "research" failed]');
   });
 
   test("recoverInterrupted marks stale running tasks and notifies parents", async () => {

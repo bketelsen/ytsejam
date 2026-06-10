@@ -20,6 +20,12 @@ import { type TaskRow, type TaskStore } from "./tasks.ts";
 const SUBAGENT_CWD = "subagent";
 const REPORT_MAX = 16_000;
 
+const RETRY_NUDGE =
+  "Your previous response was cut off by the model provider before it finished; any tool call in it did NOT run. " +
+  "This is often triggered by reproducing long verbatim quotes from sources. " +
+  "Continue the task from where you left off, paraphrase source material instead of quoting it at length, " +
+  "and redo the interrupted tool call if it is still needed.";
+
 /** Full text of an assistant message (all text blocks), capped for injection. */
 function fullTextOf(message: AgentMessage, cap = REPORT_MAX): string {
   const content = (message as any).content;
@@ -223,6 +229,29 @@ export class TaskManager {
       try {
         const prompt = created.context ? `${created.task}\n\nContext:\n${created.context}` : created.task;
         result = await harness.prompt(prompt);
+        if (
+          !timedOut &&
+          (result as any).stopReason === "error" &&
+          this.opts.store.fold(taskId)?.status !== "cancelled"
+        ) {
+          // The provider killed generation mid-stream (e.g. a content-safety
+          // stop while quoting sources). Answer any tool calls the cut-off
+          // response left dangling — the Anthropic API rejects a context with
+          // a tool_use that has no tool_result — then retry once with a nudge.
+          const content = (result as any).content;
+          const dangling = Array.isArray(content) ? content.filter((c: any) => c.type === "toolCall") : [];
+          for (const call of dangling) {
+            await session.appendMessage({
+              role: "toolResult",
+              toolCallId: call.id,
+              toolName: call.name,
+              content: [{ type: "text", text: "This tool call was interrupted before execution and did not run." }],
+              isError: true,
+              timestamp: Date.now(),
+            } as any);
+          }
+          result = await harness.prompt(RETRY_NUDGE);
+        }
       } finally {
         clearTimeout(timer);
         this.active.delete(taskId);
