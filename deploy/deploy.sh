@@ -74,11 +74,23 @@ built_on=$(hostname)
 EOF
 
 # ─── 2. Install deps + build web, inside the release ───
-log "Installing dependencies (npm ci)…"
-( cd "$RELEASE_DIR" && npm ci 2>&1 | tail -3 )
+# The web build needs devDependencies (vite, typescript), so force a full
+# install even if the calling shell exported NODE_ENV=production (which would
+# make npm omit devDeps). We install with --ignore-scripts to avoid depending
+# on a lifecycle-script binary (patch-package) being resolvable on PATH during
+# install, then run patches explicitly so the release still gets them. This
+# keeps deploy correct regardless of the shell it's launched from.
+log "Installing dependencies (npm ci, with devDeps)…"
+( cd "$RELEASE_DIR" && env -u NODE_ENV npm ci --include=dev --ignore-scripts 2>&1 | tail -3 )
+
+if [[ -d "$RELEASE_DIR/patches" ]]; then
+  log "Applying patches (patch-package)…"
+  ( cd "$RELEASE_DIR" && env -u NODE_ENV npx --no-install patch-package 2>&1 | tail -3 ) \
+    || warn "patch-package step reported an issue — check patches/ applied"
+fi
 
 log "Building web UI…"
-( cd "$RELEASE_DIR" && npm run build 2>&1 | tail -3 )
+( cd "$RELEASE_DIR" && env -u NODE_ENV npm run build 2>&1 | tail -3 )
 
 [[ -f "$RELEASE_DIR/web/dist/index.html" ]] || die "web build missing: $RELEASE_DIR/web/dist/index.html"
 [[ -f "$RELEASE_DIR/server/src/index.ts" ]] || die "server entry missing: $RELEASE_DIR/server/src/index.ts"
