@@ -85,8 +85,9 @@ export function createApp(deps: AppDeps) {
   );
 
   app.get("/api/sessions", (c) => {
+    const includeArchived = c.req.query("archived") === "1";
     const sessions = indexer
-      .listSessions()
+      .listSessions({ includeArchived })
       .map((s) => ({ ...s, running: manager.isRunning(s.id) }));
     return c.json({ sessions });
   });
@@ -160,10 +161,20 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true, cwd: manager.resolveWorkdir(id) });
   });
 
-  app.delete("/api/sessions/:id", async (c) => {
+  app.post("/api/sessions/:id/archive", async (c) => {
     const id = c.req.param("id");
     if (!indexer.getSession(id)) return c.json({ error: "not found" }, 404);
-    await manager.deleteSession(id);
+    await manager.archiveSession(id);
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/sessions/:id/unarchive", async (c) => {
+    const id = c.req.param("id");
+    // includeArchived: archived sessions are hidden from the default list,
+    // so a lookup by id must opt in or this 404s every unarchive attempt.
+    // The DB-only getSession bypasses archived-filtering, but be explicit.
+    if (!indexer.getSession(id)) return c.json({ error: "not found" }, 404);
+    await manager.unarchiveSession(id);
     return c.json({ ok: true });
   });
 

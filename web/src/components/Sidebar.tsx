@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { Archive, ArchiveRestore } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { client } from "@/lib/api";
 import type { SessionRow } from "@/lib/types";
@@ -15,7 +17,7 @@ export function Sidebar({
   currentId,
   onSelect,
   onNew,
-  onDeleted,
+  onArchived,
   onOpenSettings,
   onOpenTasks,
   runningTasks,
@@ -24,16 +26,44 @@ export function Sidebar({
   currentId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
-  onDeleted: (id: string) => void;
+  /** Called after archive/unarchive completes so the active list can refresh. */
+  onArchived: (id: string) => void;
   onOpenSettings: () => void;
   onOpenTasks: () => void;
   runningTasks: number;
 }) {
-  async function remove(id: string, e: React.MouseEvent) {
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedRows, setArchivedRows] = useState<SessionRow[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+
+  // Reload the archived list when the panel is opened. It's a small fetch on a
+  // user gesture; not worth maintaining a live cache.
+  useEffect(() => {
+    if (!showArchived) return;
+    let cancelled = false;
+    setArchivedLoading(true);
+    void client.listSessions({ includeArchived: true }).then((r) => {
+      if (cancelled) return;
+      setArchivedRows(r.sessions.filter((s) => s.archived));
+      setArchivedLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [showArchived]);
+
+  async function archive(id: string, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!confirm("Delete this session?")) return;
-    await client.deleteSession(id);
-    onDeleted(id);
+    // No confirm — archive is reversible by design.
+    await client.archiveSession(id);
+    onArchived(id);
+  }
+
+  async function unarchive(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    await client.unarchiveSession(id);
+    setArchivedRows((prev) => prev.filter((s) => s.id !== id));
+    onArchived(id);
   }
 
   return (
@@ -65,11 +95,12 @@ export function Sidebar({
               <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>
               <button
                 data-slot="button"
-                onClick={(e) => remove(s.id, e)}
-                className="block text-muted-foreground hover:text-destructive md:hidden md:group-hover:block"
-                title="Delete"
+                onClick={(e) => archive(s.id, e)}
+                className="block text-muted-foreground hover:text-foreground md:hidden md:group-hover:block"
+                title="Archive"
+                aria-label="Archive session"
               >
-                ×
+                <Archive className="size-4" />
               </button>
             </div>
             <p className="truncate text-xs text-muted-foreground">{s.preview}</p>
@@ -77,6 +108,43 @@ export function Sidebar({
         ))}
         {sessions.length === 0 && <p className="p-2 text-sm text-muted-foreground">No sessions yet</p>}
       </nav>
+      {/* Archived sessions panel — collapsed by default, fetched on open. */}
+      <div className="border-t border-sidebar-border">
+        <button
+          data-slot="button"
+          onClick={() => setShowArchived((v) => !v)}
+          className="flex w-full items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+          aria-expanded={showArchived}
+        >
+          <span>{showArchived ? "Hide archived" : "Show archived"}</span>
+          <span aria-hidden>{showArchived ? "−" : "+"}</span>
+        </button>
+        {showArchived && (
+          <div className="max-h-48 overflow-y-auto px-2 pb-2">
+            {archivedLoading && <p className="p-2 text-xs text-muted-foreground">Loading…</p>}
+            {!archivedLoading && archivedRows.length === 0 && (
+              <p className="p-2 text-xs text-muted-foreground">No archived sessions</p>
+            )}
+            {archivedRows.map((s) => (
+              <div key={s.id} className="group rounded-md p-2 opacity-60 hover:opacity-100">
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 truncate text-sm">{s.title ?? "New session"}</span>
+                  <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>
+                  <button
+                    data-slot="button"
+                    onClick={(e) => unarchive(s.id, e)}
+                    className="block text-muted-foreground hover:text-foreground"
+                    title="Unarchive"
+                    aria-label="Unarchive session"
+                  >
+                    <ArchiveRestore className="size-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </aside>
   );
 }

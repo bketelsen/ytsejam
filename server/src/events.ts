@@ -6,7 +6,8 @@ import type { ScheduleRow } from "./schedules.ts";
 export type ServerEvent =
   | { type: "agent"; sessionId: string; event: AgentEvent }
   | { type: "session_meta"; session: SessionRow & { running: boolean } }
-  | { type: "session_deleted"; sessionId: string }
+  | { type: "session_archived"; sessionId: string }
+  | { type: "session_unarchived"; sessionId: string }
   | { type: "task"; task: TaskRow }
   | { type: "schedule"; schedule: ScheduleRow };
 

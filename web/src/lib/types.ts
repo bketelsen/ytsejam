@@ -5,6 +5,7 @@ export interface SessionRow {
   updatedAt: string;
   preview: string;
   unread: boolean;
+  archived?: boolean;
   running: boolean;
   // Only the GET /api/sessions/:id response carries this; the list endpoint omits it.
   cwd?: string;
@@ -72,6 +73,7 @@ export interface ScheduleRow {
 export type ServerEvent =
   | { type: "agent"; sessionId: string; event: { type: string; message?: ChatMessage; [k: string]: unknown } }
   | { type: "session_meta"; session: SessionRow }
-  | { type: "session_deleted"; sessionId: string }
+  | { type: "session_archived"; sessionId: string }
+  | { type: "session_unarchived"; sessionId: string }
   | { type: "task"; task: TaskRow }
   | { type: "schedule"; schedule: ScheduleRow };

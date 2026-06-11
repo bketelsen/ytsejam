@@ -6,10 +6,10 @@ describe("EventBus", () => {
     const bus = new EventBus();
     const seen: ServerEvent[] = [];
     const unsub = bus.subscribe((e) => seen.push(e));
-    bus.emit({ type: "session_deleted", sessionId: "a" });
+    bus.emit({ type: "session_archived", sessionId: "a" });
     unsub();
-    bus.emit({ type: "session_deleted", sessionId: "b" });
-    expect(seen).toEqual([{ type: "session_deleted", sessionId: "a" }]);
+    bus.emit({ type: "session_archived", sessionId: "b" });
+    expect(seen).toEqual([{ type: "session_archived", sessionId: "a" }]);
   });
 
   test("a throwing subscriber does not break others", () => {
@@ -19,7 +19,7 @@ describe("EventBus", () => {
       throw new Error("boom");
     });
     bus.subscribe((e) => seen.push(e));
-    bus.emit({ type: "session_deleted", sessionId: "a" });
+    bus.emit({ type: "session_archived", sessionId: "a" });
     expect(seen.length).toBe(1);
   });
 });

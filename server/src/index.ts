@@ -22,6 +22,7 @@ import { SkillsStore } from "./skills.ts";
 import { createCogTools } from "./tools/cog.ts";
 import { createSkillTool } from "./tools/skills.ts";
 import { WorkdirStore, resolveWorkdir } from "./workdirs.ts";
+import { ArchiveStore } from "./archive-store.ts";
 import { loadContextFiles } from "./context-files.ts";
 
 const config = loadConfig();
@@ -37,6 +38,7 @@ const cogClient = new CogClient({ socketPath: config.cogSocket });
 const cogBrief = new CogBriefProvider(cogClient, config.cogRole);
 const skills = new SkillsStore(path.join(config.dataDir, "skills"));
 const workdirs = new WorkdirStore(path.join(config.dataDir, "workdirs"));
+const archiveStore = new ArchiveStore(path.join(config.dataDir, "archived"));
 try {
   await skills.seed(path.join(import.meta.dirname, "../skills"));
 } catch (err) {
@@ -64,6 +66,9 @@ const manager = new AgentManager({
     ...createSchedulingTools(() => scheduler, sessionId),
   ],
   resolveWorkdir: (sessionId) => resolveWorkdir(workdirs, sessionId, config.dataDir),
+  isArchived: (sessionId) => archiveStore.isArchived(sessionId),
+  markArchived: (sessionId, archived) =>
+    archiveStore.append(sessionId, { archived, timestamp: new Date().toISOString() }),
   loadContextFiles: (cwd) => loadContextFiles(cwd, { disabled: !config.contextFiles }),
   generateTitles: config.generateTitles,
   authStore,

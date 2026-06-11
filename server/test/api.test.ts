@@ -77,7 +77,7 @@ describe("auth", () => {
 });
 
 describe("sessions", () => {
-  test("create, list, message, transcript, rename, mark-read, delete", async () => {
+  test("create, list, message, transcript, rename, mark-read, archive, unarchive", async () => {
     faux.setResponses([fauxAssistantMessage("api reply")]);
 
     const created = await app.request("/api/sessions", { method: "POST", headers: auth });
@@ -109,9 +109,47 @@ describe("sessions", () => {
     const after = (await (await app.request("/api/sessions", { headers: auth })).json()) as any;
     expect(after.sessions[0]).toMatchObject({ title: "Renamed", unread: false });
 
-    const del = await app.request(`/api/sessions/${session.id}`, { method: "DELETE", headers: auth });
-    expect(del.status).toBe(200);
+    // archive: hides from default list, JSONL stays on disk
+    const archived = await app.request(`/api/sessions/${session.id}/archive`, {
+      method: "POST",
+      headers: auth,
+    });
+    expect(archived.status).toBe(200);
     expect(((await (await app.request("/api/sessions", { headers: auth })).json()) as any).sessions).toEqual([]);
+    // included with ?archived=1
+    const withArchived = (await (
+      await app.request("/api/sessions?archived=1", { headers: auth })
+    ).json()) as any;
+    expect(withArchived.sessions.map((s: any) => s.id)).toEqual([session.id]);
+    expect(withArchived.sessions[0].archived).toBe(true);
+    // file still on disk
+    const { readdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const chatDir = join(deps.config.dataDir, "sessions", "--chat--");
+    expect(readdirSync(chatDir).filter((f) => f.includes(session.id)).length).toBe(1);
+
+    // unarchive restores to default list
+    const unarchived = await app.request(`/api/sessions/${session.id}/unarchive`, {
+      method: "POST",
+      headers: auth,
+    });
+    expect(unarchived.status).toBe(200);
+    const restored = (await (await app.request("/api/sessions", { headers: auth })).json()) as any;
+    expect(restored.sessions.map((s: any) => s.id)).toEqual([session.id]);
+    expect(restored.sessions[0].archived).toBe(false);
+
+    // DELETE /api/sessions/:id route is gone (Hono returns 404 for an unrouted path)
+    const del = await app.request(`/api/sessions/${session.id}`, { method: "DELETE", headers: auth });
+    expect(del.status).toBe(404);
+  });
+
+  test("404 for archive/unarchive on unknown session", async () => {
+    expect(
+      (await app.request("/api/sessions/nope/archive", { method: "POST", headers: auth })).status,
+    ).toBe(404);
+    expect(
+      (await app.request("/api/sessions/nope/unarchive", { method: "POST", headers: auth })).status,
+    ).toBe(404);
   });
 
   test("404 for unknown session", async () => {

@@ -18,6 +18,7 @@ const row: SessionRow = {
   updatedAt: "2026-06-09T10:00:00Z",
   preview: "",
   unread: false,
+  archived: false,
 };
 
 describe("Indexer", () => {
@@ -36,6 +37,28 @@ describe("Indexer", () => {
     idx.deleteSession("s1");
     expect(idx.listSessions().map((s) => s.id)).toEqual(["s2"]);
     expect(idx.getSession("s1")).toBeUndefined();
+  });
+
+  test("archived sessions are excluded from default listSessions, included with includeArchived", () => {
+    const idx = new Indexer(tempDb());
+    idx.upsertSession(row);
+    idx.upsertSession({ ...row, id: "s2", updatedAt: "2026-06-09T11:00:00Z" });
+    idx.upsertSession({ ...row, id: "s3", updatedAt: "2026-06-09T12:00:00Z", archived: true });
+
+    // default: archived row hidden
+    expect(idx.listSessions().map((s) => s.id)).toEqual(["s2", "s1"]);
+    // includeArchived: all rows returned with the flag populated
+    const all = idx.listSessions({ includeArchived: true });
+    expect(all.map((s) => s.id)).toEqual(["s3", "s2", "s1"]);
+    expect(all.find((s) => s.id === "s3")!.archived).toBe(true);
+    expect(all.find((s) => s.id === "s1")!.archived).toBe(false);
+
+    // setArchived toggles in either direction
+    idx.setArchived("s1", true);
+    expect(idx.listSessions().map((s) => s.id)).toEqual(["s2"]);
+    idx.setArchived("s3", false);
+    expect(idx.listSessions().map((s) => s.id)).toEqual(["s3", "s2"]);
+    expect(idx.getSession("s3")!.archived).toBe(false);
   });
 
   test("reset clears all rows for rebuild", () => {
