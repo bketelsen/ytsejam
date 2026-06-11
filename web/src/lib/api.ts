@@ -38,7 +38,8 @@ export const client = {
     });
     return res.ok;
   },
-  listSessions: () => api<{ sessions: SessionRow[] }>("/api/sessions"),
+  listSessions: (opts?: { includeArchived?: boolean }) =>
+    api<{ sessions: SessionRow[] }>(opts?.includeArchived ? "/api/sessions?archived=1" : "/api/sessions"),
   createSession: (model?: string) =>
     api<{ session: SessionRow }>("/api/sessions", { method: "POST", body: JSON.stringify({ model }) }),
   getSession: (id: string) => api<{ session: SessionRow; messages: ChatMessage[] }>(`/api/sessions/${id}`),
@@ -52,7 +53,10 @@ export const client = {
       method: "POST",
       body: JSON.stringify({ cwd }),
     }),
-  deleteSession: (id: string) => api<{ ok: true }>(`/api/sessions/${id}`, { method: "DELETE" }),
+  archiveSession: (id: string) =>
+    api<{ ok: true }>(`/api/sessions/${id}/archive`, { method: "POST" }),
+  unarchiveSession: (id: string) =>
+    api<{ ok: true }>(`/api/sessions/${id}/unarchive`, { method: "POST" }),
   getPersona: () => api<{ content: string }>("/api/persona"),
   savePersona: (content: string) =>
     api<{ ok: true }>("/api/persona", { method: "PUT", body: JSON.stringify({ content }) }),

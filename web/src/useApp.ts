@@ -17,10 +17,14 @@ export function useApp() {
   const wsRef = useRef<ReturnType<typeof connectWs> | null>(null);
   const currentIdRef = useRef<string | null>(null);
   currentIdRef.current = currentId;
+  // Held in a ref so onEvent (memoized once with []) can reach the latest
+  // closure — needed for session_unarchived's refresh.
+  const refreshSessionsRef = useRef<(() => Promise<void>) | null>(null);
 
   const refreshSessions = useCallback(async () => {
     setSessions((await client.listSessions()).sessions);
   }, []);
+  refreshSessionsRef.current = refreshSessions;
 
   const onEvent = useCallback((event: ServerEvent) => {
     if (event.type === "task") {
@@ -43,9 +47,18 @@ export function useApp() {
       }
       return;
     }
-    if (event.type === "session_deleted") {
+    if (event.type === "session_archived") {
+      // Remove from the active list. The session row stays in the indexer
+      // (archived=1); the Sidebar's "Show archived" view fetches it fresh
+      // via listSessions({includeArchived:true}) when opened.
       setSessions((prev) => prev.filter((s) => s.id !== event.sessionId));
       if (event.sessionId === currentIdRef.current) setCurrentId(null);
+      return;
+    }
+    if (event.type === "session_unarchived") {
+      // Re-add to the active list. We don't have the full row in this event,
+      // so refresh the list — cheap and authoritative.
+      void refreshSessionsRef.current?.();
       return;
     }
     if (event.type === "schedule") return; // Settings refetches on open

@@ -27,7 +27,7 @@ function Main() {
     sessions: app.sessions,
     currentId: app.currentId,
     onNew: () => void app.newSession(),
-    onDeleted: () => void app.refreshSessions(),
+    onArchived: () => void app.refreshSessions(),
     onOpenSettings: () => setSettingsOpen(true),
     onOpenTasks: () => setTasksOpen(true),
     runningTasks,
