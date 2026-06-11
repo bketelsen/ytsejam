@@ -83,7 +83,7 @@ export function Message({
         {blocks(message).map((b, i) => {
           if (b.type === "text" && b.text) {
             return (
-              <div key={i} className="prose prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
+              <div key={i} className="prose dark:prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
                 <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
               </div>
             );
