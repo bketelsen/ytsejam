@@ -1,0 +1,13 @@
+Canonical skill playbooks are maintained upstream in the cogmemory repo:
+
+    https://github.com/bketelsen/cogmemory/tree/main/docs/llm/skills/
+
+The *.md files here are vendored copies with ytsejam's HOST-ADAPTATION
+points applied (reflect: transcript mining via sessions/--chat--/*.jsonl;
+cog: domain skills generated into data/skills with the local write tool).
+When updating a playbook, change it upstream first, then re-vendor here
+AND sync the live copy in server/data/skills/ (seeding is copy-if-missing,
+so editing this seed alone does not update a running instance).
+
+This file has no .md extension on purpose: the skills store seeds and
+lists only *.md files.
