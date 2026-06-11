@@ -153,4 +153,10 @@
   [data-slot="select-trigger"] {
     min-height: 44px;
   }
+  /* On touch there is no hover; reveal the per-message timestamp/copy cluster
+     at reduced opacity so it is always reachable. It stays position:absolute
+     here too, so the surrounding layout never shifts between states. */
+  .message-hover-cluster {
+    opacity: 0.6;
+  }
 }
