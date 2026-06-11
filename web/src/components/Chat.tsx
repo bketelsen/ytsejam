@@ -53,7 +53,7 @@ export function Chat({
         {streaming && <Message message={streaming} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />}
         <div ref={bottomRef} />
       </div>
-      <div className="border-t border-border bg-background p-3">
+      <div className="border-t border-border bg-background px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         <div className="flex gap-2">
           <Textarea
             value={draft}
