@@ -60,7 +60,7 @@ export function Settings({
         <div className="space-y-4">
           <div>
             <h3 className="mb-1 text-sm font-medium">Persona</h3>
-            <Textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={12} className="font-mono text-sm" />
+            <Textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={12} className="font-mono text-base md:text-sm" />
             <div className="mt-2 flex items-center gap-2">
               <Button onClick={() => void save()}>Save persona</Button>
               {saved && <span className="text-sm text-success">Saved — applies from the next turn</span>}
@@ -70,7 +70,7 @@ export function Settings({
             <h3 className="mb-1 text-sm font-medium">Model for current session</h3>
             {currentSessionId ? (
               <select
-                className="w-full rounded-md border border-input bg-background p-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                className="w-full rounded-md border border-input bg-background p-2 text-base text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm"
                 defaultValue=""
                 onChange={(e) => {
                   if (e.target.value) void switchModel(e.target.value);
