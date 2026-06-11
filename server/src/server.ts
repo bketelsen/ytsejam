@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -11,6 +12,7 @@ import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import type { SchedulerService } from "./scheduler.ts";
 import type { TaskManager } from "./task-manager.ts";
+import type { WorkdirStore } from "./workdirs.ts";
 
 export interface AppDeps {
   manager: AgentManager;
@@ -21,6 +23,8 @@ export interface AppDeps {
   persona: PersonaStore;
   config: Config;
   authStore: PiAuthStore;
+  /** Optional: when supplied, exposes POST /api/sessions/:id/cwd. */
+  workdirs?: WorkdirStore;
 }
 
 export function createApp(deps: AppDeps) {
@@ -98,7 +102,10 @@ export function createApp(deps: AppDeps) {
     const row = indexer.getSession(id);
     if (!row) return c.json({ error: "not found" }, 404);
     const messages = await manager.getMessages(id);
-    return c.json({ session: { ...row, running: manager.isRunning(id) }, messages });
+    return c.json({
+      session: { ...row, running: manager.isRunning(id), cwd: manager.resolveWorkdir(id) },
+      messages,
+    });
   });
 
   app.post("/api/sessions/:id/messages", async (c) => {
@@ -125,6 +132,32 @@ export function createApp(deps: AppDeps) {
     if (body.unread === false) manager.markRead(id);
     if (typeof body.model === "string") await manager.setModel(id, body.model);
     return c.json({ ok: true });
+  });
+
+  app.post("/api/sessions/:id/cwd", async (c) => {
+    const id = c.req.param("id");
+    if (!indexer.getSession(id)) return c.json({ error: "not found" }, 404);
+    if (!deps.workdirs) return c.json({ error: "workdir store not configured" }, 501);
+    const body = await c.req.json().catch(() => ({}));
+    const cwd = body.cwd;
+    if (typeof cwd !== "string" || !cwd.trim()) {
+      return c.json({ error: "cwd is required" }, 400);
+    }
+    if (!path.isAbsolute(cwd)) {
+      return c.json({ error: "cwd must be an absolute path" }, 400);
+    }
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(cwd);
+    } catch {
+      return c.json({ error: `cwd does not exist: ${cwd}` }, 400);
+    }
+    if (!stat.isDirectory()) {
+      return c.json({ error: `cwd is not a directory: ${cwd}` }, 400);
+    }
+    deps.workdirs.append(id, { dir: cwd, timestamp: new Date().toISOString() });
+    await manager.applyWorkdirChange(id);
+    return c.json({ ok: true, cwd: manager.resolveWorkdir(id) });
   });
 
   app.delete("/api/sessions/:id", async (c) => {

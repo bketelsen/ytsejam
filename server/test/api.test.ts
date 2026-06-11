@@ -1,16 +1,28 @@
+import { mkdtempSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { PersonaStore } from "../src/persona.ts";
 import { createApp, type AppDeps } from "../src/server.ts";
+import { WorkdirStore, resolveWorkdir } from "../src/workdirs.ts";
 import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
 
 let faux: ReturnType<typeof setupFaux>;
 let deps: AppDeps;
 let app: ReturnType<typeof createApp>["app"];
+let workdirs: WorkdirStore;
 
 beforeEach(() => {
   faux = setupFaux();
-  const made = makeManager(faux);
+  // Create the workdir store first so the manager's resolveWorkdir reads
+  // from the same backing dir the route writes to.
+  const tmpData = mkdtempSync(join(tmpdir(), "api-"));
+  workdirs = new WorkdirStore(`${tmpData}/workdirs`);
+  const made = makeManager(faux, {
+    dataDir: tmpData,
+    resolveWorkdir: (sessionId) => resolveWorkdir(workdirs, sessionId, tmpData),
+  });
   deps = {
     manager: made.manager,
     taskManager: made.taskManager,
@@ -31,8 +43,10 @@ beforeEach(() => {
       taskTimeoutMinutes: 15,
     cogSocket: "/tmp/no-cog.sock",
     cogRole: "agent",
+    contextFiles: false,
     },
     authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
+    workdirs,
   };
   app = createApp(deps).app;
 });

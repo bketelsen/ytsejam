@@ -61,6 +61,8 @@ function Main() {
         streaming={app.streaming}
         running={app.sessions.find((s) => s.id === app.currentId)?.running ?? false}
         tasks={app.tasks}
+        cwd={app.currentCwd}
+        onCwdChange={app.setCurrentCwd}
         onSend={app.send}
         onMenuClick={() => setSidebarOpen(true)}
       />

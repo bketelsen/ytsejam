@@ -16,6 +16,7 @@ import type { PiAuthStore } from "./pi-auth.ts";
 import { composeWorkerPrompt } from "./persona.ts";
 import type { PersonaStore } from "./persona.ts";
 import { type TaskRow, type TaskStore } from "./tasks.ts";
+import { createSessionCwdTools } from "./tools/index.ts";
 
 const SUBAGENT_CWD = "subagent";
 const REPORT_MAX = 16_000;
@@ -56,7 +57,23 @@ export interface TaskManagerOptions {
   resolveModel: ModelResolver;
   /** default "provider/modelId" for subagents */
   subagentModel: string;
+  /**
+   * Tools shared across every subagent — cwd-independent ones only (web
+   * search/fetch). The cwd-bearing bash/file/search tools are built per
+   * task in run() against the parent session's resolved workdir.
+   */
   workerTools: AgentTool<any>[];
+  /**
+   * Resolve the parent session's working directory so the subagent's
+   * bash/file tools land there. Optional; defaults to dataDir.
+   */
+  resolveParentWorkdir?: (parentSessionId: string) => string;
+  /**
+   * Optional: load AGENTS.md/CLAUDE.md ancestor-chain context for the
+   * subagent's working dir. Returned text is injected into the worker
+   * system prompt under "## Project context files".
+   */
+  loadContextFiles?: (cwd: string) => Promise<string>;
   concurrency: number;
   timeoutMs: number;
   /** inject a completion/failure message into the parent session */
@@ -205,13 +222,34 @@ export class TaskManager {
         timestamp: new Date().toISOString(),
       });
 
+      // Resolve the parent's workdir so the subagent's bash/file tools land
+      // in the same repo the user is conversing about. Falls back to dataDir
+      // when no resolver is configured (preserves test/default behavior).
+      const parentWorkdir =
+        this.opts.resolveParentWorkdir?.(created.parentSessionId) ?? this.opts.dataDir;
+
+      // The harness uses its own env for non-tool filesystem work (e.g.
+      // compaction file reads). Construct a per-task env rooted at the
+      // parent's workdir so that work also resolves there, without mutating
+      // the shared this.env that the session repo uses for storage.
+      const taskEnv = new NodeExecutionEnv({ cwd: parentWorkdir });
+
       const harness = new AgentHarness({
-        env: this.env,
+        env: taskEnv,
         session,
         model,
-        tools: this.opts.workerTools,
-        systemPrompt: async () =>
-          composeWorkerPrompt(await this.opts.persona.load(), { dataDir: this.opts.dataDir }),
+        tools: [...this.opts.workerTools, ...createSessionCwdTools(parentWorkdir)],
+        systemPrompt: async () => {
+          const [persona, contextFiles] = await Promise.all([
+            this.opts.persona.load(),
+            this.opts.loadContextFiles?.(parentWorkdir).catch(() => ""),
+          ]);
+          return composeWorkerPrompt(persona, {
+            dataDir: this.opts.dataDir,
+            workdir: parentWorkdir,
+            contextFiles,
+          });
+        },
         getApiKeyAndHeaders: async (m: Model<any>) => {
           const apiKey = await resolveApiKey(m.provider, this.opts.authStore);
           return apiKey ? { apiKey } : undefined;

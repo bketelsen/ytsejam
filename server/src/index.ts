@@ -13,7 +13,7 @@ import { ScheduleStore } from "./schedules.ts";
 import { createApp } from "./server.ts";
 import { TaskManager } from "./task-manager.ts";
 import { TaskStore } from "./tasks.ts";
-import { createTools } from "./tools/index.ts";
+import { createGlobalTools } from "./tools/index.ts";
 import { createDelegationTools } from "./tools/delegation.ts";
 import { createSchedulingTools } from "./tools/scheduling.ts";
 import { CogClient } from "./cog/client.ts";
@@ -21,6 +21,8 @@ import { CogBriefProvider } from "./cog/brief.ts";
 import { SkillsStore } from "./skills.ts";
 import { createCogTools } from "./tools/cog.ts";
 import { createSkillTool } from "./tools/skills.ts";
+import { WorkdirStore, resolveWorkdir } from "./workdirs.ts";
+import { loadContextFiles } from "./context-files.ts";
 
 const config = loadConfig();
 
@@ -34,6 +36,7 @@ const persona = new PersonaStore(path.join(config.dataDir, "persona"));
 const cogClient = new CogClient({ socketPath: config.cogSocket });
 const cogBrief = new CogBriefProvider(cogClient, config.cogRole);
 const skills = new SkillsStore(path.join(config.dataDir, "skills"));
+const workdirs = new WorkdirStore(path.join(config.dataDir, "workdirs"));
 try {
   await skills.seed(path.join(import.meta.dirname, "../skills"));
 } catch (err) {
@@ -52,7 +55,7 @@ const manager = new AgentManager({
   resolveModel: (ref) => resolveModel(ref, authStore),
   defaultModel: config.defaultModel,
   tools: [
-    ...createTools(config.dataDir),
+    ...createGlobalTools(),
     ...createCogTools(cogClient, config.cogRole),
     createSkillTool(skills),
   ],
@@ -60,6 +63,8 @@ const manager = new AgentManager({
     ...createDelegationTools(() => taskManager, sessionId),
     ...createSchedulingTools(() => scheduler, sessionId),
   ],
+  resolveWorkdir: (sessionId) => resolveWorkdir(workdirs, sessionId, config.dataDir),
+  loadContextFiles: (cwd) => loadContextFiles(cwd, { disabled: !config.contextFiles }),
   generateTitles: config.generateTitles,
   authStore,
   cogBrief,
@@ -75,7 +80,13 @@ taskManager = new TaskManager({
   authStore,
   resolveModel: (ref) => resolveModel(ref, authStore),
   subagentModel: config.subagentModel,
-  workerTools: createTools(config.dataDir), // web + system tools; no delegation (no recursion)
+  // worker tools are built per task in task-manager.ts so the bash/file
+  // tools resolve against the parent session's working dir; pass only the
+  // cwd-independent (global) tools here
+  workerTools: createGlobalTools(),
+  resolveParentWorkdir: (parentSessionId) =>
+    resolveWorkdir(workdirs, parentSessionId, config.dataDir),
+  loadContextFiles: (cwd) => loadContextFiles(cwd, { disabled: !config.contextFiles }),
   concurrency: config.taskConcurrency,
   timeoutMs: config.taskTimeoutMinutes * 60_000,
   notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),
@@ -106,7 +117,7 @@ void cogClient.health().then((ok) => {
   if (!ok) console.warn(`cog memory daemon not reachable at ${config.cogSocket} — memory disabled until it comes up`);
 });
 
-const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore });
+const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`ytsejam listening on http://localhost:${info.port}`);
   console.log(`data dir: ${config.dataDir}`);
