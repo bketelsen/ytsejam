@@ -62,9 +62,16 @@ export function composeSystemPrompt(
 }
 
 /** System prompt for background worker subagents. */
-export function composeWorkerPrompt(persona: string, opts: { dataDir: string; now?: Date }): string {
+export function composeWorkerPrompt(
+  persona: string,
+  opts: { dataDir: string; workdir?: string; now?: Date },
+): string {
   const now = opts.now ?? new Date();
   const personaIntro = persona.trim().split("\n\n")[0] ?? "";
+  // The bash/file tools resolve relative paths against the subagent's
+  // working dir (inherited from the parent chat). Surface it explicitly so
+  // the model knows where unqualified paths land.
+  const workdir = opts.workdir ?? opts.dataDir;
   return `You are a background worker subagent acting on behalf of the user's personal assistant.
 
 The assistant you work for is described as:
@@ -78,7 +85,7 @@ ${personaIntro}
 ## Environment
 
 - Current date: ${now.toISOString().slice(0, 10)}
-- You run on the user's private server. Files you create live under ${opts.dataDir} unless an absolute path is given.
+- You run on the user's private server. Files you create live under ${workdir} unless an absolute path is given.
 
 ## Tool guidance
 

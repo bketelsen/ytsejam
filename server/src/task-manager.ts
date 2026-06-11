@@ -222,13 +222,22 @@ export class TaskManager {
       const parentWorkdir =
         this.opts.resolveParentWorkdir?.(created.parentSessionId) ?? this.opts.dataDir;
 
+      // The harness uses its own env for non-tool filesystem work (e.g.
+      // compaction file reads). Construct a per-task env rooted at the
+      // parent's workdir so that work also resolves there, without mutating
+      // the shared this.env that the session repo uses for storage.
+      const taskEnv = new NodeExecutionEnv({ cwd: parentWorkdir });
+
       const harness = new AgentHarness({
-        env: this.env,
+        env: taskEnv,
         session,
         model,
         tools: [...this.opts.workerTools, ...createSessionCwdTools(parentWorkdir)],
         systemPrompt: async () =>
-          composeWorkerPrompt(await this.opts.persona.load(), { dataDir: this.opts.dataDir }),
+          composeWorkerPrompt(await this.opts.persona.load(), {
+            dataDir: this.opts.dataDir,
+            workdir: parentWorkdir,
+          }),
         getApiKeyAndHeaders: async (m: Model<any>) => {
           const apiKey = await resolveApiKey(m.provider, this.opts.authStore);
           return apiKey ? { apiKey } : undefined;
