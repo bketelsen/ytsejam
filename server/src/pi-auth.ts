@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getEnvApiKey } from "@earendil-works/pi-ai";
+import { getEnvApiKey, type Model } from "@earendil-works/pi-ai";
 import { getOAuthApiKey, type OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 
 export function defaultPiAuthPath(): string {
@@ -75,4 +75,11 @@ export class PiAuthStore {
 /** Env keys win; pi OAuth credentials are the fallback. */
 export async function resolveApiKey(provider: string, store: PiAuthStore): Promise<string | undefined> {
   return getEnvApiKey(provider) ?? (await store.getApiKey(provider));
+}
+
+export function makeApiKeyResolver(store: PiAuthStore) {
+  return async (m: Model<any>) => {
+    const apiKey = await resolveApiKey(m.provider, store);
+    return apiKey ? { apiKey } : undefined;
+  };
 }

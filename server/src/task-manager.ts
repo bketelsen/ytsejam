@@ -7,11 +7,10 @@ import {
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import type { Model } from "@earendil-works/pi-ai";
 import type { EventBus } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
-import { resolveApiKey } from "./pi-auth.ts";
+import { makeApiKeyResolver } from "./pi-auth.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import { composeWorkerPrompt } from "./persona.ts";
 import type { PersonaStore } from "./persona.ts";
@@ -250,10 +249,7 @@ export class TaskManager {
             contextFiles,
           });
         },
-        getApiKeyAndHeaders: async (m: Model<any>) => {
-          const apiKey = await resolveApiKey(m.provider, this.opts.authStore);
-          return apiKey ? { apiKey } : undefined;
-        },
+        getApiKeyAndHeaders: makeApiKeyResolver(this.opts.authStore),
       });
       this.active.set(taskId, harness);
 
