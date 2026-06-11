@@ -71,7 +71,7 @@ export const Message = memo(function Message({
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[80%] rounded-lg px-3 py-2 ${
+        className={`max-w-[80%] min-w-0 rounded-lg px-3 py-2 ${
           isUser ? "bg-primary text-primary-foreground" : "border border-border bg-card text-card-foreground"
         }`}
       >
@@ -83,7 +83,7 @@ export const Message = memo(function Message({
         {blocks(message).map((b, i) => {
           if (b.type === "text" && b.text) {
             return (
-              <div key={i} className="prose dark:prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere] [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full">
+              <div key={i} className="prose dark:prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto [&_table]:max-w-full">
                 <Markdown remarkPlugins={[remarkGfm]}>{b.text}</Markdown>
               </div>
             );
