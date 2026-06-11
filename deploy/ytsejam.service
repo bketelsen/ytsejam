@@ -1,0 +1,83 @@
+[Unit]
+Description=ytsejam — web-based personal AI assistant (pi agent harness)
+Documentation=https://github.com/bketelsen/ytsejam
+After=network-online.target
+Wants=network-online.target
+# cogmemory is a SOFT dependency: ytsejam degrades gracefully when the memory
+# daemon is down (the cog tools just error per-call), so we order startup
+# without making ytsejam fail if cogmemory is absent. If you don't run
+# cogmemory at all, these two lines are harmless.
+Wants=cogmemory.service
+After=cogmemory.service
+
+[Service]
+Type=simple
+
+# Production code lives in the release tree, NOT the dev checkout. `current` is
+# a symlink that deploy.sh atomically swaps to the newest release. Never point
+# this at your ~/projects/ytsejam dev tree — prod must not share its working set.
+# %h expands to $HOME, so this unit is portable across users.
+WorkingDirectory=%h/.ytsejam/current/server
+
+# Rich PATH so the harness and the shells its bash tool spawns can find CLI
+# dependencies (node, git, gh, and whatever your subagents call). The systemd
+# --user manager does NOT apply ~/.config/environment.d to its own PATH, so a
+# service inherits a thin PATH unless it sets one explicitly — without this,
+# the agent's `bash`/`web`/delegate tool calls fail with "command not found".
+# This list is deliberately broad and tolerant of absent dirs. Edit to match
+# where your toolchains live; %h keeps it user-portable.
+Environment="PATH=%h/.local/bin:%h/bin:%h/go/bin:%h/.cargo/bin:%h/.bun/bin:%h/.volta/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"
+
+# Pin production explicitly. systemd Environment= overrides EnvironmentFile= for
+# matching keys, so even a stale env file can't accidentally flip these.
+Environment=NODE_ENV=production
+
+# Path defaults live HERE (not the env file) because systemd expands %h to $HOME
+# in Environment= but does NOT expand ${HOME} inside an EnvironmentFile. Keeping
+# them here makes the unit portable across users with no hand-editing. Override
+# any of them by setting the same key in ytsejam.env (EnvironmentFile is read
+# after these, so a key present there wins — use absolute paths there).
+Environment=YTSEJAM_PORT=9873
+Environment=YTSEJAM_DATA_DIR=%h/.ytsejam/data
+Environment=YTSEJAM_WEB_DIST=%h/.ytsejam/current/web/dist
+Environment=YTSEJAM_COG_SOCKET=%h/.local/share/cogmemory/cog-memory.sock
+Environment=YTSEJAM_PI_AUTH=%h/.pi/agent/auth.json
+
+# All secrets + path/port overrides live here at mode 0600:
+#   YTSEJAM_AUTH_TOKEN, YTSEJAM_PORT, YTSEJAM_DATA_DIR, YTSEJAM_DEFAULT_MODEL,
+#   YTSEJAM_COG_SOCKET, YTSEJAM_PI_AUTH, provider API keys, BRAVE_API_KEY, ...
+# Leading '-' makes it optional so a missing file fails loud at the app layer
+# (YTSEJAM_AUTH_TOKEN is required by config.ts) rather than at unit parse time.
+EnvironmentFile=-%h/.ytsejam/ytsejam.env
+
+# Fail loud at activation if the release is incomplete, instead of as a runtime
+# error on the first request. Both are produced by deploy.sh; missing either
+# means the deploy did not finish.
+ExecStartPre=/usr/bin/test -f %h/.ytsejam/current/server/src/index.ts
+ExecStartPre=/usr/bin/test -f %h/.ytsejam/current/web/dist/index.html
+
+# The server runs TypeScript directly under Node (no server build step). `node`
+# is resolved from the PATH above. If you later adopt a single-file binary
+# (see deploy/README — the bun-compile experiment), this becomes
+# `ExecStart=%h/.ytsejam/current/ytsejam` with no other change.
+ExecStart=node src/index.ts
+
+Restart=on-failure
+RestartSec=3
+
+# On stop we send SIGTERM; the server should drain its in-flight LLM stream and
+# flush state. Keep this window comfortably larger than the longest expected
+# single-turn drain so streams are not killed mid-response.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+
+# --- Hardening (user-scope only; no privileged ops) ---
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ytsejam
+
+[Install]
+WantedBy=default.target
