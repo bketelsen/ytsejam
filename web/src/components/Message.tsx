@@ -239,7 +239,7 @@ export const Message = memo(function Message({
           if (b.type === "toolCall" && b.name === "delegate" && tasks && onViewTranscript) {
             const result = b.id ? toolResults.get(b.id) : undefined;
             const taskId =
-              (result?.details as any)?.taskId ??
+              (result?.details as { taskId?: string } | undefined)?.taskId ??
               /task ([0-9a-f-]{16,})/i.exec(
                 typeof result?.content === "string"
                   ? result.content
