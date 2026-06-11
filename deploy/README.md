@@ -62,6 +62,25 @@ One step back only. For an older release, point `current` at a specific
 against `/tmp/ytsejam-dev/data` and the cogmemory **test** socket. It cannot
 affect the production instance on :9873.
 
+## Migrating an existing data dir
+
+When you move from a dev/manual data dir to the production one (or to a new
+host), carry the **source-of-truth** state — sessions, tasks, schedules,
+persona, skills — but **not** `index.db`. That sqlite file is a derived cache
+the server rebuilds from the JSONL on boot; copying a live WAL risks a torn
+database.
+
+    systemctl --user stop ytsejam          # stop the destination writer
+    SRC=~/old/data DST=~/.ytsejam/data deploy/migrate-data.sh
+    systemctl --user start ytsejam          # rebuilds index.db from the copied JSONL
+    journalctl --user -u ytsejam -n 10
+
+Defaults are `SRC=~/projects/ytsejam/server/data` and `DST=~/.ytsejam/data`.
+`EXTRAS=1` also copies any non-core working directories the agent created in
+the source. Run it with the **source instance stopped** so nothing is
+mid-write. Skills are merged: files missing in the destination are copied,
+release-seeded ones are left untouched.
+
 ## Notes / portability
 
 - The unit (`ytsejam.service`) and scripts use `%h`/`$HOME` only — no hardcoded
