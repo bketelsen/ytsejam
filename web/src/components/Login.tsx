@@ -18,7 +18,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background text-foreground">
+    <div className="flex h-dvh items-center justify-center bg-background text-foreground">
       <form onSubmit={submit} className="w-80 space-y-3 rounded-lg border border-border bg-card p-6 text-card-foreground shadow-xl">
         <h1 className="text-lg font-semibold">ytsejam</h1>
         <Input
