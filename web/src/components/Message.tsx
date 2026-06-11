@@ -30,7 +30,7 @@ export function ToolCallCard({
     <div className="my-1 rounded-md border border-border bg-background text-sm text-foreground">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 p-2 text-left text-foreground"
+        className="flex w-full items-center gap-2 p-2 text-left text-foreground hover:bg-muted/50 transition-colors rounded-md"
       >
         <span>{open ? "▾" : "▸"}</span>
         <span className="font-mono">{call.name}</span>
