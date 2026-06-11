@@ -15,6 +15,46 @@ export interface SessionRow {
   archived: boolean;
 }
 
+type SqliteInteger = number | bigint;
+
+interface SessionDbRow {
+  id: string;
+  path: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  preview: string;
+  unread: SqliteInteger;
+  archived: SqliteInteger;
+}
+
+interface TaskDbRow {
+  id: string;
+  parent_session_id: string;
+  subagent_session_id: string | null;
+  label: string;
+  status: string;
+  model: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  result_summary: string;
+}
+
+interface ScheduleDbRow {
+  id: string;
+  label: string;
+  prompt: string;
+  spec_json: string;
+  target_session_id: string | null;
+  enabled: SqliteInteger;
+  cancelled: SqliteInteger;
+  created_at: string;
+  last_fired_at: string | null;
+  next_fire_at: string | null;
+  fired_count: SqliteInteger;
+}
+
 export class Indexer {
   private db: DatabaseSync;
   /** true when the constructor wiped a stale/corrupt index — caller should rebuild from JSONL */
@@ -142,7 +182,7 @@ export class Indexer {
   }
 
   getSession(id: string): SessionRow | undefined {
-    const r = this.db.prepare("SELECT * FROM sessions WHERE id=?").get(id) as any;
+    const r = this.db.prepare("SELECT * FROM sessions WHERE id=?").get(id) as SessionDbRow | undefined;
     return r ? this.toRow(r) : undefined;
   }
 
@@ -150,7 +190,7 @@ export class Indexer {
     const sql = opts?.includeArchived
       ? "SELECT * FROM sessions ORDER BY updated_at DESC"
       : "SELECT * FROM sessions WHERE archived=0 ORDER BY updated_at DESC";
-    return (this.db.prepare(sql).all() as any[]).map((r) => this.toRow(r));
+    return (this.db.prepare(sql).all() as unknown as SessionDbRow[]).map((r) => this.toRow(r));
   }
 
   reset(): void {
@@ -191,12 +231,12 @@ export class Indexer {
   }
 
   getTask(id: string): TaskRow | undefined {
-    const r = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as any;
+    const r = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as TaskDbRow | undefined;
     return r ? this.toTaskRow(r) : undefined;
   }
 
   listTasks(): TaskRow[] {
-    return (this.db.prepare("SELECT * FROM tasks ORDER BY created_at DESC").all() as any[]).map((r) =>
+    return (this.db.prepare("SELECT * FROM tasks ORDER BY created_at DESC").all() as unknown as TaskDbRow[]).map((r) =>
       this.toTaskRow(r),
     );
   }
@@ -227,17 +267,17 @@ export class Indexer {
   }
 
   getSchedule(id: string): ScheduleRow | undefined {
-    const r = this.db.prepare("SELECT * FROM schedules WHERE id=?").get(id) as any;
+    const r = this.db.prepare("SELECT * FROM schedules WHERE id=?").get(id) as ScheduleDbRow | undefined;
     return r ? this.toScheduleRow(r) : undefined;
   }
 
   listSchedules(): ScheduleRow[] {
-    return (this.db.prepare("SELECT * FROM schedules ORDER BY created_at DESC").all() as any[]).map(
+    return (this.db.prepare("SELECT * FROM schedules ORDER BY created_at DESC").all() as unknown as ScheduleDbRow[]).map(
       (r) => this.toScheduleRow(r),
     );
   }
 
-  private toScheduleRow(r: any): ScheduleRow {
+  private toScheduleRow(r: ScheduleDbRow): ScheduleRow {
     return {
       id: r.id,
       label: r.label,
@@ -253,7 +293,7 @@ export class Indexer {
     };
   }
 
-  private toTaskRow(r: any): TaskRow {
+  private toTaskRow(r: TaskDbRow): TaskRow {
     return {
       id: r.id,
       parentSessionId: r.parent_session_id,
@@ -268,7 +308,7 @@ export class Indexer {
     };
   }
 
-  private toRow(r: any): SessionRow {
+  private toRow(r: SessionDbRow): SessionRow {
     return {
       id: r.id,
       path: r.path,
