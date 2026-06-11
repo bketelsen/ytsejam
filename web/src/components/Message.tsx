@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, ContentBlock, TaskRow } from "@/lib/types";
@@ -52,7 +52,7 @@ export function ToolCallCard({
   );
 }
 
-export function Message({
+export const Message = memo(function Message({
   message,
   toolResults,
   tasks,
@@ -115,4 +115,4 @@ export function Message({
       </div>
     </div>
   );
-}
+});

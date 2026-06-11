@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,10 +32,16 @@ export function Chat({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, streaming]);
 
-  const toolResults = new Map<string, ChatMessage>();
-  for (const m of messages) {
-    if (m.role === "toolResult" && m.toolCallId) toolResults.set(m.toolCallId, m);
-  }
+  // Memoize so the reference is stable across re-renders driven by unrelated
+  // state (e.g. the composer's `draft`). Without this, the fresh Map on every
+  // keystroke would defeat React.memo on <Message> below. (#23)
+  const toolResults = useMemo(() => {
+    const map = new Map<string, ChatMessage>();
+    for (const m of messages) {
+      if (m.role === "toolResult" && m.toolCallId) map.set(m.toolCallId, m);
+    }
+    return map;
+  }, [messages]);
 
   async function submit() {
     const text = draft.trim();
