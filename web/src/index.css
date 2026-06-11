@@ -147,7 +147,7 @@
     }
 }
 
-@media (pointer: coarse) {
+@media (pointer: coarse) and (hover: none) {
   [data-slot="button"],
   [data-slot="input"],
   [data-slot="select-trigger"] {
