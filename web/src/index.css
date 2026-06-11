@@ -146,3 +146,11 @@
     @apply font-sans;
     }
 }
+
+@media (pointer: coarse) {
+  [data-slot="button"],
+  [data-slot="input"],
+  [data-slot="select-trigger"] {
+    min-height: 44px;
+  }
+}
