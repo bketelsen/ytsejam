@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/api";
@@ -13,6 +14,7 @@ export function Chat({
   running,
   tasks,
   onSend,
+  onMenuClick,
 }: {
   sessionId: string | null;
   messages: ChatMessage[];
@@ -20,6 +22,7 @@ export function Chat({
   running: boolean;
   tasks: Record<string, TaskRow>;
   onSend: (text: string) => Promise<void>;
+  onMenuClick: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -43,6 +46,11 @@ export function Chat({
 
   return (
     <main className="flex flex-1 flex-col">
+      <header className="flex items-center gap-2 border-b border-border px-2 py-1.5 md:hidden">
+        <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open sessions">
+          <Menu />
+        </Button>
+      </header>
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 && !streaming && (
           <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
