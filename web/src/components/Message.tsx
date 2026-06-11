@@ -1,13 +1,147 @@
-import { memo, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Check, Copy } from "lucide-react";
 import type { ChatMessage, ContentBlock, TaskRow } from "@/lib/types";
+import { absoluteTime, relativeTime } from "@/lib/time";
+import { Button } from "./ui/button";
 import { TaskCard } from "./TaskCard";
 
 function blocks(message: ChatMessage): ContentBlock[] {
   return typeof message.content === "string"
     ? [{ type: "text", text: message.content }]
     : message.content;
+}
+
+/** The human-facing text of a message: just text blocks, joined with newlines.
+ *  Thinking blocks and tool-call JSON are intentionally excluded — this is
+ *  what the model actually said. */
+function copyableText(message: ChatMessage): string {
+  return blocks(message)
+    .filter((b) => b.type === "text" && b.text)
+    .map((b) => b.text ?? "")
+    .join("\n");
+}
+
+/** Feature-detect the clipboard pathways once at module load. The async
+ *  Clipboard API is gated on a secure context; the legacy execCommand path
+ *  works on plain-http LAN. If neither is available the copy button hides. */
+function hasAsyncClipboard(): boolean {
+  return typeof navigator !== "undefined" && !!navigator.clipboard?.writeText;
+}
+function hasLegacyClipboard(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    typeof document.execCommand === "function" &&
+    typeof document.queryCommandSupported === "function" &&
+    document.queryCommandSupported("copy")
+  );
+}
+const COPY_AVAILABLE = hasAsyncClipboard() || hasLegacyClipboard();
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (hasAsyncClipboard()) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through to legacy
+    }
+  }
+  if (hasLegacyClipboard()) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    // hide off-screen but keep selectable
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.left = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      const ok = document.execCommand("copy");
+      return ok;
+    } catch {
+      return false;
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+  return false;
+}
+
+/** Absolutely-positioned hover affordance (relative timestamp + copy button).
+ *  Rendered as a sibling of the bubble's content inside a `group relative`
+ *  bubble; itself uses `position: absolute` so it occupies NO layout box and
+ *  cannot push neighbours when it appears. Only opacity transitions. */
+function MessageHoverCluster({
+  text,
+  timestamp,
+  align,
+}: {
+  text: string;
+  timestamp: number | undefined;
+  align: "start" | "end";
+}) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const onCopy = useCallback(async () => {
+    if (!text) return;
+    const ok = await copyToClipboard(text);
+    if (!ok) return;
+    setCopied(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setCopied(false), 1500);
+  }, [text]);
+
+  const showCopy = COPY_AVAILABLE && text.length > 0;
+  const hasTimestamp = typeof timestamp === "number" && Number.isFinite(timestamp);
+
+  // Nothing useful to show — render nothing so the bubble has no decoration.
+  if (!showCopy && !hasTimestamp) return null;
+
+  // Anchor to the bubble's start or end edge depending on user vs assistant,
+  // and float ABOVE the bubble so the cluster cannot overlap message text at
+  // any width. Absolute positioning + opacity-only transition is what gives us
+  // the zero-layout-shift guarantee — see the `.message-hover-cluster` rule in
+  // index.css for the touch fallback that keeps the same `position: absolute`.
+  const positionClass = align === "end" ? "right-0" : "left-0";
+
+  return (
+    <div
+      className={`message-hover-cluster pointer-events-none absolute -top-5 ${positionClass} flex items-center gap-1 text-xs text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100`}
+    >
+      {hasTimestamp && (
+        <span
+          className="select-none rounded bg-background/80 px-1.5 py-0.5 backdrop-blur-sm"
+          title={absoluteTime(timestamp!)}
+        >
+          {relativeTime(timestamp!)}
+        </span>
+      )}
+      {showCopy && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={copied ? "Copied" : "Copy message"}
+          title={copied ? "Copied" : "Copy message"}
+          onClick={onCopy}
+          className="pointer-events-auto bg-background/80 backdrop-blur-sm"
+        >
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        </Button>
+      )}
+    </div>
+  );
 }
 
 export function ToolCallCard({
@@ -68,13 +202,20 @@ export const Message = memo(function Message({
 }) {
   if (message.role === "toolResult") return null; // rendered inside the assistant's tool card
   const isUser = message.role === "user";
+  const hasTimestamp = typeof message.timestamp === "number" && Number.isFinite(message.timestamp);
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[80%] min-w-0 rounded-lg px-3 py-2 ${
+        className={`group relative max-w-[80%] min-w-0 rounded-lg px-3 py-2 ${
           isUser ? "bg-primary text-primary-foreground" : "border border-border bg-card text-card-foreground"
         }`}
+        title={hasTimestamp ? absoluteTime(message.timestamp!) : undefined}
       >
+        <MessageHoverCluster
+          text={copyableText(message)}
+          timestamp={message.timestamp}
+          align={isUser ? "end" : "start"}
+        />
         {message.errorMessage && (
           <p className="mb-1 rounded bg-destructive/15 p-2 text-sm text-destructive">
             {message.stopReason === "aborted" ? "Aborted" : `Error: ${message.errorMessage}`}
