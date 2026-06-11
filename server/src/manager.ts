@@ -17,6 +17,7 @@ import { resolveApiKey } from "./pi-auth.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
+import { createSessionCwdTools } from "./tools/index.ts";
 
 const SESSIONS_CWD = "chat";
 
@@ -44,6 +45,12 @@ export interface AgentManagerOptions {
   tools: AgentTool<any>[];
   /** extra tools built per session (e.g. delegation tools that need the session id) */
   sessionTools?: (sessionId: string) => AgentTool<any>[];
+  /**
+   * Resolve the working directory the cwd-bearing tools (bash/file/search)
+   * should be bound against for a session. Defaults to dataDir when omitted
+   * (preserves the pre-workdir behavior).
+   */
+  resolveWorkdir?: (sessionId: string) => string;
   generateTitles: boolean;
   authStore: PiAuthStore;
   /** renders the "## Memory (cog)" system-prompt section from session_brief */
@@ -136,11 +143,16 @@ export class AgentManager {
   }
 
   private wire(metadata: JsonlSessionMetadata, session: Session, model: Model<any>): OpenSession {
+    const sessionCwd = this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
     const harness = new AgentHarness({
       env: this.env,
       session,
       model,
-      tools: [...this.opts.tools, ...(this.opts.sessionTools?.(metadata.id) ?? [])],
+      tools: [
+        ...this.opts.tools,
+        ...createSessionCwdTools(sessionCwd),
+        ...(this.opts.sessionTools?.(metadata.id) ?? []),
+      ],
       systemPrompt: async () => {
         // prompt sections must never block or break a session
         const [persona, cogSection, skillsSection] = await Promise.all([
@@ -284,6 +296,30 @@ export class AgentManager {
   async setModel(id: string, modelRef: string): Promise<void> {
     const opened = await this.getOrOpen(id);
     await opened.harness.setModel(this.opts.resolveModel(modelRef));
+  }
+
+  /**
+   * Apply a workdir change to a session: rebuild its cwd-bearing tools
+   * against the freshly-resolved workdir. The persistence step (appending
+   * the workdir event to the SSOT JSONL) is the caller's responsibility —
+   * by the time this runs, opts.resolveWorkdir(id) must already return the
+   * new value. Idempotent and safe to call on a session that isn't open
+   * yet; the next openSession() will pick up the new dir via wire().
+   */
+  async applyWorkdirChange(id: string): Promise<void> {
+    const opened = this.open.get(id);
+    if (!opened) return; // not loaded; next open will resolve fresh
+    const cwd = this.opts.resolveWorkdir?.(id) ?? this.opts.dataDir;
+    await opened.harness.setTools([
+      ...this.opts.tools,
+      ...createSessionCwdTools(cwd),
+      ...(this.opts.sessionTools?.(id) ?? []),
+    ]);
+  }
+
+  /** Resolved working dir for a session (the cwd its tools currently bind to). */
+  resolveWorkdir(id: string): string {
+    return this.opts.resolveWorkdir?.(id) ?? this.opts.dataDir;
   }
 
   markRead(id: string): void {

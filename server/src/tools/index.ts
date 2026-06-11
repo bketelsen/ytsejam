@@ -4,16 +4,36 @@ import { createEditTool, createLsTool, createReadTool, createWriteTool } from ".
 import { createFindTool, createGrepTool } from "./search.ts";
 import { createWebFetchTool, createWebSearchTool } from "./web.ts";
 
-export function createTools(dataDir: string): AgentTool<any>[] {
+/**
+ * Cwd-independent tools (web_search, web_fetch). Built once at boot and
+ * shared across every session; safe because they don't touch the filesystem.
+ */
+export function createGlobalTools(): AgentTool<any>[] {
+  return [createWebSearchTool(), createWebFetchTool()];
+}
+
+/**
+ * Cwd-bearing tools (bash, read, write, edit, ls, grep, find). Built per
+ * session against the session's resolved working directory so relative
+ * paths and `bash` invocations land in the right place.
+ */
+export function createSessionCwdTools(cwd: string): AgentTool<any>[] {
   return [
-    createWebSearchTool(),
-    createWebFetchTool(),
-    createBashTool(dataDir),
-    createReadTool(dataDir),
-    createWriteTool(dataDir),
-    createEditTool(dataDir),
-    createLsTool(dataDir),
-    createGrepTool(dataDir),
-    createFindTool(dataDir),
+    createBashTool(cwd),
+    createReadTool(cwd),
+    createWriteTool(cwd),
+    createEditTool(cwd),
+    createLsTool(cwd),
+    createGrepTool(cwd),
+    createFindTool(cwd),
   ];
+}
+
+/**
+ * Back-compat helper for callers that want the full toolset bound to one
+ * cwd (e.g. the subagent path in task-manager wires this against the
+ * parent's resolved workdir per task).
+ */
+export function createTools(dataDir: string): AgentTool<any>[] {
+  return [...createGlobalTools(), ...createSessionCwdTools(dataDir)];
 }
