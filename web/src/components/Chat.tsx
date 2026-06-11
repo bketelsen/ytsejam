@@ -51,18 +51,20 @@ export function Chat({
           <Menu />
         </Button>
       </header>
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
-        {messages.length === 0 && !streaming && (
-          <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
-        )}
-        {messages.map((m, i) => (
-          <Message key={i} message={m} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />
-        ))}
-        {streaming && <Message message={streaming} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />}
-        <div ref={bottomRef} />
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-4xl space-y-3 p-4">
+          {messages.length === 0 && !streaming && (
+            <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
+          )}
+          {messages.map((m, i) => (
+            <Message key={i} message={m} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />
+          ))}
+          {streaming && <Message message={streaming} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />}
+          <div ref={bottomRef} />
+        </div>
       </div>
-      <div className="border-t border-border bg-background px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
-        <div className="flex gap-2">
+      <div className="border-t border-border bg-background pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+        <div className="mx-auto flex max-w-4xl gap-2 px-3">
           <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
