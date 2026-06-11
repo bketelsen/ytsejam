@@ -59,6 +59,14 @@ export interface AgentManagerOptions {
    */
   isArchived?: (sessionId: string) => boolean;
   /**
+   * Persist a change to a session's archived state into the same SSOT that
+   * `isArchived` reads from. Called by archiveSession/unarchiveSession so the
+   * manager doesn't need a direct ArchiveStore dependency (parallels the read
+   * hook). When omitted, archive/unarchive only update the derived index and
+   * emit events — useful for tests that don't care about persistence.
+   */
+  markArchived?: (sessionId: string, archived: boolean) => void;
+  /**
    * Optional: load AGENTS.md/CLAUDE.md ancestor-chain context for a
    * resolved workdir. Returned text is injected into the system prompt
    * under "## Project context files". Returns "" or undefined to skip.
@@ -350,18 +358,20 @@ export class AgentManager {
     this.emitMeta(id);
   }
 
-  async deleteSession(id: string): Promise<void> {
-    const opened = this.open.get(id);
-    if (opened) {
-      if (opened.running) await opened.harness.abort();
-      this.open.delete(id);
-      await this.repo.delete(opened.metadata);
-    } else {
-      const metadata = (await this.repo.list({ cwd: SESSIONS_CWD })).find((m) => m.id === id);
-      if (metadata) await this.repo.delete(metadata);
-    }
-    this.opts.indexer.deleteSession(id);
-    this.opts.bus.emit({ type: "session_deleted", sessionId: id });
+  async archiveSession(id: string): Promise<void> {
+    // Archive is non-destructive: leave a running session running, leave the
+    // open-map entry alone (so an in-flight turn completes normally), and
+    // never call repo.delete — the JSONL stays on disk. The session is only
+    // hidden from the default list via the derived archived flag.
+    this.opts.markArchived?.(id, true);
+    this.opts.indexer.setArchived(id, true);
+    this.opts.bus.emit({ type: "session_archived", sessionId: id });
+  }
+
+  async unarchiveSession(id: string): Promise<void> {
+    this.opts.markArchived?.(id, false);
+    this.opts.indexer.setArchived(id, false);
+    this.opts.bus.emit({ type: "session_unarchived", sessionId: id });
   }
 
   // ---- index rebuild (sqlite is derived; JSONL is SSOT) -------------------

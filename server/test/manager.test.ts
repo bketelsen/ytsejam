@@ -117,17 +117,19 @@ describe("AgentManager", () => {
     expect(indexer.getSession(row.id)!.title).toBe("Mid-run title"); // survived = in JSONL
   });
 
-  test("delete during title generation does not resurrect the session", async () => {
-    const { mkdtempSync, readdirSync } = await import("node:fs");
+  test("archive during title generation does not resurrect the session into the active list", async () => {
+    const { mkdtempSync, readdirSync, existsSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const { AgentManager } = await import("../src/manager.ts");
     const { PersonaStore } = await import("../src/persona.ts");
     const { EventBus } = await import("../src/events.ts");
     const { Indexer } = await import("../src/indexer.ts");
+    const { ArchiveStore } = await import("../src/archive-store.ts");
 
     const dataDir = mkdtempSync(join(tmpdir(), "ytsejam-"));
     const indexer = new Indexer(join(dataDir, "index.db"));
+    const archiveStore = new ArchiveStore(join(dataDir, "archived"));
     const manager = new AgentManager({
       dataDir,
       indexer,
@@ -138,40 +140,95 @@ describe("AgentManager", () => {
       tools: [],
       generateTitles: true,
       authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
+      isArchived: (id) => archiveStore.isArchived(id),
+      markArchived: (id, archived) =>
+        archiveStore.append(id, { archived, timestamp: new Date().toISOString() }),
     });
 
     faux.setResponses([
       fauxAssistantMessage("normal reply"),
-      // title-gen completion: delayed so delete races ahead of the appendSessionName
+      // title-gen completion: delayed so archive races ahead of the appendSessionName
       async () => {
         await new Promise((r) => setTimeout(r, 200));
-        return fauxAssistantMessage("Resurrected Title");
+        return fauxAssistantMessage("Late Title");
       },
     ]);
 
     const row = await manager.createSession();
     await manager.sendMessage(row.id, "hi");
     await manager.waitForIdle(row.id);
-    // title generation is now in flight; delete before it completes
-    await manager.deleteSession(row.id);
+    // title generation is now in flight; archive before it completes
+    await manager.archiveSession(row.id);
     await new Promise((r) => setTimeout(r, 500)); // let title-gen completion settle
 
-    expect(indexer.getSession(row.id)).toBeUndefined();
+    // hidden from default list, present with includeArchived; JSONL preserved
+    expect(indexer.listSessions().map((s) => s.id)).toEqual([]);
+    expect(indexer.listSessions({ includeArchived: true }).map((s) => s.id)).toEqual([row.id]);
     const chatDir = join(dataDir, "sessions", "--chat--");
     const remaining = readdirSync(chatDir).filter((f) => f.includes(row.id));
-    expect(remaining).toEqual([]);
+    expect(remaining.length).toBe(1); // file stays on disk
+    expect(existsSync(join(chatDir, remaining[0]))).toBe(true);
   });
 
-  test("rename and delete update index and emit events", async () => {
-    const { manager, indexer, bus } = makeManager(faux);
+  test("rename and archive update index and emit events; JSONL file stays on disk", async () => {
+    const { mkdtempSync, readdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { ArchiveStore } = await import("../src/archive-store.ts");
+
+    const dataDir = mkdtempSync(join(tmpdir(), "ytsejam-"));
+    const archiveStore = new ArchiveStore(join(dataDir, "archived"));
+    const { manager, indexer, bus } = makeManager(faux, {
+      dataDir,
+      isArchived: (id) => archiveStore.isArchived(id),
+      markArchived: (id, archived) =>
+        archiveStore.append(id, { archived, timestamp: new Date().toISOString() }),
+    });
     const events: ServerEvent[] = [];
     bus.subscribe((e) => events.push(e));
+
     const row = await manager.createSession();
     await manager.rename(row.id, "My title");
     expect(indexer.getSession(row.id)!.title).toBe("My title");
-    await manager.deleteSession(row.id);
-    expect(indexer.getSession(row.id)).toBeUndefined();
-    expect(events.some((e) => e.type === "session_deleted")).toBe(true);
+
+    await manager.archiveSession(row.id);
+    // hidden from default list but the row + file both still exist
+    expect(indexer.getSession(row.id)).toBeDefined();
+    expect(indexer.getSession(row.id)!.archived).toBe(true);
+    expect(indexer.listSessions().map((s) => s.id)).toEqual([]);
+    expect(events.some((e) => e.type === "session_archived")).toBe(true);
+    const chatDir = join(dataDir, "sessions", "--chat--");
+    expect(readdirSync(chatDir).filter((f) => f.includes(row.id)).length).toBe(1);
+
+    // unarchive restores it
+    await manager.unarchiveSession(row.id);
+    expect(indexer.getSession(row.id)!.archived).toBe(false);
+    expect(indexer.listSessions().map((s) => s.id)).toEqual([row.id]);
+    expect(events.some((e) => e.type === "session_unarchived")).toBe(true);
+  });
+
+  test("archiving a running session does not abort it; it is just hidden", async () => {
+    const { manager, indexer } = makeManager(faux);
+    faux.setResponses([
+      async () => {
+        await new Promise((r) => setTimeout(r, 300));
+        return fauxAssistantMessage("ran to completion");
+      },
+    ]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "go");
+    expect(manager.isRunning(row.id)).toBe(true);
+
+    // archive mid-run; the spec says non-destructive — turn must finish
+    await manager.archiveSession(row.id);
+    expect(indexer.listSessions().map((s) => s.id)).toEqual([]); // hidden
+
+    await manager.waitForIdle(row.id);
+    const messages = await manager.getMessages(row.id);
+    expect(messages.some((m: any) => m.role === "assistant")).toBe(true);
+    // the reply landed in the JSONL — turn was not interrupted
+    const assistant = messages.find((m: any) => m.role === "assistant") as any;
+    expect(assistant.content[0].text).toContain("ran to completion");
   });
 
   test(

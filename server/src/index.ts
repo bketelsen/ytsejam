@@ -67,6 +67,8 @@ const manager = new AgentManager({
   ],
   resolveWorkdir: (sessionId) => resolveWorkdir(workdirs, sessionId, config.dataDir),
   isArchived: (sessionId) => archiveStore.isArchived(sessionId),
+  markArchived: (sessionId, archived) =>
+    archiveStore.append(sessionId, { archived, timestamp: new Date().toISOString() }),
   loadContextFiles: (cwd) => loadContextFiles(cwd, { disabled: !config.contextFiles }),
   generateTitles: config.generateTitles,
   authStore,
