@@ -21,7 +21,7 @@ function Main() {
     (t) => t.status === "running" || t.status === "pending",
   ).length;
   return (
-    <div className="flex h-screen bg-background text-foreground">
+    <div className="flex h-dvh bg-background text-foreground">
       <Sidebar
         sessions={app.sessions}
         currentId={app.currentId}
