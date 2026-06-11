@@ -47,6 +47,11 @@ export const client = {
   abort: (id: string) => api<{ ok: true }>(`/api/sessions/${id}/abort`, { method: "POST" }),
   patchSession: (id: string, patch: { title?: string; unread?: false; model?: string }) =>
     api<{ ok: true }>(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  setSessionCwd: (id: string, cwd: string) =>
+    api<{ ok: true; cwd: string }>(`/api/sessions/${id}/cwd`, {
+      method: "POST",
+      body: JSON.stringify({ cwd }),
+    }),
   deleteSession: (id: string) => api<{ ok: true }>(`/api/sessions/${id}`, { method: "DELETE" }),
   getPersona: () => api<{ content: string }>("/api/persona"),
   savePersona: (content: string) =>

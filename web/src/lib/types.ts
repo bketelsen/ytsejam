@@ -6,6 +6,8 @@ export interface SessionRow {
   preview: string;
   unread: boolean;
   running: boolean;
+  // Only the GET /api/sessions/:id response carries this; the list endpoint omits it.
+  cwd?: string;
 }
 
 export interface ContentBlock {

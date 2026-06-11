@@ -10,6 +10,10 @@ export function useApp() {
   const [streaming, setStreaming] = useState<ChatMessage | null>(null);
   const [connected, setConnected] = useState(false);
   const [tasks, setTasks] = useState<Record<string, TaskRow>>({});
+  // Working directory for the currently-open session. Loaded from getSession;
+  // the listSessions endpoint does not include it. Undefined while no session
+  // is selected or before the per-session fetch resolves.
+  const [currentCwd, setCurrentCwd] = useState<string | undefined>(undefined);
   const wsRef = useRef<ReturnType<typeof connectWs> | null>(null);
   const currentIdRef = useRef<string | null>(null);
   currentIdRef.current = currentId;
@@ -88,14 +92,16 @@ export function useApp() {
     setCurrentId(id);
     setMessages([]);
     setStreaming(null);
+    setCurrentCwd(undefined);
     wsRef.current?.subscribe(id);
     if (id) {
-      const { messages } = await client.getSession(id);
+      const { session, messages } = await client.getSession(id);
       // user may have switched again while the transcript loaded
       if (currentIdRef.current !== id) return;
       // note: a message_end arriving during the fetch can be clobbered by this
       // snapshot; it self-heals on reselect (messages have no stable id to merge by)
       setMessages(messages);
+      setCurrentCwd(session.cwd);
       void client.patchSession(id, { unread: false });
       setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: false } : s)));
     }
@@ -127,6 +133,8 @@ export function useApp() {
     streaming,
     connected,
     tasks,
+    currentCwd,
+    setCurrentCwd,
     selectSession,
     newSession,
     send,
