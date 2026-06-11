@@ -13,7 +13,7 @@ import { completeSimple, type Model } from "@earendil-works/pi-ai";
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
-import { resolveApiKey } from "./pi-auth.ts";
+import { makeApiKeyResolver } from "./pi-auth.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
@@ -193,10 +193,7 @@ export class AgentManager {
           contextFiles,
         });
       },
-      getApiKeyAndHeaders: async (m: Model<any>) => {
-        const apiKey = await resolveApiKey(m.provider, this.opts.authStore);
-        return apiKey ? { apiKey } : undefined;
-      },
+      getApiKeyAndHeaders: makeApiKeyResolver(this.opts.authStore),
     });
     const opened: OpenSession = { id: metadata.id, metadata, session, harness, running: false };
 
