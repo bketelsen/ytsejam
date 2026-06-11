@@ -34,6 +34,12 @@ export class PersonaStore {
   }
 }
 
+function contextFilesSection(contextFiles?: string): string {
+  return contextFiles?.trim()
+    ? `\n\n## Project context files\n\n${contextFiles.trim()}`
+    : "";
+}
+
 export function composeSystemPrompt(
   persona: string,
   opts: {
@@ -49,9 +55,7 @@ export function composeSystemPrompt(
     .filter((s): s is string => Boolean(s?.trim()))
     .map((s) => `\n\n${s.trim()}`)
     .join("");
-  const contextFiles = opts.contextFiles?.trim()
-    ? `\n\n## Project context files\n\n${opts.contextFiles.trim()}`
-    : "";
+  const contextFiles = contextFilesSection(opts.contextFiles);
   return `${persona.trim()}
 
 ---
@@ -81,9 +85,7 @@ export function composeWorkerPrompt(
   // working dir (inherited from the parent chat). Surface it explicitly so
   // the model knows where unqualified paths land.
   const workdir = opts.workdir ?? opts.dataDir;
-  const contextFiles = opts.contextFiles?.trim()
-    ? `\n\n## Project context files\n\n${opts.contextFiles.trim()}`
-    : "";
+  const contextFiles = contextFilesSection(opts.contextFiles);
   return `You are a background worker subagent acting on behalf of the user's personal assistant.
 
 The assistant you work for is described as:
