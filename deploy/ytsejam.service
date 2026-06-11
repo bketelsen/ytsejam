@@ -56,11 +56,16 @@ EnvironmentFile=-%h/.ytsejam/ytsejam.env
 ExecStartPre=/usr/bin/test -f %h/.ytsejam/current/server/src/index.ts
 ExecStartPre=/usr/bin/test -f %h/.ytsejam/current/web/dist/index.html
 
-# The server runs TypeScript directly under Node (no server build step). `node`
-# is resolved from the PATH above. If you later adopt a single-file binary
+# The server runs TypeScript directly under Node (no server build step). We
+# invoke it through `/usr/bin/env` so `node` is resolved from the PATH above —
+# systemd looks up a BARE ExecStart command against its own pre-Environment
+# PATH (so a bare `node` fails with "Unable to locate executable"), but an
+# absolute `/usr/bin/env` is always found and then resolves `node` using the
+# PATH we set here. This keeps the unit portable (system/Volta/brew node all
+# work) with no hardcoded node path. If you later adopt a single-file binary
 # (see deploy/README — the bun-compile experiment), this becomes
 # `ExecStart=%h/.ytsejam/current/ytsejam` with no other change.
-ExecStart=node src/index.ts
+ExecStart=/usr/bin/env node src/index.ts
 
 Restart=on-failure
 RestartSec=3

@@ -69,12 +69,14 @@ affect the production instance on :9873.
 - The `PATH=` line in the unit is broad and tolerant of absent directories.
   Trim or extend it to match where your toolchains live; the agent's `bash`
   tool needs `node`, `git`, and whatever your subagents call to be on it.
-- `ExecStart=node src/index.ts` resolves `node` via the unit's `PATH=` line
-  (works whether node comes from your system, Homebrew, Volta, etc.). If `node`
-  is somewhere exotic, either add its dir to the `PATH=` line or change
-  `ExecStart` to an absolute path. `systemd-analyze verify` will warn that
-  `node` "is not executable" — that is a false positive (the verifier ignores
-  the unit's own `PATH=`); it resolves correctly at runtime.
+- `ExecStart=/usr/bin/env node src/index.ts` resolves `node` via the unit's
+  `PATH=` line (works whether node comes from your system, Homebrew, Volta,
+  etc.) without hardcoding a node path. The `/usr/bin/env` indirection is
+  required: systemd looks up a *bare* `ExecStart` command (`node`) against its
+  own PATH computed *before* the unit's `Environment=PATH=` is applied, so a
+  bare `node` fails with "Unable to locate executable: node". An absolute
+  `/usr/bin/env` is always found and then resolves `node` from the PATH we set.
+  If your `node` is not on that PATH, add its directory to the unit's `PATH=`.
 - cogmemory is a **soft dependency**: if its socket is absent the server still
   boots and only the `cog_*` tools error. Drop the `Wants=/After=cogmemory.service`
   lines from the unit if you do not run it.
