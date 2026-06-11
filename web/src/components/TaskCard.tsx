@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { client } from "@/lib/api";
@@ -56,10 +56,13 @@ export function TaskTranscriptDialog({
     };
   }, [open, taskId]);
 
-  const toolResults = new Map<string, ChatMessage>();
-  for (const m of messages) {
-    if (m.role === "toolResult" && m.toolCallId) toolResults.set(m.toolCallId, m);
-  }
+  const toolResults = useMemo(() => {
+    const map = new Map<string, ChatMessage>();
+    for (const m of messages) {
+      if (m.role === "toolResult" && m.toolCallId) map.set(m.toolCallId, m);
+    }
+    return map;
+  }, [messages]);
   // a terminal task is no longer working — any tool call without a result was
   // cut off, so render it as interrupted rather than a perpetual "running…"
   const live = !task || task.status === "running" || task.status === "pending";
