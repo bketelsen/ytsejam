@@ -75,13 +75,13 @@ export function Chat({
   }, [cwd]);
 
   return (
-    <main className="flex flex-1 flex-col">
+    <main className="flex min-w-0 flex-1 flex-col">
       <header className="flex items-center gap-2 border-b border-border px-2 py-1.5 md:hidden">
         <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open sessions">
           <Menu />
         </Button>
       </header>
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto max-w-4xl space-y-3 p-4">
           {messages.length === 0 && !streaming && (
             <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
