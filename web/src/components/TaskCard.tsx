@@ -66,7 +66,7 @@ export function TaskTranscriptDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-w-3xl h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[80vh] sm:rounded-xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {task ? `${task.label} — ${task.status}` : "Task transcript"}

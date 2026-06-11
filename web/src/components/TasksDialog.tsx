@@ -17,7 +17,7 @@ export function TasksDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="max-w-2xl h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[80vh] sm:rounded-xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Background tasks</DialogTitle>
           </DialogHeader>
