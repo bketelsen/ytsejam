@@ -116,6 +116,7 @@ export class AgentManager {
       updatedAt: metadata.createdAt,
       preview: "",
       unread: false,
+      archived: false,
     };
     this.opts.indexer.upsertSession(row);
     this.open.set(metadata.id, this.wire(metadata, session, model));
@@ -382,6 +383,7 @@ export class AgentManager {
           updatedAt,
           preview,
           unread: false,
+          archived: false,
         });
       } catch (err) {
         console.error(`failed to index session ${metadata.path}`, err);

@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { TaskRow, TaskStatus } from "./tasks.ts";
 import type { ScheduleRow } from "./schedules.ts";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export interface SessionRow {
   id: string;
@@ -12,6 +12,7 @@ export interface SessionRow {
   updatedAt: string;
   preview: string;
   unread: boolean;
+  archived: boolean;
 }
 
 export class Indexer {
@@ -59,7 +60,8 @@ export class Indexer {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         preview TEXT NOT NULL DEFAULT '',
-        unread INTEGER NOT NULL DEFAULT 0
+        unread INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX sessions_updated ON sessions(updated_at DESC);
       CREATE TABLE tasks (
@@ -99,13 +101,22 @@ export class Indexer {
   upsertSession(row: SessionRow): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, path, title, created_at, updated_at, preview, unread)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sessions (id, path, title, created_at, updated_at, preview, unread, archived)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET path=excluded.path, title=excluded.title,
            created_at=excluded.created_at, updated_at=excluded.updated_at,
-           preview=excluded.preview, unread=excluded.unread`,
+           preview=excluded.preview, unread=excluded.unread, archived=excluded.archived`,
       )
-      .run(row.id, row.path, row.title, row.createdAt, row.updatedAt, row.preview, row.unread ? 1 : 0);
+      .run(
+        row.id,
+        row.path,
+        row.title,
+        row.createdAt,
+        row.updatedAt,
+        row.preview,
+        row.unread ? 1 : 0,
+        row.archived ? 1 : 0,
+      );
   }
 
   touchSession(id: string, updatedAt: string, preview: string): void {
@@ -122,6 +133,10 @@ export class Indexer {
     this.db.prepare("UPDATE sessions SET unread=? WHERE id=?").run(unread ? 1 : 0, id);
   }
 
+  setArchived(id: string, archived: boolean): void {
+    this.db.prepare("UPDATE sessions SET archived=? WHERE id=?").run(archived ? 1 : 0, id);
+  }
+
   deleteSession(id: string): void {
     this.db.prepare("DELETE FROM sessions WHERE id=?").run(id);
   }
@@ -131,10 +146,11 @@ export class Indexer {
     return r ? this.toRow(r) : undefined;
   }
 
-  listSessions(): SessionRow[] {
-    return (this.db.prepare("SELECT * FROM sessions ORDER BY updated_at DESC").all() as any[]).map(
-      (r) => this.toRow(r),
-    );
+  listSessions(opts?: { includeArchived?: boolean }): SessionRow[] {
+    const sql = opts?.includeArchived
+      ? "SELECT * FROM sessions ORDER BY updated_at DESC"
+      : "SELECT * FROM sessions WHERE archived=0 ORDER BY updated_at DESC";
+    return (this.db.prepare(sql).all() as any[]).map((r) => this.toRow(r));
   }
 
   reset(): void {
@@ -261,6 +277,7 @@ export class Indexer {
       updatedAt: r.updated_at,
       preview: r.preview,
       unread: Number(r.unread) === 1,
+      archived: Number(r.archived) === 1,
     };
   }
 }
