@@ -1,9 +1,11 @@
 # Design: Message hover timestamp + copy button (UI only)
 
-**Status:** DRAFT (2026-06-11) — not yet implemented
+**Status:** SHIPPED 2026-06-11 — merged to `main` (commits `0564edb` impl, `11a18c4` tests + late-evening/early-morning fix); live in prod release `20260611-110817`.
 **Project:** ytsejam
 **Touches server/src:** NO — web/ only. No new API, no schema change.
-**Scope:** `web/src/components/Message.tsx` (+ maybe a tiny `lib/` time helper and `index.css` rule).
+**Scope:** `web/src/components/Message.tsx` + `web/src/lib/time.ts` (new) + `web/src/index.css` (coarse-pointer rule) + `web/test/time.test.mjs`.
+
+**As built:** matches the draft. No-shift via absolutely-positioned, opacity-only group-hover cluster (`message-hover-cluster`); native `title=` fallback; copy = raw markdown of text blocks only (excludes thinking/tool-JSON) with `navigator.clipboard` → hidden-textarea `execCommand` fallback → hide if neither; coarse-pointer fallback shows the cluster at opacity 0.6. Helper is Intl-based, no dependency. Honest caveat carried at ship: no-layout-shift is a structural CSS guarantee, visually confirmed by Brian on the dev instance.
 
 ---
 

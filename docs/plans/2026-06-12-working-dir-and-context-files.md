@@ -1,9 +1,15 @@
 # Design: Per-session working directory + repo context files + composer button row
 
-**Status:** DRAFT (2026-06-11) — not yet implemented
+**Status:** SHIPPED 2026-06-11 — merged to `main` (commits `d0d774d` per-session cwd, `e8a3ab5` subagent inheritance, `9f6198e` context-files, `14a519d` cwd API, `e14d598` web composer); live in prod release `20260611-110817`. Verified at runtime (agent `pwd` returned the set dir).
 **Project:** ytsejam
-**Touches server/src:** YES — `Justify-server-change:` required at commit (see Justification §)
+**Touches server/src:** YES — `Justify-server-change:` cited at commit.
 **Related:** [[wiki/topics/harness-check/index]], cog `projects/ytsejam/observations.md` 2026-06-11 context-files finding
+
+**As built (deviations from draft):**
+- **SSOT mechanism = ytsejam-side sidecar** (`server/src/workdirs.ts`), per-session JSONL events folded latest-wins, default = data dir — NOT an in-session harness marker (pi-agent-core's `JsonlSessionMetadata.cwd` is create-only and is the session home, confirmed; don't touch it). **The archive feature reuses this `workdirs.ts` pattern.**
+- Per-session cwd-bearing tools (bash/read/write/edit/ls/grep/find) moved to a per-session build resolved against the session's workdir; web/search tools stayed global.
+- Web v1 = absolute-path text **Dialog** (no directory browser), using the existing `Dialog`/`Input` primitives; the dialog POSTs via raw `fetch` (not the `api()` helper) so it can read the 400 error body. Working-dir button disabled until a session exists.
+- Built via delegated subagents; the first timed out at the old 15-min cap mid-step-4 → recovered (steps 1–3 + step-4 server were committed-green; a scoped follow-up subagent finished the web composer).
 
 ---
 
