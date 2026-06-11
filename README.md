@@ -18,6 +18,7 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 | `YTSEJAM_AUTH_TOKEN` | (required) | shared login token |
 | `YTSEJAM_PORT` | `3000` | HTTP port |
 | `YTSEJAM_DATA_DIR` | `./data` | JSONL sessions, persona, sqlite index |
+| `YTSEJAM_WEB_DIST` | `../web/dist` | directory of the built web assets to serve |
 | `YTSEJAM_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | `provider/modelId` |
 | `YTSEJAM_GENERATE_TITLES` | `true` | LLM session titles |
 | `YTSEJAM_PI_AUTH` | `~/.pi/agent/auth.json` | pi CLI OAuth credentials (Copilot/Codex subscriptions) |
@@ -34,7 +35,7 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 
     npm run dev:server   # API on :3000 (set YTSEJAM_AUTH_TOKEN)
     npm run dev:web      # UI on :5173, proxies /api
-    npm test             # server tests (vitest, faux LLM provider, no network)
+    npm test             # server + web tests (vitest, faux LLM provider, no network)
     npm run check        # typecheck
 
 ## Deployment
