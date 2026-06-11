@@ -53,11 +53,11 @@ export function Settings({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[80vh] sm:rounded-xl overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-2xl h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[80vh] sm:rounded-xl flex flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0 p-4 pb-0">
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <div>
             <h3 className="mb-1 text-sm font-medium">Persona</h3>
             <Textarea value={persona} onChange={(e) => setPersona(e.target.value)} rows={12} className="font-mono text-base md:text-sm" />

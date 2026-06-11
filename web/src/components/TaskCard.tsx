@@ -66,13 +66,13 @@ export function TaskTranscriptDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[80vh] sm:rounded-xl overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-3xl h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[80vh] sm:rounded-xl flex flex-col overflow-hidden p-0">
+        <DialogHeader className="shrink-0 p-4 pb-0">
           <DialogTitle>
             {task ? `${task.label} — ${task.status}` : "Task transcript"}
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.length === 0 && <p className="text-sm text-muted-foreground">No transcript yet…</p>}
           {messages.map((m, i) => (
             <Message key={i} message={m} toolResults={toolResults} interrupted={!live} />
