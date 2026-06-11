@@ -24,11 +24,12 @@ const fullDateTime = new Intl.DateTimeFormat(undefined, {
  * Format an epoch-ms timestamp as a short human-relative string suitable for
  * hover affordances on chat messages.
  *
- *   <60s        → "just now"
- *   <60m        → "Nm ago"
- *   <24h        → "Nh ago"
- *   1 cal. day  → "yesterday"
- *   else        → "Mon DD" (same calendar year as now) or "Mon DD, YYYY"
+ *   <60s                                  → "just now"
+ *   <60m                                  → "Nm ago"
+ *   <24h AND same calendar day            → "Nh ago"
+ *   exactly 1 calendar day ago            → "yesterday"
+ *   same calendar year, older             → "Mon DD"
+ *   else                                  → "Mon DD, YYYY"
  *
  * Future timestamps (clock skew, scheduled messages) fall back to "just now"
  * for small diffs and the absolute short date otherwise, keeping the function
@@ -40,16 +41,17 @@ export function relativeTime(ms: number): string {
 
   if (diff < MINUTE) return "just now"; // also covers small future skew
   if (diff < HOUR) return `${Math.floor(diff / MINUTE)}m ago`;
-  if (diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
 
   // Compare local calendar days so "yesterday" lines up with the user's sense
-  // of the word rather than a strict 24-hour window.
+  // of the word — e.g. an 8pm message read at 6am the next morning is
+  // "yesterday", not "10h ago".
   const nowDate = new Date(now);
   const thenDate = new Date(ms);
   const nowMidnight = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate()).getTime();
   const thenMidnight = new Date(thenDate.getFullYear(), thenDate.getMonth(), thenDate.getDate()).getTime();
   const dayDiff = Math.round((nowMidnight - thenMidnight) / DAY);
 
+  if (dayDiff === 0 && diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
   if (dayDiff === 1) return "yesterday";
 
   const formatter = thenDate.getFullYear() === nowDate.getFullYear() ? shortDateSameYear : shortDateWithYear;
