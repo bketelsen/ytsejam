@@ -1,9 +1,17 @@
 # Plan: Port the norma-* dev-workflow skills to ytsejam
 
-**Status:** DRAFT for review (2026-06-11) — Brian is scrutinizing these closely; nothing lands without section-by-section approval.
+**Status:** APPROVED 2026-06-11 — Brian answered all 5 open questions + 3 corrections (below). Ready to build, one skill at a time, spine first. Nothing lands without per-skill review of each `SKILL.md`.
 **Type:** skill port (USER skills, NOT seeded). Output is markdown skill bundles in `~/.ytsejam/data/skills/<name>/` — no ytsejam server code.
-**Research:** `/tmp/norma-skills-port-findings.md` (subagent 019eb808) — substance sound; its storage-mapping (M2) and "no ytsejam cog domain" claims are SUPERSEDED here (it read a stale clone `~/projects/cog/memory`; the live store is `~/.chapterhouse/memory` and `projects/ytsejam` exists).
-**Source:** `/home/bjk/.chapterhouse/skills/norma-*` (Chapterhouse).
+**Research:** `/tmp/norma-skills-port-findings.md` (subagent 019eb808) — substance sound; its storage-mapping (M2) and "no ytsejam cog domain" claims are SUPERSEDED here (it read a stale clone `~/projects/cog/memory`, since moved to `~/archive/cog`; the live store is `~/.chapterhouse/memory` and `projects/ytsejam` exists).
+**Source:** `/home/bjk/.chapterhouse/skills/norma-*` (Chapterhouse). Dispatch-target agents at `/home/bjk/.chapterhouse/agents/{coder,general-purpose,designer}.agent.md` — confirmed TINY generic-role prompts (no nesting, no real persona weight; `@coder` ≈ "be a careful engineer"). So the named-agent distinction is cosmetic: the substantive per-task instructions live in norma-develop's `implementer-prompt.md` + reviewer prompts, which fold into the `delegate` task body.
+
+## Decisions (Brian, 2026-06-11)
+- **Q1 Naming: DROP `norma-` prefix** → `develop`, `ship`, `brainstorm`, `write-plan`, `review`, `lessons`, `find-weeds`, `pull-weeds`.
+- **Q2 Manifests: TAILS** (structured report tails). Brian: "vaguely remember better luck with a durable manifest, but start with tails and evolve if needed." → D4 is tails; revisit later if the loop loses state.
+- **Q3 Worktrees: `/tmp/<branch>`** — fine as-is, not worth changing. (Brian floated `$DATA/.worktrees/<project>` but said tmp is fine.)
+- **Q4 Cadence: ONE SKILL AT A TIME**, Brian reviews each `SKILL.md`.
+- **Q5 Specs: live in the REPO** (not a cog-wiki page). So brainstorm/review's "spec" = a doc in `docs/plans/` (e.g. the design doc).
+- **No nested dispatch ever existed** in the source (Brian confirmed); agents were named but minimal. Port preserves the prompt CONTENT, drops the agent NAMES.
 
 ---
 
@@ -29,22 +37,24 @@ Chapterhouse used `delegate_to_agent(@coder)` / `(@general-purpose)` with named 
 - Model is chosen via `model: "provider/modelId"`. **Leave exact model strings as `<TODO: pick current model>`** — the report's examples are stale; Brian fills from the live picker.
 
 ### D2 — Storage: three-way split (Brian's corrected model — SUPERSEDES the research)
+**The wiki is NOT dropped.** ytsejam has no separate `wiki_update` tool and no Chapterhouse `pages/` path — but it HAS a wiki tier under the cog memory root (`wiki/…`), fully reachable via the normal cog tools (`cog_read`/`cog_write`/`cog_append`/`cog_patch`/`cog_search` against `wiki/...` paths — verified). So "porting the wiki" = **keep writing/reading the wiki, just through cog at the `wiki/` path** instead of `wiki_update` at `pages/`.
+
 | What | Where | How |
 |---|---|---|
-| **Heavy canonical plan files** (per-feature) | **the project repo** | `<repo>/docs/plans/YYYY-MM-DD-<slug>.md`, committed as canon |
-| **Durable specs / decisions / research / narrative** | **cog wiki tier** | `cog_write`/`cog_append` to `wiki/projects/<slug>/<page>.md` (verified reachable via cog tools) |
+| **Heavy canonical plan files + specs** (per-feature) | **the project repo** | `<repo>/docs/plans/YYYY-MM-DD-<slug>.md`, committed as canon. **Specs live here too (Q5)** — a spec is a section of, or a sibling `-design.md` to, the plan doc. |
+| **Durable decisions / research / cross-cutting narrative** | **cog wiki tier** | `cog_write`/`cog_append`/`cog_patch` to `wiki/projects/<slug>/<page>.md` (e.g. `wiki/projects/<slug>/decisions.md`). This is the real wiki — same content norma wrote, different tool path. |
 | **Working state / pointers / lessons / dev-log** | **cog domain files** | `cog_append`/`cog_write` to `projects/<slug>/{hot-memory,observations,dev-log}.md` |
 
-Drop everything wiki-`pages/`-path and the `wiki_update` tool. Replace `cog_edit` → `cog_patch`. This is the big substitution; it hits `brainstorm`, `write-plan`, `develop`, `review`, `ship`.
+Mechanical swaps everywhere: `wiki_update pages/projects/<slug>/X.md` → `cog_write`/`cog_append("wiki/projects/<slug>/X.md", …)`; `cog_edit` → `cog_patch`. The DISTINCTION that matters: a *plan/spec* (big, per-feature, canonical) goes to the **repo**; a *decision/research note* (durable narrative) goes to the **cog wiki**; a *pointer/lesson* goes to **cog domain files**. Hits `brainstorm`, `write-plan`, `develop`, `review`, `ship`.
 
 ### D3 — Gate: `scripts/gate.sh` + cog hot-memory note (already canonical via create-gate)
 Drop `projects_rules <slug>` and `rules.md`/`gate_script`-frontmatter everywhere. Replace with: run `bash scripts/gate.sh` if present; else read `projects/<slug>/hot-memory.md` for the `quality gate:` line. Hits `develop`, `ship`, `pull-weeds`.
 
-### D4 — Manifests: DROP, replace with structured report tails (recommended)
-Chapterhouse's `_manifests/task-NN.md` files bridged "subagent writes file → later step reads file." ytsejam returns the subagent's final message verbatim to the parent, which **collapses that bridge**. So: the implementer prompt requires the subagent to END its report with `## Decisions / ## Patterns Discovered / ## Lessons / ## Blockers / ## Context for Continuation`; the main agent reads those from the report text and routes them (per D2). Per-task `## Blockers` check still runs in the loop. **(Open Q2 — Brian may prefer the on-disk audit trail; if so, subagent writes `task-NN.md` into the `/tmp/<branch>/` worktree and the main agent reads it. Recommend tails.)**
+### D4 — Manifests: report tails (DECIDED — Q2)
+Chapterhouse's `_manifests/task-NN.md` files bridged "subagent writes file → later step reads file." ytsejam returns the subagent's final message verbatim to the parent, which **collapses that bridge**. So: the implementer prompt requires the subagent to END its report with `## Decisions / ## Patterns Discovered / ## Lessons / ## Blockers / ## Context for Continuation`; the main agent reads those from the report text and routes them (per D2). Per-task `## Blockers` check still runs in the loop. **Brian's note: he vaguely recalls better luck with a durable manifest — so this is the START; if the loop loses state across long sprints, evolve to subagent-written `task-NN.md` files in the `/tmp/<branch>/` worktree. Build tails first.**
 
-### D5 — Worktrees: `/tmp/<branch>` out-of-repo + commit-before-report (ytsejam-proven)
-Drop `.worktrees/<branch>` (Chapterhouse, in-repo). Use the pattern proven across this session's dev: isolated worktree under `/tmp/<branch>`, branch off `main`, **subagent commits an early WIP checkpoint the moment its owned set compiles and commits-before-report**, orchestrator re-verifies via `git log base..HEAD` + fsck before trusting a truncated report. Keep the node_modules symlink trick (ytsejam is Node). Bake the commit-before-report mandate into every implementer prompt. **(Open Q3 — confirm `/tmp` over `.worktrees`.)**
+### D5 — Worktrees: `/tmp/<branch>` out-of-repo + commit-before-report (DECIDED — Q3)
+Use the pattern proven across this session's dev: isolated worktree under `/tmp/<branch>`, branch off `main`, **subagent commits an early WIP checkpoint the moment its owned set compiles and commits-before-report**, orchestrator re-verifies via `git log base..HEAD` + fsck before trusting a truncated report. Keep the node_modules symlink trick (ytsejam is Node). Bake the commit-before-report mandate into every implementer prompt. (Brian floated `$DATA/.worktrees/<project>` as an alternative but confirmed `/tmp` is fine — not worth the change.)
 
 ### D6 — `triggers:` frontmatter on every ported skill
 ytsejam routes skills onto the system-prompt table from a `triggers: [...]` array (Chapterhouse skills only have name+description). Every ported skill gets one. Suggested triggers per skill are in the research (§2.x).
@@ -82,17 +92,13 @@ Each skill ported + reviewed + verified before the next where there's a dependen
 - **review** — thin wrapper on develop's two reviewer prompts; spec path → `docs/plans/<...>` / latest plan; `@coder`→`delegate` for fixes. Verdict CLEAN.
 - **ship** — Step 1 gate per D3. Step 2 manifest-routing reads report tails (D4) and routes per D2 (decisions→cog wiki `wiki/projects/<slug>/decisions.md` OR `projects/<slug>/observations.md` `[decision]`; global patterns→`cog_patch cog-meta/patterns.md`; lessons→invoke `lessons`; blockers→`gh issue create`; continuation→rewrite `projects/<slug>/hot-memory.md`). Step 8 wiki update → `cog_append projects/<slug>/dev-log.md` + a cog-wiki shipped note. PR `## Spec` link → repo `docs/plans/`. Verdict MODERATE.
 - **write-plan** — kill wiki write; plan → repo `docs/plans/YYYY-MM-DD-<slug>.md` only (D2). Worktree per D5. Manifests per D4. Handoff prose → `develop`. Verdict MODERATE.
-- **brainstorm** (FAVORITE — faithful port) — keep the Socratic design dialogue intact. Only: spec write → repo design doc `docs/plans/YYYY-MM-DD-<slug>-design.md` (already half-ytsejam-shaped) + optional cog-wiki page for durable design narrative; "check project wiki" → `cog_read projects/<slug>/hot-memory.md` + cog-wiki `wiki/projects/<slug>/` + `git log` + README/AGENTS; drop the setup-skills cross-link; `@coder` mention → `delegate`. Verdict CLEAN. **Review this one most carefully with Brian — it's the keystone of his workflow.**
+- **brainstorm** (FAVORITE — faithful port) — keep the Socratic design dialogue intact. Only: spec write → repo `docs/plans/YYYY-MM-DD-<slug>-design.md` (Q5: specs in repo; this half is already ytsejam-shaped); "check project wiki" → `cog_read("wiki/projects/<slug>/...")` (the wiki IS kept, via cog) + `cog_read projects/<slug>/hot-memory.md` + `git log` + README/AGENTS; drop the setup-skills cross-link; `@coder` mention → `delegate`. Verdict CLEAN. **Review this one most carefully — it's the keystone of Brian's workflow; port faithfully, minimal touch.**
 - **find-weeds** — parallel `delegate` (2 different reasoning models, `model:` param, TODO strings); drop `get_agent_result` (results arrive as `[Task ...]` messages inline); drop explicit CONTEXT.md read (harness auto-loads AGENTS.md/CLAUDE.md per the context-files feature); `gh issue create`/`gh label list` keep. Verdict MODERATE.
 - **pull-weeds** — parallel `delegate` per issue (+ "can't delegate further"); gate per D3; worktrees per D5 + keep node_modules symlink; **drop the SQL `todos`/`todo_deps` tracking → a `/tmp/<sprint>-todos.md` table** (no kanban in ytsejam); memory writes already cog-shaped (D7 — no defensive skip). Verdict MODERATE.
 
-## 5. Open questions for Brian (decide before building)
+## 5. Decisions resolved (was "open questions")
 
-- **Q1 — Naming:** drop `norma-` prefix (`develop`, `ship`, `brainstorm`, …)? Or keep `norma-` as a recognizable suite namespace? (I lean drop, matching `create-gate`.)
-- **Q2 — Manifests (D4):** structured report-tails (recommended, simpler, matches ytsejam's verbatim-report model) vs. on-disk `task-NN.md` audit trail?
-- **Q3 — Worktrees (D5):** `/tmp/<branch>` (recommended, matches this session's proven pattern) vs. `.worktrees/<branch>` (Chapterhouse, in-repo)?
-- **Q4 — Build cadence:** one skill at a time with your review of each ported `SKILL.md` before the next (high-fidelity, slower), or batch the CLEAN ones (lessons/review/brainstorm/find-weeds) and single-step only the HARD ones (develop/ship)? (Given your stated scrutiny, I lean one-at-a-time for the spine, batch the leaves.)
-- **Q5 — Specs:** does `brainstorm`/`review`'s "spec" become a section of the design doc in `docs/plans/`, a dedicated cog-wiki page, or both? (Affects where `review` looks for the spec.)
+All five answered by Brian 2026-06-11 — see the Decisions block at the top. Summary: drop `norma-` prefix (Q1); report-tails for manifests, evolve to durable if needed (Q2); `/tmp/<branch>` worktrees (Q3); one skill at a time with per-skill review (Q4); specs live in the repo `docs/plans/` (Q5). Plus: no nested dispatch ever existed; wiki is KEPT (via cog at `wiki/` path), not dropped. `setup-skills` confirmed DROP.
 
 ## 6. Non-goals
 - No ytsejam server code (pure skill markdown).
