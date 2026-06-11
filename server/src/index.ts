@@ -117,7 +117,7 @@ void cogClient.health().then((ok) => {
   if (!ok) console.warn(`cog memory daemon not reachable at ${config.cogSocket} — memory disabled until it comes up`);
 });
 
-const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore });
+const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`ytsejam listening on http://localhost:${info.port}`);
   console.log(`data dir: ${config.dataDir}`);

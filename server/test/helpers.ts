@@ -22,7 +22,9 @@ export function makeManager(
   faux: ReturnType<typeof registerFauxProvider>,
   overrides: Partial<AgentManagerOptions> = {},
 ) {
-  const dataDir = mkdtempSync(join(tmpdir(), "ytsejam-"));
+  // Honor a caller-supplied dataDir so tests can pre-create state (e.g. a
+  // workdir store) under it; otherwise allocate a fresh tmp dir.
+  const dataDir = overrides.dataDir ?? mkdtempSync(join(tmpdir(), "ytsejam-"));
   const indexer = new Indexer(join(dataDir, "index.db"));
   const bus = new EventBus();
   const fauxModel = faux.getModel() as Model<any>;
