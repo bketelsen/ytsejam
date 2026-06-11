@@ -52,6 +52,13 @@ export interface AgentManagerOptions {
    */
   resolveWorkdir?: (sessionId: string) => string;
   /**
+   * Whether a session is currently archived (soft-deleted). The flag is SSOT
+   * outside the indexer — index.db is rebuilt from JSONL on boot and so the
+   * archived column can't be authoritative; the caller passes a lookup that
+   * reads the per-session sidecar. Defaults to false when omitted.
+   */
+  isArchived?: (sessionId: string) => boolean;
+  /**
    * Optional: load AGENTS.md/CLAUDE.md ancestor-chain context for a
    * resolved workdir. Returned text is injected into the system prompt
    * under "## Project context files". Returns "" or undefined to skip.
@@ -116,7 +123,7 @@ export class AgentManager {
       updatedAt: metadata.createdAt,
       preview: "",
       unread: false,
-      archived: false,
+      archived: this.opts.isArchived?.(metadata.id) ?? false,
     };
     this.opts.indexer.upsertSession(row);
     this.open.set(metadata.id, this.wire(metadata, session, model));
@@ -383,7 +390,7 @@ export class AgentManager {
           updatedAt,
           preview,
           unread: false,
-          archived: false,
+          archived: this.opts.isArchived?.(metadata.id) ?? false,
         });
       } catch (err) {
         console.error(`failed to index session ${metadata.path}`, err);

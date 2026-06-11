@@ -173,6 +173,68 @@ describe("AgentManager", () => {
     expect(indexer.getSession(row.id)).toBeUndefined();
     expect(events.some((e) => e.type === "session_deleted")).toBe(true);
   });
+
+  test(
+    "archive state survives rebuildIndex (SSOT lives in the sidecar, not index.db)",
+    async () => {
+      // The load-bearing invariant: index.db is reset every boot. If archive
+      // were a DB-only flag the next restart would un-archive every session.
+      // Inject isArchived via the same hook the live wiring uses (index.ts
+      // passes ArchiveStore.isArchived); here we use an in-memory Set as a
+      // stand-in for any SSOT that the rebuild can consult.
+      const archived = new Set<string>();
+      const { manager, indexer } = makeManager(faux, {
+        isArchived: (id) => archived.has(id),
+      });
+      const row = await manager.createSession();
+      expect(indexer.getSession(row.id)!.archived).toBe(false);
+
+      // mark as archived in the SSOT (sidecar stand-in) — the DB column is
+      // stale on purpose to prove the rebuild reads the SSOT, not the DB
+      archived.add(row.id);
+
+      await manager.rebuildIndex();
+      expect(indexer.getSession(row.id)!.archived).toBe(true);
+      // default listSessions hides archived rows
+      expect(indexer.listSessions().map((s) => s.id)).toEqual([]);
+      // includeArchived surfaces them
+      expect(indexer.listSessions({ includeArchived: true }).map((s) => s.id)).toEqual([row.id]);
+
+      // Flip back: SSOT says active, rebuild should agree
+      archived.delete(row.id);
+      await manager.rebuildIndex();
+      expect(indexer.getSession(row.id)!.archived).toBe(false);
+      expect(indexer.listSessions().map((s) => s.id)).toEqual([row.id]);
+    },
+  );
+
+  test("archive state survives rebuildIndex via the real ArchiveStore wired the way index.ts wires it", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { ArchiveStore } = await import("../src/archive-store.ts");
+
+    const dataDir = mkdtempSync(join(tmpdir(), "arch-rebuild-"));
+    const store = new ArchiveStore(join(dataDir, "archived"));
+    const { manager, indexer } = makeManager(faux, {
+      dataDir,
+      isArchived: (id) => store.isArchived(id),
+    });
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+
+    // archive via the sidecar
+    store.append(row.id, { archived: true, timestamp: new Date().toISOString() });
+    // simulate the boot path: reset the index (a stale boot would reset to
+    // archived=0 for every row), then rebuild from JSONL + sidecar
+    indexer.reset();
+    await manager.rebuildIndex();
+    expect(indexer.getSession(row.id)!.archived).toBe(true);
+    expect(indexer.listSessions().map((s) => s.id)).toEqual([]);
+    expect(indexer.listSessions({ includeArchived: true }).map((s) => s.id)).toEqual([row.id]);
+  });
 });
 
 describe("injectMessage", () => {

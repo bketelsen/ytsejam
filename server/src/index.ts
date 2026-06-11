@@ -66,6 +66,7 @@ const manager = new AgentManager({
     ...createSchedulingTools(() => scheduler, sessionId),
   ],
   resolveWorkdir: (sessionId) => resolveWorkdir(workdirs, sessionId, config.dataDir),
+  isArchived: (sessionId) => archiveStore.isArchived(sessionId),
   loadContextFiles: (cwd) => loadContextFiles(cwd, { disabled: !config.contextFiles }),
   generateTitles: config.generateTitles,
   authStore,
