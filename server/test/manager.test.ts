@@ -268,4 +268,37 @@ describe("cog brief + skills prompt wiring", () => {
     const assistant = messages.find((m: any) => m.role === "assistant") as any;
     expect(assistant.content[0].text).toContain("still alive");
   });
+
+  test("loadContextFiles output reaches the harness system prompt", async () => {
+    const seen: string[] = [];
+    const { manager } = makeManager(faux, {
+      loadContextFiles: async () => "CTXMARK",
+    });
+    faux.setResponses([
+      (context: any) => {
+        seen.push(context.systemPrompt ?? "");
+        return fauxAssistantMessage("ok") as any;
+      },
+    ]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+    expect(seen[0]).toContain("## Project context files");
+    expect(seen[0]).toContain("CTXMARK");
+  });
+
+  test("a throwing loadContextFiles does not break the session", async () => {
+    const { manager } = makeManager(faux, {
+      loadContextFiles: async () => {
+        throw new Error("ctx-boom");
+      },
+    });
+    faux.setResponses([fauxAssistantMessage("ok")]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+    const messages = await manager.getMessages(row.id);
+    const assistant = messages.find((m: any) => m.role === "assistant") as any;
+    expect(assistant.content[0].text).toContain("ok");
+  });
 });

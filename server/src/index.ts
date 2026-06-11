@@ -22,6 +22,7 @@ import { SkillsStore } from "./skills.ts";
 import { createCogTools } from "./tools/cog.ts";
 import { createSkillTool } from "./tools/skills.ts";
 import { WorkdirStore, resolveWorkdir } from "./workdirs.ts";
+import { loadContextFiles } from "./context-files.ts";
 
 const config = loadConfig();
 
@@ -63,6 +64,7 @@ const manager = new AgentManager({
     ...createSchedulingTools(() => scheduler, sessionId),
   ],
   resolveWorkdir: (sessionId) => resolveWorkdir(workdirs, sessionId, config.dataDir),
+  loadContextFiles: (cwd) => loadContextFiles(cwd, { disabled: !config.contextFiles }),
   generateTitles: config.generateTitles,
   authStore,
   cogBrief,
@@ -84,6 +86,7 @@ taskManager = new TaskManager({
   workerTools: createGlobalTools(),
   resolveParentWorkdir: (parentSessionId) =>
     resolveWorkdir(workdirs, parentSessionId, config.dataDir),
+  loadContextFiles: (cwd) => loadContextFiles(cwd, { disabled: !config.contextFiles }),
   concurrency: config.taskConcurrency,
   timeoutMs: config.taskTimeoutMinutes * 60_000,
   notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),

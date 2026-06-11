@@ -62,3 +62,24 @@ describe("audit regressions", () => {
     expect(cfg.cogRole).toBe("agent");
   });
 });
+
+describe("context files config", () => {
+  test("defaults to true", () => {
+    expect(loadConfig({ YTSEJAM_AUTH_TOKEN: "x" }).contextFiles).toBe(true);
+  });
+
+  test("YTSEJAM_CONTEXT_FILES=false disables loading", () => {
+    expect(
+      loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "false" }).contextFiles,
+    ).toBe(false);
+  });
+
+  test("any other value (including empty) leaves it enabled", () => {
+    expect(
+      loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "true" }).contextFiles,
+    ).toBe(true);
+    expect(
+      loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "" }).contextFiles,
+    ).toBe(true);
+  });
+});

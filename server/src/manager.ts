@@ -51,6 +51,12 @@ export interface AgentManagerOptions {
    * (preserves the pre-workdir behavior).
    */
   resolveWorkdir?: (sessionId: string) => string;
+  /**
+   * Optional: load AGENTS.md/CLAUDE.md ancestor-chain context for a
+   * resolved workdir. Returned text is injected into the system prompt
+   * under "## Project context files". Returns "" or undefined to skip.
+   */
+  loadContextFiles?: (cwd: string) => Promise<string>;
   generateTitles: boolean;
   authStore: PiAuthStore;
   /** renders the "## Memory (cog)" system-prompt section from session_brief */
@@ -155,12 +161,21 @@ export class AgentManager {
       ],
       systemPrompt: async () => {
         // prompt sections must never block or break a session
-        const [persona, cogSection, skillsSection] = await Promise.all([
+        // resolve the workdir fresh each turn so a mid-session change picks up
+        // new AGENTS.md ancestry without reopening
+        const liveCwd = this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
+        const [persona, cogSection, skillsSection, contextFiles] = await Promise.all([
           this.opts.persona.load(),
           this.opts.cogBrief?.promptSection().catch(() => undefined),
           this.opts.skills?.promptSection().catch(() => undefined),
+          this.opts.loadContextFiles?.(liveCwd).catch(() => ""),
         ]);
-        return composeSystemPrompt(persona, { dataDir: this.opts.dataDir, cogSection, skillsSection });
+        return composeSystemPrompt(persona, {
+          dataDir: this.opts.dataDir,
+          cogSection,
+          skillsSection,
+          contextFiles,
+        });
       },
       getApiKeyAndHeaders: async (m: Model<any>) => {
         const apiKey = await resolveApiKey(m.provider, this.opts.authStore);

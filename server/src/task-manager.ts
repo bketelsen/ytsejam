@@ -68,6 +68,12 @@ export interface TaskManagerOptions {
    * bash/file tools land there. Optional; defaults to dataDir.
    */
   resolveParentWorkdir?: (parentSessionId: string) => string;
+  /**
+   * Optional: load AGENTS.md/CLAUDE.md ancestor-chain context for the
+   * subagent's working dir. Returned text is injected into the worker
+   * system prompt under "## Project context files".
+   */
+  loadContextFiles?: (cwd: string) => Promise<string>;
   concurrency: number;
   timeoutMs: number;
   /** inject a completion/failure message into the parent session */
@@ -233,11 +239,17 @@ export class TaskManager {
         session,
         model,
         tools: [...this.opts.workerTools, ...createSessionCwdTools(parentWorkdir)],
-        systemPrompt: async () =>
-          composeWorkerPrompt(await this.opts.persona.load(), {
+        systemPrompt: async () => {
+          const [persona, contextFiles] = await Promise.all([
+            this.opts.persona.load(),
+            this.opts.loadContextFiles?.(parentWorkdir).catch(() => ""),
+          ]);
+          return composeWorkerPrompt(persona, {
             dataDir: this.opts.dataDir,
             workdir: parentWorkdir,
-          }),
+            contextFiles,
+          });
+        },
         getApiKeyAndHeaders: async (m: Model<any>) => {
           const apiKey = await resolveApiKey(m.provider, this.opts.authStore);
           return apiKey ? { apiKey } : undefined;

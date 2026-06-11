@@ -33,6 +33,7 @@ beforeEach(async () => {
       taskTimeoutMinutes: 15,
     cogSocket: "/tmp/no-cog.sock",
     cogRole: "agent",
+    contextFiles: false,
     },
     authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
   });

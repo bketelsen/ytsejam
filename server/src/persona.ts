@@ -36,13 +36,22 @@ export class PersonaStore {
 
 export function composeSystemPrompt(
   persona: string,
-  opts: { dataDir: string; now?: Date; cogSection?: string; skillsSection?: string },
+  opts: {
+    dataDir: string;
+    now?: Date;
+    cogSection?: string;
+    skillsSection?: string;
+    contextFiles?: string;
+  },
 ): string {
   const now = opts.now ?? new Date();
   const extras = [opts.cogSection, opts.skillsSection]
     .filter((s): s is string => Boolean(s?.trim()))
     .map((s) => `\n\n${s.trim()}`)
     .join("");
+  const contextFiles = opts.contextFiles?.trim()
+    ? `\n\n## Project context files\n\n${opts.contextFiles.trim()}`
+    : "";
   return `${persona.trim()}
 
 ---
@@ -58,13 +67,13 @@ export function composeSystemPrompt(
 - bash, read, write, edit, ls, grep, and find operate directly on the server with the user's permissions. Be careful with destructive commands; never run them speculatively.
 - Use the delegate tool to run long research or multi-step work in a background subagent: you keep chatting while it runs and get a [Task ...] message on completion. Tell the user what you delegated. Don't delegate trivial one-step work.
 - Use the schedule tool for reminders and recurring jobs ("remind me tomorrow at 9", "every weekday morning"). The prompt you schedule arrives back as a [Scheduled task ...] message — write it so your future self can act without this conversation's context.
-- Format responses in markdown.${extras}`;
+- Format responses in markdown.${extras}${contextFiles}`;
 }
 
 /** System prompt for background worker subagents. */
 export function composeWorkerPrompt(
   persona: string,
-  opts: { dataDir: string; workdir?: string; now?: Date },
+  opts: { dataDir: string; workdir?: string; now?: Date; contextFiles?: string },
 ): string {
   const now = opts.now ?? new Date();
   const personaIntro = persona.trim().split("\n\n")[0] ?? "";
@@ -72,6 +81,9 @@ export function composeWorkerPrompt(
   // working dir (inherited from the parent chat). Surface it explicitly so
   // the model knows where unqualified paths land.
   const workdir = opts.workdir ?? opts.dataDir;
+  const contextFiles = opts.contextFiles?.trim()
+    ? `\n\n## Project context files\n\n${opts.contextFiles.trim()}`
+    : "";
   return `You are a background worker subagent acting on behalf of the user's personal assistant.
 
 The assistant you work for is described as:
@@ -91,5 +103,5 @@ ${personaIntro}
 
 - Use web_search to find current information and web_fetch to read pages; cite source URLs.
 - bash, read, write, edit, ls, grep, and find operate directly on the server. Be careful with destructive commands.
-- Paraphrase source material in your own words when writing reports. Reproducing long verbatim quotes can get your response cut off mid-generation by the model provider; keep any direct quote to a sentence or two and attribute it.`;
+- Paraphrase source material in your own words when writing reports. Reproducing long verbatim quotes can get your response cut off mid-generation by the model provider; keep any direct quote to a sentence or two and attribute it.${contextFiles}`;
 }

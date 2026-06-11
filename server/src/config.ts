@@ -27,6 +27,12 @@ export interface Config {
   cogSocket: string;
   /** RBAC role passed on every cogmemory RPC */
   cogRole: string;
+  /**
+   * Load AGENTS.md/CLAUDE.md from ~/.pi/agent and the session's working-dir
+   * ancestor chain into the system prompt. Mirrors pi-coding-agent's
+   * --no-context-files opt-out.
+   */
+  contextFiles: boolean;
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -48,5 +54,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     // test instance by default; point at the prod socket once the integration is proven
     cogSocket: expandHome(env.YTSEJAM_COG_SOCKET ?? "~/.local/share/cogmemory-test/cog-memory-test.sock"),
     cogRole: env.YTSEJAM_COG_ROLE || "agent",
+    contextFiles: env.YTSEJAM_CONTEXT_FILES !== "false",
   };
 }
