@@ -64,8 +64,9 @@ export function Sidebar({
               <span className="flex-1 truncate text-sm">{s.title ?? "New session"}</span>
               <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>
               <button
+                data-slot="button"
                 onClick={(e) => remove(s.id, e)}
-                className="hidden text-muted-foreground hover:text-destructive group-hover:block"
+                className="block text-muted-foreground hover:text-destructive md:hidden md:group-hover:block"
                 title="Delete"
               >
                 ×
