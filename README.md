@@ -83,16 +83,20 @@ headroom and hold across a 20-seed sweep (60/60). Current measured numbers:
 | band   | horizon        | recall@5 | paraphrase r@5 | MRR  | pref F1 | directives | identity | stability |
 |--------|----------------|----------|----------------|------|---------|------------|----------|-----------|
 | short  | 12 × 14d ≈ 6mo | 100%     | 75%            | 1.00 | 1.00    | 100%       | yes      | 100%      |
-| medium | 24 × 30d ≈ 2yr | 88%      | 0%             | 0.69 | 0.33    | 0%         | yes*     | 40%       |
+| medium | 24 × 30d ≈ 2yr | 88%      | 0%             | 0.69 | 0.33    | 100%       | yes*     | 40%       |
 | long   | 24 × 60d ≈ 4yr | 88%      | 0%             | 0.88 | 0.33    | 0%         | no       | 20%       |
 
 The medium/long erosion is **decay working as designed**, and the test
 suite asserts it (a change that silently re-calibrates decay away fails):
-preferences fade between reassertions, single-assertion directives are gone
-by month 24, and identity itself retires at 4 years (\* medium surfaces
-identity via the configurable `identityFloor: 0.2` — the long band proves
-it still retires even at the lowered floor). Episodic recall stays high at
-every horizon because decay re-ranks, it never deletes.
+preferences fade between reassertions, and identity itself retires at
+4 years (\* medium surfaces identity via the configurable
+`identityFloor: 0.2` — the long band proves it still retires even at the
+lowered floor). The medium and long bands also lower `directiveFloor` to
+0.2 symmetrically with `identityFloor`: medium then surfaces
+single-assertion directives at 100% (threshold 0.95), while the long band
+proves they still retire at ~4 years of disuse exactly like identity.
+Episodic recall stays high at every horizon because decay re-ranks, it
+never deletes.
 
 Paraphrase probes share no content words with their plants. 75% at short
 horizon comes from slot-aware profile promotion (employer/allergy/

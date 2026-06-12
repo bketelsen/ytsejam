@@ -92,11 +92,13 @@ export interface BandSpec {
  *   floor (stability ≈ 0.5 measured) and have fully decayed by horizon end
  *   8 months after their last assertion (F1 ≈ 0.3 measured: only the
  *   late-flipped contradiction survives). Directives (one assertion at
- *   month ~1, 365d half-life) are below the floor by month 24 — recall 0
- *   until the Phase 2 floor seam / Phase 4 work raises it.
+ *   month ~1, 365d half-life) sit at ~0.24 effective strength by month 24 —
+ *   below the default 0.3 floor, surfaced by the band's directiveFloor: 0.2
+ *   (FOLLOWUP Task 1; measured 100% across all 20 sweep seeds).
  * - long: identity itself is below the floor (identityExpected: false —
- *   this band PROVES decay bites); episodic recall stays high because decay
- *   never deletes text, it only re-ranks.
+ *   this band PROVES decay bites); directives retire identically (strength
+ *   ≈ 0.07 < 0.2 at the ~1440-day horizon, measured 0%); episodic recall
+ *   stays high because decay never deletes text, it only re-ranks.
  */
 export const BANDS: Record<EvalBand, BandSpec> = {
   short: {
@@ -123,14 +125,19 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     // (identityFloor 0.2: keep slot-like identity surfacing at the cost of
     // staler positives), which is exactly the seam's intended use. The
     // default floors are unchanged; the long band shows identity retiring
-    // even at the lowered floor.
-    config: { profile: { identityFloor: 0.2 } },
+    // even at the lowered floor. directiveFloor is lowered symmetrically
+    // (FOLLOWUP Task 1): directives share identity's 365d half-life by
+    // design — "set it once, I remember it" — so single-assertion
+    // directives at ~0.24 effective strength surface here too.
+    config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
     thresholds: {
       recallAt5: 0.83,
       mrr: 0.64,
       paraphraseRecallAt5: 0,
       preferenceF1: 0.28,
-      directiveRecall: 0,
+      // Measured 100% with directiveFloor 0.2, seed-invariant across the
+      // 20-seed sweep; threshold is measured minus 5pp headroom.
+      directiveRecall: 0.95,
       identityExpected: true,
       contradictionRequired: true,
       stability: 0.35,
@@ -140,15 +147,21 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     sessions: 24,
     intervalDays: 60,
     turnsPerSession: 12,
-    // Same lowered identityFloor as medium: identity STILL retires at 48mo
+    // Same lowered floors as medium: identity STILL retires at 48mo
     // (0.9·2^(-1380/365) ≈ 0.065 < 0.2) — the decay-bites assertion holds
-    // against the seam, not just against the default.
-    config: { profile: { identityFloor: 0.2 } },
+    // against the seam, not just against the default. directiveFloor is
+    // lowered symmetrically (FOLLOWUP Task 1) for the same reason.
+    config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
     thresholds: {
       recallAt5: 0.83,
       mrr: 0.83,
       paraphraseRecallAt5: 0,
       preferenceF1: 0.28,
+      // 0% is CORRECT here, exactly parallel to identityExpected: false: a
+      // directive asserted once at session 1-2 (~day 60-120) sits at
+      // strength ≈ 0.07 at the ~1440-day horizon — below even the lowered
+      // 0.2 floor. This band proves directives, like identity, retire at
+      // ~4yr of disuse; the medium band proves the seam surfaces them.
       directiveRecall: 0,
       identityExpected: false,
       contradictionRequired: false,

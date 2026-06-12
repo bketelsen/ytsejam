@@ -111,8 +111,21 @@ describe("decay bites (PLAN.md Task 1.3)", () => {
     expect(report.identityCorrect).toBe(false); // decay IS doing its job
   });
 
-  it("a directive asserted once at month ~1 is gone by month 24", { timeout: 120_000 }, async () => {
+  it("the directiveFloor seam surfaces a single-assertion directive at month 24", { timeout: 120_000 }, async () => {
+    // FOLLOWUP Task 1: with the medium band's directiveFloor: 0.2 the
+    // directive (effective strength ~0.24, below the default 0.3 floor)
+    // surfaces again — the per-kind floor seam applied symmetrically with
+    // identityFloor, not a weakening of decay.
     const report = await runEval({ workDir: tmpDir(), seed: 42, band: "medium" });
+    expect(report.directiveRecall).toBeGreaterThanOrEqual(BANDS.medium.thresholds.directiveRecall);
+    expect(report.directiveRecall).toBeGreaterThan(0);
+  });
+
+  it("a directive asserted once still retires at the 4yr horizon, even at the lowered floor", { timeout: 120_000 }, async () => {
+    // Strength ≈ 0.07 < directiveFloor 0.2 at ~1440 days — decay bites
+    // directives exactly like identity (the long band's identityExpected:
+    // false). Redaction, not eternal retention, is the forget surface.
+    const report = await runEval({ workDir: tmpDir(), seed: 42, band: "long" });
     expect(report.directiveRecall).toBe(0);
   });
 
