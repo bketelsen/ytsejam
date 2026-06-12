@@ -83,6 +83,18 @@ describe("entity extraction heuristics", () => {
     expect(kinds.get("email")).toBe("bjk@example.com");
   });
 
+  it("keys entities by normalized form, independent of surface-case order (PLAN 2.4)", () => {
+    for (const text of [
+      "TypeScript is great. i still write typescript every day.",
+      "i still write typescript every day. TypeScript is great.",
+    ]) {
+      const candidates = extractEntities(text).filter((e) => e.key === "typescript");
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].name).toBe("TypeScript");
+      expect(candidates[0].kind).toBe("tech");
+    }
+  });
+
   it("skips sentence-starting stopwords", () => {
     const entities = extractEntities("The Quick answer is yes. When I checked it worked.");
     expect(entities.map((e) => e.name)).not.toContain("The");

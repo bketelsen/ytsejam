@@ -43,7 +43,7 @@ export class PreferenceGraph {
     for (const record of records) {
       if (record.state !== "active" || !record.text) continue;
       const norms = [
-        ...new Set(extractEntities(record.text).map((e) => e.name.toLowerCase())),
+        ...new Set(extractEntities(record.text).map((e) => e.key)),
       ];
       graph.recordEntities.set(record.id, norms);
       for (const norm of norms) {
@@ -88,7 +88,7 @@ export class PreferenceGraph {
    * record id -> boost in [0, 1].
    */
   activate(queryText: string): Map<string, number> {
-    const seeds = new Set(extractEntities(queryText).map((e) => e.name.toLowerCase()));
+    const seeds = new Set(extractEntities(queryText).map((e) => e.key));
     const energy = new Map<string, number>();
     for (const seed of seeds) {
       energy.set(seed, Math.max(energy.get(seed) ?? 0, 1));

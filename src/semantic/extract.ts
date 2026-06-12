@@ -19,7 +19,10 @@ export interface FactCandidate {
 }
 
 export interface EntityCandidate {
+  /** Display form, preferring a capitalized surface form when one was seen. */
   name: string;
+  /** Normalized lowercase identity — the ONLY thing entities are keyed by. */
+  key: string;
   kind: EntityKind;
 }
 
@@ -185,14 +188,25 @@ const RELATIONSHIP =
 
 export function extractEntities(text: string): EntityCandidate[] {
   const out = new Map<string, EntityCandidate>();
+  // Candidates are indexed by normalized key only; the display name and the
+  // kind upgrade independently of which pattern fired first, so the result
+  // does not depend on regex execution order (PLAN.md Task 2.4):
+  // - a specific kind (person/tech/…) beats the generic "other" guess;
+  // - a capitalized surface form beats an all-lowercase one for display.
   const add = (name: string, kind: EntityKind) => {
     const trimmed = name.trim();
     if (trimmed.length < 2 || trimmed.length > 80) return;
     const key = trimmed.toLowerCase();
-    // Person/tech identifications beat the generic "other" guess.
     const existing = out.get(key);
-    if (!existing || (existing.kind === "other" && kind !== "other")) {
-      out.set(key, { name: trimmed, kind });
+    if (!existing) {
+      out.set(key, { name: trimmed, key, kind });
+      return;
+    }
+    const betterKind = existing.kind === "other" && kind !== "other" ? kind : existing.kind;
+    const betterName =
+      existing.name === existing.key && trimmed !== key ? trimmed : existing.name;
+    if (betterKind !== existing.kind || betterName !== existing.name) {
+      out.set(key, { name: betterName, key, kind: betterKind });
     }
   };
 
@@ -213,11 +227,10 @@ export function extractEntities(text: string): EntityCandidate[] {
     add(name, TECH_LEXICON.has(name.toLowerCase()) ? "tech" : "other");
   }
 
-  // Lowercase tech terms ("i use typescript") still count as tech entities.
+  // Lowercase tech terms ("i use typescript") still count as tech entities;
+  // add() upgrades kind/display if the term was already seen another way.
   for (const token of text.toLowerCase().match(/\b[a-z][a-z0-9+#.]{1,30}\b/g) ?? []) {
-    if (TECH_LEXICON.has(token) && !out.has(token)) {
-      add(token, "tech");
-    }
+    if (TECH_LEXICON.has(token)) add(token, "tech");
   }
 
   return [...out.values()];

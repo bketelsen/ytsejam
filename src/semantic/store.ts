@@ -88,7 +88,7 @@ export class SemanticStore {
     }
 
     for (const candidate of extractEntities(turn.text)) {
-      this.observeEntity(candidate.name, candidate.kind, source, turn.timestamp);
+      this.observeEntity(candidate.name, candidate.key, candidate.kind, source, turn.timestamp);
     }
   }
 
@@ -161,17 +161,19 @@ export class SemanticStore {
 
   private observeEntity(
     name: string,
+    norm: string,
     kind: EntityRecord["kind"],
     source: SourceRef,
     at: string,
   ): void {
-    const norm = name.toLowerCase();
     const id = `ent-${slug(norm)}`;
     const existing = this.entities.get(id);
     if (existing && existing.state !== "redacted") {
       const updated: EntityRecord = {
         ...existing,
         kind: existing.kind === "other" && kind !== "other" ? kind : existing.kind,
+        // Prefer a capitalized display form once one is observed.
+        name: existing.name === existing.norm && name !== norm ? name : existing.name,
         mentionCount: existing.mentionCount + 1,
         lastSeenAt: at,
         sessionIds: existing.sessionIds.includes(source.sessionId)
