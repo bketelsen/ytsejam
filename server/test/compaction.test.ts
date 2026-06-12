@@ -5,7 +5,7 @@ import {
   computeReserveTokens,
   buildSettings,
   decideCompaction,
-} from "../src/compaction.js";
+} from "../src/compaction.ts";
 
 const fauxModel = (cw: number, mt: number): Model<any> =>
   ({
@@ -61,11 +61,11 @@ describe("decideCompaction", () => {
         totalTokens,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
-      stopReason: "end_turn",
+      stopReason: "stop",
       api: "anthropic-messages",
       provider: "anthropic",
       model: "test-model",
-    } as unknown as AgentMessage);
+    } as AgentMessage);
 
   const userMsg = (text: string): AgentMessage =>
     ({ role: "user", content: [{ type: "text", text }] } as AgentMessage);
