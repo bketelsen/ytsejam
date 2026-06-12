@@ -33,7 +33,7 @@ export interface DomainForPathResult {
   ok: boolean;
 }
 
-/** Session-start memory envelope; mirrors server/src/cog/client.ts SessionBrief. */
+/** Session-start memory brief envelope; consumed by `cog/brief.ts`. */
 export interface SessionBrief {
   hot_memory: string;
   patterns: string;

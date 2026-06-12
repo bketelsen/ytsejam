@@ -1,4 +1,5 @@
-import type { CogClient, SessionBrief } from "./client.ts";
+import type { SessionBrief } from "../memory/index.ts";
+import * as memory from "../memory/index.ts";
 
 /**
  * Session-start memory injection: one session_brief RPC rendered as the
@@ -7,7 +8,7 @@ import type { CogClient, SessionBrief } from "./client.ts";
  * tool vocabulary (persona section omitted — persona.md owns voice).
  */
 
-export const COG_CONVENTIONS = `You have persistent memory across sessions, served by the cog daemon through the cog_* tools. Paths are relative to the memory root (e.g. "personal/observations.md"). Write immediately — don't wait to save something worth remembering.
+export const COG_CONVENTIONS = `You have persistent memory across sessions, served by the in-process memory module through the cog_* tools. Paths are relative to the memory root (e.g. "personal/observations.md"). Write immediately — don't wait to save something worth remembering.
 
 ### Memory tiers
 
@@ -30,7 +31,7 @@ Every memory file begins with \`<!-- L0: summary (max 80 chars) -->\`.
 4. hot-memory.md: rewrite freely, keep under 50 lines
 5. SSOT: each fact lives in exactly ONE file; others reference it with \`[[domain-path/filename]]\` wiki-links, added at write time
 6. Temporal validity: time-bounded facts carry \`<!-- until:YYYY-MM-DD grace:N -->\`; stable-since facts \`<!-- from:YYYY-MM-DD -->\`
-7. ALWAYS write to a domain's *path* from the Domains table below, never its id — the daemon rejects id-as-path writes
+7. ALWAYS write to a domain's *path* from the Domains table below, never its id — the memory store rejects id-as-path writes
 8. cog-meta/patterns.md: edit in place, ≤70 lines of distilled, timeless rules
 
 ### File edit patterns
@@ -70,14 +71,14 @@ Weekly: /housekeeping then /reflect in the SAME session (reflect sees cleaned st
 interface BriefProviderOptions {
   /** how long a rendered section stays fresh; default 60s */
   ttlMs?: number;
-  /** per-fetch cap so a hung daemon can't stall session start; default 1500ms */
+  /** per-fetch cap so a hung memory call can't stall session start; default 1500ms */
   timeoutMs?: number;
   /** how long a failure-derived section is served before retrying; default 5s */
   failureTtlMs?: number;
 }
 
-// A failed fetch is cached only briefly — a daemon that was momentarily busy
-// shouldn't leave sessions memory-less for the full success TTL.
+// A failed fetch is cached only briefly — a transient store problem shouldn't
+// leave sessions memory-less for the full success TTL.
 const FAILURE_TTL_MS = 5_000;
 
 export class CogBriefProvider {
@@ -85,13 +86,9 @@ export class CogBriefProvider {
   private lastGood?: SessionBrief;
   private inflight?: Promise<string>;
 
-  private readonly client: CogClient;
-  private readonly role: string;
   private readonly opts: BriefProviderOptions;
 
-  constructor(client: CogClient, role: string, opts: BriefProviderOptions = {}) {
-    this.client = client;
-    this.role = role;
+  constructor(opts: BriefProviderOptions = {}) {
     this.opts = opts;
   }
 
@@ -117,8 +114,8 @@ export class CogBriefProvider {
       this.cached = { section, at: Date.now(), ttl };
     } catch {
       section = this.lastGood
-        ? renderSection(this.lastGood, "(memory snapshot may be stale — daemon unreachable)")
-        : renderUnavailable(this.client.socketPath);
+        ? renderSection(this.lastGood, "(memory snapshot may be stale — memory temporarily unavailable)")
+        : renderUnavailable();
       this.cached = { section, at: Date.now(), ttl: Math.min(this.opts.failureTtlMs ?? FAILURE_TTL_MS, ttl) };
     }
     return section;
@@ -128,7 +125,7 @@ export class CogBriefProvider {
     const timeoutMs = this.opts.timeoutMs ?? 1_500;
     let timer: NodeJS.Timeout;
     return Promise.race([
-      this.client.sessionBrief(this.role),
+      memory.sessionBrief(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("session_brief fetch cap exceeded")), timeoutMs);
       }),
@@ -167,8 +164,8 @@ function renderSection(brief: SessionBrief, note?: string): string {
   return parts.join("\n\n");
 }
 
-function renderUnavailable(socketPath: string): string {
+function renderUnavailable(): string {
   return `## Memory (cog)
 
-The cog memory daemon is unreachable (socket: ${socketPath}). cog_* tools will fail until it is back. If the user asks about remembered context, say memory is temporarily unavailable. Everything else works normally.`;
+Memory is temporarily unavailable. cog_* tools may fail until the in-process memory store is reachable. If the user asks about remembered context, say memory is temporarily unavailable. Everything else works normally.`;
 }

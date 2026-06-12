@@ -89,6 +89,8 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 
 Additional PR-1b coverage required by plan: `loadManifest` happy path, `domainForPath`, optional domain filters for action-items/observations/entities, hot-reload stale-but-served error path, I1 null-domains regression, I2 `..` resolution + escape rejection, I5 recovery after parse error.
 
+PR-3 cutover parity note: `domains.list` / `domains.get` envelope shapes are wrapped in TS dispatch as `{domains:[...]}` / `{domain:{...}}` around `Controller.list()` / `Controller.get()` to match Go's `handleDomainsList` / `handleDomainsGet` in `cogmemory/rpc/methods.go`. Locked by `cog-integration.test.ts` (PR-3).
+
 ## Consolidated — Index+Wiki (PR-2c)
 
 Scope: in-process consolidated replacements for `glacier_index_compute`, `wiki_index_compute`, and public `l0index`. RBAC/role-required RPC cases are intentionally obsolete per fold-plan D6 (single-user, no role/RBAC); coverage notes assert unfiltered in-process behavior where useful.

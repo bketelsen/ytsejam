@@ -16,7 +16,6 @@ import { TaskStore } from "./tasks.ts";
 import { createGlobalTools } from "./tools/index.ts";
 import { createDelegationTools } from "./tools/delegation.ts";
 import { createSchedulingTools } from "./tools/scheduling.ts";
-import { CogClient } from "./cog/client.ts";
 import { CogBriefProvider } from "./cog/brief.ts";
 import { SkillsStore } from "./skills.ts";
 import { createCogTools } from "./tools/cog.ts";
@@ -24,6 +23,7 @@ import { createSkillTool } from "./tools/skills.ts";
 import { WorkdirStore, resolveWorkdir } from "./workdirs.ts";
 import { ArchiveStore } from "./archive-store.ts";
 import { loadContextFiles } from "./context-files.ts";
+import * as memory from "./memory/index.ts";
 
 const config = loadConfig();
 
@@ -34,8 +34,7 @@ const authStore = new PiAuthStore(config.piAuthPath);
 const indexer = new Indexer(path.join(config.dataDir, "index.db"));
 const bus = new EventBus();
 const persona = new PersonaStore(path.join(config.dataDir, "persona"));
-const cogClient = new CogClient({ socketPath: config.cogSocket });
-const cogBrief = new CogBriefProvider(cogClient, config.cogRole);
+const cogBrief = new CogBriefProvider();
 const skills = new SkillsStore(path.join(config.dataDir, "skills"));
 const workdirs = new WorkdirStore(path.join(config.dataDir, "workdirs"));
 const archiveStore = new ArchiveStore(path.join(config.dataDir, "archived"));
@@ -58,7 +57,7 @@ const manager = new AgentManager({
   defaultModel: config.defaultModel,
   tools: [
     ...createGlobalTools(),
-    ...createCogTools(cogClient, config.cogRole),
+    ...createCogTools(),
     createSkillTool(skills),
   ],
   sessionTools: (sessionId) => [
@@ -117,10 +116,12 @@ await scheduler.rebuildIndex();
 await scheduler.catchUp();
 scheduler.start();
 
-// non-blocking memory daemon probe — sessions degrade gracefully without it
-void cogClient.health().then((ok) => {
-  if (!ok) console.warn(`cog memory daemon not reachable at ${config.cogSocket} — memory disabled until it comes up`);
-});
+try {
+  const h = await memory.health();
+  console.log(`memory root: ${memory.memoryRoot()}, ${h.files ?? 0} files, last commit ${h.last_commit || "(none)"}`);
+} catch (err) {
+  console.warn(`memory health check failed: ${(err as Error).message} — memory disabled until it recovers`);
+}
 
 const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs });
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
