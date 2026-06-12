@@ -70,14 +70,22 @@ export function decideCompaction(
 }
 
 /**
- * Wrapper around pi-ai's isContextOverflow for testability.
+ * Wrapper around pi-ai's isContextOverflow for the reactive-backstop path.
  *
- * pi's regex covers:
- *   - Anthropic: /prompt is too long/i, /request_too_large/i
- *   - z.ai silent overflow detection (length-based)
- *   - Xiaomi MiMo length-truncation
+ * Deliberately scoped to errors that pi-ai surfaces as `stopReason === "error"`
+ * with a recognizable Anthropic error-text pattern (`/prompt is too long/i`,
+ * `/request_too_large/i`). pi-ai also has detectors for silent overflow
+ * (z.ai length-based with stopReason="stop"; Xiaomi MiMo length-truncation
+ * with stopReason="length"), but the guard below makes those UNREACHABLE
+ * here — they are intentionally out of scope for the reactive backstop, which
+ * only fires on explicit provider errors. If silent-overflow detection ever
+ * becomes a requirement (e.g. ytsejam routes to a z.ai/MiMo provider), the
+ * guard would need to relax to `["stop","length"].includes(msg.stopReason) &&
+ * <usage-based check>` or equivalent — do NOT just delete the guard, which
+ * would also classify normal successful turns as overflow.
  *
- * We pass model.contextWindow so the silent/length detectors can compute.
+ * The `model.contextWindow` argument is currently inert (pi-ai only uses it
+ * on the now-unreachable silent paths); passed for forward-compat.
  */
 export function classifyOverflow(
   msg: AssistantMessage,

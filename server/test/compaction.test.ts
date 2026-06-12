@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   computeReserveTokens,
   buildSettings,
   decideCompaction,
+  classifyOverflow,
+  CUSTOM_INSTRUCTIONS,
+  buildSurrenderMessage,
 } from "../src/compaction.ts";
 
 const fauxModel = (cw: number, mt: number): Model<any> =>
@@ -112,8 +115,6 @@ describe("decideCompaction", () => {
   });
 });
 
-import { classifyOverflow, CUSTOM_INSTRUCTIONS, buildSurrenderMessage } from "../src/compaction.ts";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 describe("classifyOverflow", () => {
   const overflowMsg: AssistantMessage = {
