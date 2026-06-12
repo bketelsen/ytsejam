@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { domainSummary, housekeepingScan, openActions, recentObservations, sessionBrief } from "../../src/memory/index.ts";
 
 let root = "";
@@ -27,6 +27,7 @@ domains:
 `);
 });
 afterEach(async () => {
+  vi.useRealTimers();
   delete process.env.YTSEJAM_MEMORY_DIR;
   if (root) await rm(root, { recursive: true, force: true });
 });
@@ -180,6 +181,17 @@ describe("memory consolidated PR-2a", () => {
     expect(r.dormant_domains).toEqual([]);
     expect(r.stale_action_items).toEqual([]);
     expect(r.thresholds).toMatchObject({ observations_over_cap: [], completed_actions_over_cap: [], improvements_implemented_over_cap: [], hot_memory_over_cap: [], patterns_over_cap: [] });
+  });
+
+
+  test("housekeepingScan marks observation on exact 28-day boundary dormant", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T14:30:00Z"));
+    await seed("personal/observations.md", "- 2026-05-15 [health]: boundary observation\n");
+
+    const r = await housekeepingScan();
+
+    expect(r.dormant_domains).toContainEqual({ id: "personal", last_observation: "2026-05-15" });
   });
 
   test("housekeepingScan observations over cap aggregates primary tag and detects dormancy", async () => {

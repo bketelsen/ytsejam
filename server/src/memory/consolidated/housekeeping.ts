@@ -98,8 +98,12 @@ function scanObservations(domain: string, path: string, content: string, result:
   if (entries > caps.observations_entries) {
     result.thresholds.observations_over_cap.push({ path, entries, cap: caps.observations_entries, by_primary_tag });
   }
-  const cutoffDate = new Date(now.getTime() - caps.dormant_domain_days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  if (latest === "" || latest < cutoffDate) result.dormant_domains.push({ id: domain, last_observation: latest });
+  const cutoff = new Date(now.getTime() - caps.dormant_domain_days * 24 * 60 * 60 * 1000);
+  const latestTime = latest === "" ? null : new Date(`${latest}T00:00:00Z`);
+  // Match Go store/housekeeping.go scanDormancy: midnight-of-date vs full
+  // 28-day cutoff timestamp. The boundary-date case (latest exactly on
+  // the cutoff calendar day) flags dormant, matching Go.
+  if (latest === "" || (latestTime != null && latestTime < cutoff)) result.dormant_domains.push({ id: domain, last_observation: latest });
 }
 
 function scanActionItems(path: string, content: string, result: HousekeepingScan, now: Date): void {
