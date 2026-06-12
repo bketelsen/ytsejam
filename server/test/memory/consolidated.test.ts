@@ -148,6 +148,13 @@ describe("memory consolidated PR-2a", () => {
     }
   });
 
+  test("resolveSince rejects composite Go durations (intentional divergence)", async () => {
+    // Go's time.ParseDuration accepts these; we deliberately don't.
+    await expect(recentObservations({ since: "1h30m" })).rejects.toThrow(/unrecognized.*since.*value/);
+    await expect(recentObservations({ since: "2h45m30s" })).rejects.toThrow(/unrecognized.*since.*value/);
+    await expect(recentObservations({ since: "100ms" })).rejects.toThrow(/unrecognized.*since.*value/);
+  });
+
   test("domainSummary happy path", async () => {
     await seed("personal/hot-memory.md", "personal hot memory body\n");
     await seed("personal/action-items.md", "## Open\n- [ ] open task one | added:2026-05-25\n- [ ] open task two\n\n## Completed\n- [x] recent completed | added:2026-05-28\n- [x] ancient completed | added:2026-01-01\n- [x] undated completed\n");
@@ -159,6 +166,25 @@ describe("memory consolidated PR-2a", () => {
     expect(r.recent_observations[0].tags).toEqual(["milestone", "personal"]);
     expect(r.files_present).toEqual(["hot-memory", "action-items", "observations", "entities"]);
     expect(r.last_activity).not.toBe("");
+  });
+
+  test("domainSummary INCLUDES fenced/commented observation lines (Go parity)", async () => {
+    // Distinct from recentObservations which skips fenced lines.
+    // Matches Go's RecentObservationsForFile (single-file, no fence-skip).
+    await seed("personal/observations.md", [
+      "- 2026-06-12 [insight]: clean obs",
+      "```",
+      "- 2026-06-12 [insight]: fenced obs",
+      "```",
+      "<!--",
+      "- 2026-06-12 [insight]: commented obs",
+      "-->",
+      "",
+    ].join("\n"));
+
+    const r = await domainSummary({ domain: "personal", since: "2026-06-01" });
+
+    expect(r.recent_observations.map((o) => o.text)).toEqual(["clean obs", "fenced obs", "commented obs"]);
   });
 
   test("domainSummary default/duration since, missing files, unknown domain, hot-reloaded manifest", async () => {

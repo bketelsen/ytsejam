@@ -40,6 +40,23 @@ export function formatRFC3339Seconds(date: Date): string {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+/**
+ * Resolve a `since` parameter to a Date.
+ *
+ * Accepted forms:
+ *   - `""` (empty) → default 7d window
+ *   - `YYYY-MM-DD` → midnight UTC of that date
+ *   - RFC3339 timestamp → parsed as-is then floored to UTC date
+ *   - Single-unit duration: `Nd`, `Nh`, `Nm`, `Ns` (and decimal `N.Md`/`N.Mh`)
+ *
+ * INTENTIONAL DIVERGENCE FROM GO: Go's `time.ParseDuration` also accepts
+ * composite forms like `1h30m`, `2h45m30s`, and sub-second units (`100ms`).
+ * The TS port deliberately does NOT support composites — single-unit windows
+ * cover every realistic memory-window use case (reflect/foresight/history),
+ * and porting a full ParseDuration is not worth the LOC. Composite forms
+ * throw `unrecognized since value`. Documented at `PARITY.md` (PR-2a section)
+ * and locked by regression test.
+ */
 export function resolveSince(raw = ""): { cutoff: Date; since: string } {
   const s = raw.trim();
   const now = new Date();

@@ -148,6 +148,7 @@ Scope: `sessionBrief`, `housekeepingScan`, `openActions`, `domainSummary`, and `
 | TestRecentObservationsDefaultSinceIs7Days | same |
 | TestRecentObservationsSkipsFencedBlocks | `recentObservations rejects by_domain alias... skips fences` |
 | TestRecentObservationsDurationSince | `recentObservations accepts duration since forms` |
+| PR-2a intentional divergence from Go duration parsing | `resolveSince rejects composite Go durations (intentional divergence)` |
 | store/domain_summary_helpers_test.go TestRecentObservationsFiltersAndParses | `domainSummary happy path` and `recentObservations happy path...` |
 | TestCountActionsHandlesFencesAndDates | `domainSummary happy path` (dated completed count) and session/action skip tests |
 | rpc/domain_summary_test.go TestDomainSummaryHappyPath | `domainSummary happy path` |
@@ -172,3 +173,5 @@ Scope: `sessionBrief`, `housekeepingScan`, `openActions`, `domainSummary`, and `
 | rpc/strict_params_test.go TestStrictParamsRecentObservations | `strict params reject unknown keys...` plus `recentObservations rejects by_domain alias...` |
 | TestRecentObservationsWrongParamNamesAreRejected | same |
 | PR-2a added strict cases for session_brief/housekeeping_scan/open_actions/domain_summary | `strict params reject unknown keys for all PR-2a public functions` |
+
+**Intentional divergence from Go (PR-2a):** `resolveSince` accepts single-unit durations only (`Nd`/`Nh`/`Nm`/`Ns` ± decimal); Go's `time.ParseDuration` also accepts composites (`1h30m`, `100ms`). TS port rejects composites with `unrecognized since value`. Documented in `common.ts:resolveSince` JSDoc; locked by `resolveSince rejects composite Go durations (intentional divergence)`.
