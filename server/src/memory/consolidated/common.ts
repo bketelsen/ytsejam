@@ -47,7 +47,7 @@ export function formatRFC3339Seconds(date: Date): string {
  *   - `""` (empty) → default 7d window
  *   - `YYYY-MM-DD` → midnight UTC of that date
  *   - RFC3339 timestamp → parsed as-is then floored to UTC date
- *   - Single-unit duration: `Nd`, `Nh`, `Nm`, `Ns` (and decimal `N.Md`/`N.Mh`)
+ *   - Single-unit duration: `Nd` (integer-only), `Nh`/`Nm`/`Ns` (decimals allowed)
  *
  * INTENTIONAL DIVERGENCE FROM GO: Go's `time.ParseDuration` also accepts
  * composite forms like `1h30m`, `2h45m30s`, and sub-second units (`100ms`).
