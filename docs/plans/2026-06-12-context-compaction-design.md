@@ -68,10 +68,10 @@ turn_end event fired
 
 next turn about to dispatch (phase becomes "idle")
   → if pendingCompaction flag set
-    → snapshot session JSONL → <id>.jsonl.pre-compact-<timestamp>
+    → snapshot session JSONL → <timestamp>_<id>.jsonl.pre-compact-<epoch-ms>
     → prune older backups (keep last 3)
     → await harness.compact(CUSTOM_INSTRUCTIONS)
-    → reload session via JsonlSessionRepo.load(id) in try/catch
+    → reload session via `repo.open(opened.session.metadata)` in try/catch (pi's JsonlSessionRepo has no `load` method; `open(metadata)` is the canonical reload)
       → success → clear flag, emit session_compact handler chain
       → corruption → log + dev-log warning + surrender message to user
   → resume normal dispatch
@@ -279,7 +279,7 @@ if (msg.stopReason === "error" && classifyOverflow(msg, harness.getModel())) {
 // reset reactive flag on any successful (non-error) turn
 ```
 
-`task-manager.ts` gets the same wiring on the per-task harness.
+`task-manager.ts` gets the same policy on the per-task harness, adapted to the subagent lifecycle: per-task active state carries `parentSessionId`, `metadata`, `session`, `harness`, and optional compaction state; proactive and reactive decisions are made at `turn_end`; the shared orchestrator runs at `agent_end` because subagents have no next-user-message idle hook; reactive overflow retries once via `setTimeout(0)` + `REACTIVE_RETRY_PROMPT`; surrender logs and fails the task with the diagnostic text. Subagent observability sets `subagentTaskId` to the task id and `sessionId` to the parent session id.
 
 ## 4. Data flow
 
@@ -295,13 +295,15 @@ if (msg.stopReason === "error" && classifyOverflow(msg, harness.getModel())) {
 ### Backup chain
 
 ```
-~/.ytsejam/data/sessions/<session-id>/
-  session.jsonl                              # the live file (pi-managed)
-  session.jsonl.pre-compact-1718193600       # backup at compaction N
-  session.jsonl.pre-compact-1718193902       # backup at compaction N-1
-  session.jsonl.pre-compact-1718194350       # backup at compaction N-2
-  compactions.jsonl                          # observability log (our writes)
+~/.ytsejam/data/sessions/--<cwd>--/                  # pi's actual layout (cwd-encoded, e.g. --chat--, --subagent--)
+  <timestamp>_<session-id>.jsonl                     # the live file (pi-managed)
+  <timestamp>_<session-id>.jsonl.pre-compact-1718193600000   # backup at compaction N
+  <timestamp>_<session-id>.jsonl.pre-compact-1718193902000   # backup at compaction N-1
+  <timestamp>_<session-id>.jsonl.pre-compact-1718194350000   # backup at compaction N-2
+  <timestamp>_<session-id>.jsonl.compactions.jsonl   # observability log (our writes, co-located)
 ```
+
+Backups and the compactions JSONL log live next to the source session file, not in a per-session-id directory. The canonical path is `JsonlSessionMetadata.path` (already used in manager.ts) — pi's `JsonlSessionRepo` cwd-encodes via ``encodeCwd(cwd) = `--${cwd}--` `` and appends `<timestamp>_<id>.jsonl`; do not reconstruct paths from `(sessionId, dataDir)`.
 
 Backup is a literal `fs.copyFile`. Pruning is `fs.readdir + sort + unlink` (keep N most recent by timestamp suffix). N=3.
 
@@ -310,7 +312,7 @@ Backup is a literal `fs.copyFile`. Pruning is `fs.readdir + sort + unlink` (keep
 Dev-log entry shape (single line):
 
 ```
-2026-06-12 14:32:18: compaction in session abc123 — proactive, anthropic/claude-sonnet-4-6, ctx 947112→184309 tokens, dropped 27 turns, summary 4821 tokens, files-read [server/src/manager.ts, docs/plans/...], files-edited [server/src/compaction.ts]. Trigger: shouldCompact (above 920000 budget).
+2026-06-12 14:32:18: compaction in session abc123 — proactive, anthropic/claude-sonnet-4-6, ctx 947112→184309 tokens, summary 4821 tokens, files-read [server/src/manager.ts, docs/plans/...], files-edited [server/src/compaction.ts]. Trigger: shouldCompact (above 920000 budget).
 ```
 
 For subagent events: prefix changes to `compaction in subagent task <task-id> (parent session <id>) — ...`.
@@ -332,12 +334,11 @@ Per-session JSONL record:
   "tokens_after": 184309,
   "summary_tokens": 4821,
   "first_kept_entry_id": "evt_8f12...",
-  "dropped_turns": 27,
   "files_read": ["server/src/manager.ts", "docs/plans/..."],
   "files_modified": ["server/src/compaction.ts"],
   "compaction_duration_ms": 8412,
   "succeeded": true,
-  "backup_path": "~/.ytsejam/data/sessions/abc123/session.jsonl.pre-compact-1718193600"
+  "backup_path": "~/.ytsejam/data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000"
 }
 ```
 
@@ -432,9 +433,9 @@ Runs with `INTEGRATION=1 npm test` or similar. Excluded from `scripts/gate.sh`. 
 |---|---|---:|---|
 | `server/src/compaction.ts` | NEW | ~250 | Policy module: decision, calibration, customInstructions, observability writers, backup/verify, surrender builder, kill-switch read |
 | `server/src/compaction.test.ts` | NEW | ~250 | Unit tests (≥15 cases) + wiring tests (mocked harness) |
-| `server/src/compaction.integration.test.ts` | NEW (gate-skipped) | ~80 | Real-LLM smoke against small-context faux model |
+| `server/test/compaction.integration.test.ts` | NEW (gate-skipped) | ~80 | Real-LLM smoke against small-context faux model |
 | `server/src/manager.ts` | MODIFIED | +30 | Wire `turn_end`, `session_compact`, reactive-error hooks |
-| `server/src/task-manager.ts` | MODIFIED | +15 | Same wiring on per-task harness |
+| `server/src/task-manager.ts` | MODIFIED | +compaction hooks/state | Same policy on per-task harness; `agent_end` execution, reactive retry, subagent-prefixed observability |
 | `deploy/ytsejam.env.example` | MODIFIED | +5 | Document `YTSEJAM_COMPACTION_ENABLED` |
 | `deploy/README.md` | MODIFIED | +10 | Operator section: emergency disable |
 | **Total** | | **~640 LOC** | (~250 impl + ~330 test + ~60 docs/wiring) |
@@ -447,7 +448,7 @@ PR-1: policy module (compaction.ts + tests)
   │
 PR-2: manager.ts wiring
   └─> depends on PR-1 merged (imports compaction module)
-PR-3: task-manager.ts wiring + integration test
+PR-3: task-manager.ts wiring — DONE in Task 6
   └─> depends on PR-2 merged (uses same wiring pattern)
 PR-4: kill-switch docs + README operator section
   └─> depends on nothing (docs only); can land anytime, but most useful after PR-2 so the docs match shipped behavior
@@ -482,7 +483,7 @@ The compaction is done when ALL of the following hold:
 3. `YTSEJAM_COMPACTION_ENABLED=false` reproduces the old 400 behavior on the same synthetic session (proves the kill switch isolates).
 4. Killing the unit mid-compaction (sigterm during `harness.compact()`) and resuming loads the session cleanly via the most recent `pre-compact-*` backup (proves backup chain works for the substrate-corruption scenario).
 5. Subagent compaction events are visible in dev-log with the `subagent task <id>` marker.
-6. Unit tests pass; `scripts/gate.sh` green; gate-skipped integration test passes with `INTEGRATION=1`.
+6. Unit tests pass; `scripts/gate.sh` green; `server/test/compaction.integration.test.ts` is a gate-skipped scaffold (4 `it.todo` smoke-contract cases) for the manual real-LLM cutover-confidence check Brian runs before deploying. Run with `INTEGRATION=1 env -u NODE_ENV npx vitest run server/test/compaction.integration.test.ts`. The deterministic regression layer is `server/test/compaction.test.ts` (48 tests) + `server/test/task-manager.test.ts` subagent wiring tests (10 tests, including 2 wiring tests) + `server/test/manager.test.ts` main-session wiring tests.
 7. `cog_search "compaction in session"` returns dev-log entries from real compactions.
 
 ## 11. What this plan does NOT do

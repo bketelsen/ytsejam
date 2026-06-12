@@ -2,11 +2,16 @@ import path from "node:path";
 import {
   AgentHarness,
   JsonlSessionRepo,
+  estimateContextTokens,
   uuidv7,
+  type AgentHarnessEvent,
   type AgentMessage,
   type AgentTool,
+  type JsonlSessionMetadata,
+  type Session,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { EventBus } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -16,6 +21,25 @@ import { composeWorkerPrompt } from "./persona.ts";
 import type { PersonaStore } from "./persona.ts";
 import { type TaskRow, type TaskStore } from "./tasks.ts";
 import { createSessionCwdTools } from "./tools/index.ts";
+import {
+  appendDevLogLine,
+  appendSessionCompactionJsonl,
+  buildCompactionEvent,
+  buildSurrenderMessage,
+  classifyOverflow,
+  compactionEnabled,
+  computeReserveTokens,
+  decideCompaction,
+  formatDevLogLine,
+  REACTIVE_RETRY_PROMPT,
+  runCompactionIfPending,
+  serializeJsonRecord,
+  toOpenedForCompaction,
+  type CompactionEvent,
+  type CompactionWiringState,
+  type RunCompactionResult,
+} from "./compaction.ts";
+import { memoryRoot } from "./memory/index.ts";
 
 const SUBAGENT_CWD = "subagent";
 const REPORT_MAX = 16_000;
@@ -25,6 +49,18 @@ const RETRY_NUDGE =
   "This is often triggered by reproducing long verbatim quotes from sources. " +
   "Continue the task from where you left off, paraphrase source material instead of quoting it at length, " +
   "and redo the interrupted tool call if it is still needed.";
+
+interface ActiveTaskHarness {
+  taskId: string;
+  parentSessionId: string;
+  metadata: JsonlSessionMetadata;
+  session: Session<JsonlSessionMetadata>;
+  harness: AgentHarness;
+  compaction?: CompactionWiringState;
+  reactiveRetryPromise?: Promise<AgentMessage>;
+  surrenderMessage?: string;
+  compactionRunning?: boolean;
+}
 
 /** Full text of an assistant message (all text blocks), capped for injection. */
 function fullTextOf(message: AgentMessage, cap = REPORT_MAX): string {
@@ -89,7 +125,7 @@ export class TaskManager {
   private readonly env: NodeExecutionEnv;
   private readonly repo: JsonlSessionRepo;
   private readonly queue: string[] = [];
-  private readonly active = new Map<string, AgentHarness>();
+  private readonly active = new Map<string, ActiveTaskHarness>();
   private runningCount = 0;
 
   constructor(opts: TaskManagerOptions) {
@@ -137,9 +173,9 @@ export class TaskManager {
     // fire-and-forget: abort() resolves only when the run settles, which a tool
     // mid-execution can hold for minutes; the cancellation is already durable
     // and cancel-wins makes the eventual outcome a no-op
-    const harness = this.active.get(taskId);
-    if (harness) {
-      void harness.abort().catch((err) => console.error(`abort failed for task ${taskId}`, err));
+    const active = this.active.get(taskId);
+    if (active) {
+      void active.harness.abort().catch((err) => console.error(`abort failed for task ${taskId}`, err));
     }
     return true;
   }
@@ -202,6 +238,175 @@ export class TaskManager {
     }
   }
 
+  private async onHarnessEvent(
+    taskId: string,
+    event: AgentHarnessEvent,
+  ): Promise<void> {
+    const active = this.active.get(taskId);
+    if (!active?.compaction) return;
+
+    if (event.type === "turn_end") {
+      await this.handleCompactionTurnEnd(active, event);
+    }
+
+    if (event.type === "session_compact") {
+      active.compaction.lastCompactionDetails = event.compactionEntry;
+    }
+
+    if (
+      event.type === "agent_end" &&
+      active.compaction.pendingCompaction &&
+      !active.compactionRunning
+    ) {
+      // Reactive recovery waits for agent_end because pi's phase is idle here;
+      // compacting from turn_end would still be mid-loop and can throw "busy".
+      // The retry is scheduled with setTimeout(0) to escape the awaited listener
+      // settlement before prompt(), avoiding pi's reentrancy guard. Unlike
+      // manager.ts, subagents store that retry promise because the retry's
+      // assistant message becomes the task's final outcome. compactionRunning
+      // blocks re-entry if another event arrives while this orchestration awaits.
+      active.compactionRunning = true;
+      try {
+        const pendingSnapshot = { ...active.compaction.pendingCompaction };
+        active.compaction.lastCompactionDetails = undefined;
+        const result = await runCompactionIfPending(
+          toOpenedForCompaction({
+            session: active.session,
+            metadata: active.metadata,
+            harness: active.harness,
+            compaction: active.compaction,
+          }),
+          this.repo,
+        );
+        if (result.fired) {
+          await this.recordCompactionEvent(
+            active,
+            result,
+            active.compaction.lastCompactionDetails,
+          );
+          active.compaction.lastCompactionDetails = undefined;
+        }
+
+        if (result.surrendered || (pendingSnapshot.trigger === "reactive" && !result.succeeded)) {
+          await this.emitCompactionSurrender(active);
+          return;
+        }
+
+        if (pendingSnapshot.trigger === "reactive" && result.succeeded) {
+          active.reactiveRetryPromise = new Promise<AgentMessage>((resolve, reject) => {
+            setTimeout(() => {
+              if (this.active.get(taskId) !== active) {
+                reject(new Error(`reactive retry skipped for inactive task ${taskId}`));
+                return;
+              }
+              active.harness.prompt(REACTIVE_RETRY_PROMPT).then(resolve, reject);
+            }, 0);
+          });
+        }
+      } finally {
+        active.compactionRunning = false;
+      }
+    }
+  }
+
+  private async handleCompactionTurnEnd(
+    active: ActiveTaskHarness,
+    event: AgentHarnessEvent,
+  ): Promise<void> {
+    if (!active.compaction || event.type !== "turn_end") return;
+    const msg = event.message as AssistantMessage;
+    const model = active.harness.getModel();
+
+    if (msg.stopReason === "error") {
+      if (classifyOverflow(msg, model)) {
+        if (active.compaction.reactiveRetryAttempted) {
+          active.compaction.pendingCompaction = null;
+          active.compaction.reactiveRetryAttempted = false;
+          await this.emitCompactionSurrender(active);
+          return;
+        }
+        active.compaction.reactiveRetryAttempted = true;
+        active.compaction.pendingCompaction = {
+          trigger: "reactive",
+          reason: "isContextOverflow",
+          tokensBefore: 0,
+          budget: model.contextWindow - computeReserveTokens(model),
+        };
+      }
+      return;
+    }
+
+    active.compaction.reactiveRetryAttempted = false;
+    try {
+      const messages = (await active.session.buildContext()).messages;
+      const decision = decideCompaction(messages, active.harness.getModel());
+      if (decision.shouldFire) {
+        active.compaction.pendingCompaction = {
+          trigger: "proactive",
+          reason: decision.reason,
+          tokensBefore: decision.tokensBefore,
+          budget: decision.budget,
+        };
+      }
+    } catch (err) {
+      console.error("[compaction] task-manager turn_end decision failed:", err);
+    }
+  }
+
+  private async emitCompactionSurrender(active: ActiveTaskHarness): Promise<void> {
+    const model = active.harness.getModel();
+    let tokens = 0;
+    try {
+      tokens = estimateContextTokens(
+        (await active.session.buildContext()).messages,
+      ).tokens;
+    } catch {
+      // Best-effort diagnostic only.
+    }
+    const text = buildSurrenderMessage(tokens, model.contextWindow);
+    active.surrenderMessage = text;
+    console.error(`[compaction] subagent task ${active.taskId} surrender: ${text}`);
+  }
+
+  private async recordCompactionEvent(
+    active: ActiveTaskHarness,
+    result: RunCompactionResult,
+    compactionEntry?: any,
+  ): Promise<void> {
+    if (!active.compaction) return;
+    const model = active.harness.getModel();
+    const sessionFilePath = active.metadata.path;
+
+    let tokensAfter = compactionEntry?.tokensAfter ?? 0;
+    try {
+      const messages = (await active.session.buildContext()).messages;
+      tokensAfter = estimateContextTokens(messages).tokens;
+    } catch {
+      // Best-effort diagnostic only; buildCompactionEvent falls back to 0.
+    }
+
+    const enrichedEntry = {
+      ...(compactionEntry ?? {}),
+      sessionId: active.parentSessionId,
+      subagentTaskId: active.taskId,
+      tokensAfter,
+    };
+    const devLogPath = `${memoryRoot()}/projects/ytsejam/dev-log.md`;
+    const compactionEvent: CompactionEvent = buildCompactionEvent(
+      model,
+      sessionFilePath,
+      result,
+      enrichedEntry,
+      devLogPath,
+    );
+
+    await appendDevLogLine(formatDevLogLine(compactionEvent), devLogPath);
+    await appendSessionCompactionJsonl(
+      sessionFilePath,
+      serializeJsonRecord(compactionEvent),
+    );
+  }
+
   private async run(taskId: string): Promise<void> {
     const events = this.opts.store.read(taskId);
     const created = events.find((e) => e.type === "created");
@@ -251,7 +456,27 @@ export class TaskManager {
         },
         getApiKeyAndHeaders: makeApiKeyResolver(this.opts.authStore),
       });
-      this.active.set(taskId, harness);
+      const active: ActiveTaskHarness = {
+        taskId,
+        parentSessionId: created.parentSessionId,
+        metadata,
+        session,
+        harness,
+      };
+      if (compactionEnabled()) {
+        active.compaction = {
+          pendingCompaction: null,
+          reactiveRetryAttempted: false,
+        };
+      }
+      this.active.set(taskId, active);
+      harness.subscribe(async (event: AgentHarnessEvent) => {
+        try {
+          await this.onHarnessEvent(taskId, event);
+        } catch (err) {
+          console.error("[compaction] task-manager handler swallowed error:", err);
+        }
+      });
 
       let timedOut = false;
       const timer = setTimeout(() => {
@@ -263,7 +488,13 @@ export class TaskManager {
       try {
         const prompt = created.context ? `${created.task}\n\nContext:\n${created.context}` : created.task;
         result = await harness.prompt(prompt);
+        if (active.reactiveRetryPromise) {
+          const retry = active.reactiveRetryPromise;
+          active.reactiveRetryPromise = undefined;
+          result = await retry;
+        }
         if (
+          !active.surrenderMessage &&
           !timedOut &&
           (result as any).stopReason === "error" &&
           this.opts.store.fold(taskId)?.status !== "cancelled"
@@ -285,6 +516,11 @@ export class TaskManager {
             } as any);
           }
           result = await harness.prompt(RETRY_NUDGE);
+          if (active.reactiveRetryPromise) {
+            const retry = active.reactiveRetryPromise;
+            active.reactiveRetryPromise = undefined;
+            result = await retry;
+          }
         }
       } finally {
         clearTimeout(timer);
@@ -298,6 +534,8 @@ export class TaskManager {
           type: "failed",
           error: `timed out after ${Math.round(this.opts.timeoutMs / 1000)}s`,
         };
+      } else if (active.surrenderMessage) {
+        outcome = { type: "failed", error: active.surrenderMessage };
       } else if (stopReason === "aborted") {
         outcome = { type: "failed", error: "aborted" };
       } else if (errorMessage) {
