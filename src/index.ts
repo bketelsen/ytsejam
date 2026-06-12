@@ -9,6 +9,14 @@
 
 export { MemorySystem, type MemorySystemOptions } from "./api/memory-system.ts";
 export { HashEmbedder, type Embedder, cosine, tokenize } from "./embedding/embedder.ts";
+export { CachedEmbedder } from "./embedding/cached-embedder.ts";
+export {
+  LocalEmbedder,
+  type LocalEmbedderOptions,
+  type FeatureExtractionPipeline,
+  type PipelineFactory,
+} from "./embedding/local-embedder.ts";
+export { promoteFacts, type PromotedFact } from "./retrieval/promote.ts";
 export { VectorIndex } from "./embedding/vector-index.ts";
 export { Bm25Index } from "./retrieval/lexical.ts";
 export { Retriever, packToBudget } from "./retrieval/retriever.ts";
