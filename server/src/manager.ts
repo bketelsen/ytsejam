@@ -37,6 +37,7 @@ import {
   REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
   serializeJsonRecord,
+  toOpenedForCompaction,
   type CompactionWiringState,
   type RunCompactionResult,
 } from "./compaction.ts";
@@ -105,7 +106,7 @@ export interface AgentManagerOptions {
 interface OpenSession {
   id: string;
   metadata: JsonlSessionMetadata;
-  session: Session;
+  session: Session<JsonlSessionMetadata>;
   harness: AgentHarness;
   running: boolean;
   /** rename requested while running; flushed to JSONL on agent_end (JSONL is SSOT) */
@@ -193,7 +194,7 @@ export class AgentManager {
 
   private wire(
     metadata: JsonlSessionMetadata,
-    session: Session,
+    session: Session<JsonlSessionMetadata>,
     model: Model<any>,
   ): OpenSession {
     const sessionCwd =
@@ -236,7 +237,6 @@ export class AgentManager {
       harness,
       running: false,
     };
-    (opened.session as any).metadata = metadata;
 
     // Catch + swallow: a compaction-bookkeeping bug must not kill the user's
     // turn. Errors are still console.error'd inside onHarnessEvent.
@@ -319,7 +319,15 @@ export class AgentManager {
         // The retry uses setTimeout(0) to leave the awaited listener settlement
         // before calling prompt(), avoiding pi's reentrancy guard.
         opened.compaction.lastCompactionDetails = undefined;
-        const result = await runCompactionIfPending(opened as any, this.repo);
+        const result = await runCompactionIfPending(
+          toOpenedForCompaction({
+            session: opened.session,
+            metadata: opened.metadata,
+            harness: opened.harness,
+            compaction: opened.compaction,
+          }),
+          this.repo,
+        );
         if (result.fired) {
           await this.recordCompactionEvent(
             opened,
@@ -396,7 +404,15 @@ export class AgentManager {
   ): Promise<boolean> {
     if (!opened.compaction?.pendingCompaction) return true;
     opened.compaction.lastCompactionDetails = undefined;
-    const result = await runCompactionIfPending(opened as any, this.repo);
+    const result = await runCompactionIfPending(
+      toOpenedForCompaction({
+        session: opened.session,
+        metadata: opened.metadata,
+        harness: opened.harness,
+        compaction: opened.compaction,
+      }),
+      this.repo,
+    );
     if (result.fired) {
       await this.recordCompactionEvent(
         opened,

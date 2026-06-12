@@ -1449,56 +1449,43 @@ Spec: docs/plans/2026-06-12-context-compaction-design.md §D1 + §D4 + §3.1 + �
 
 ---
 
-## Task 6: Subagent wiring (task-manager.ts)
+## Task 6: Subagent wiring (task-manager.ts) — DONE
 
 **Files:**
-- Modify: `server/src/task-manager.ts`
+- Modified: `server/src/task-manager.ts`
+- Modified: `server/src/compaction.ts` (typed adapter)
+- Modified: `server/src/manager.ts` (adapter call sites)
 
-The wiring shape is identical to manager.ts but on the per-task harness. The dev-log line gets the `subagent task <id>` marker via `subagentTaskId: opened.session.id` (or the task id field on the per-task opened object — implementer chooses based on actual shape).
+Implemented: task-manager now carries per-task active harness state with session metadata and optional compaction wiring, subscribes to harness events, sets proactive/reactive pending flags at `turn_end`, runs the shared orchestrator at `agent_end`, records subagent-prefixed observability with `subagentTaskId = taskId` and `sessionId = parentSessionId`, and retries reactive overflow once with `REACTIVE_RETRY_PROMPT`. The Task 5 metadata bridge has been refactored through `toOpenedForCompaction(...)`, so neither manager nor task-manager mutates pi Session objects or casts at `runCompactionIfPending` call sites.
 
-### Step 1: Read task-manager.ts to find the harness construction point
+### Step 1: Read task-manager.ts to find the harness construction point — DONE
 
 ```bash
 grep -n "AgentHarness\|harness\.on\|turn_end\|setModel\|session" server/src/task-manager.ts | head -30
 ```
 
-### Step 2: Apply the same wiring pattern as Task 5
+### Step 2: Apply the same wiring pattern as Task 5 — DONE
 
-The mechanical differences from manager.ts:
-- The opened-session object is per-task, not per-session — but it has `session: { id }` and `harness: AgentHarness` just like manager.ts.
-- `subagentTaskId` in `CompactionEvent` is set to the task id (which is usually `opened.session.id` for a subagent — verify against the actual shape).
-- The reactive retry path is identical; if the subagent surrenders, the surrender message becomes the task's final output.
+Implemented differences from manager.ts:
+- The active object is per-task and contains `{ taskId, parentSessionId, metadata, session, harness, compaction? }`.
+- `CompactionEvent.subagentTaskId` is the delegated task id; `CompactionEvent.sessionId` is the parent session id, so dev-log lines read `subagent task <task-id> (parent session <id>)`.
+- There is no idle hook. Proactive compaction runs at `agent_end`; reactive compaction runs at `agent_end` and queues one retry via `setTimeout(0)` + `REACTIVE_RETRY_PROMPT`. If surrender occurs, the task fails with the diagnostic text.
 
-Use the same imports, the same hooks (`turn_end`, `session_compact`, error handler), the same orchestrator call. The orchestrator handles all the policy; task-manager.ts is just call-site wiring.
+### Step 3: Run direct compaction tests — DONE
 
-### Step 3: Run all tests
-
-Run: `env -u NODE_ENV npx vitest run server/src`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: PASS.
 
-### Step 4: Verify gate
+### Step 4: Verify gate — DONE
 
 Run: `bash scripts/gate.sh`
 
 Expected: `=== gate: PASSED ===`.
 
-### Step 5: Commit
+### Step 5: Commit — DONE
 
-```bash
-git add server/src/task-manager.ts
-git commit -m "feat(compaction): subagent wiring in task-manager.ts
-
-Same hooks as manager.ts (turn_end / session_compact / reactive-error) but
-on the per-task harness. Dev-log entries carry 'subagent task <id> (parent
-session <id>)' marker; per-task compactions.jsonl goes to the subagent's
-session dir.
-
-Always-run policy (does not skip near YTSEJAM_TASK_TIMEOUT_MIN) — preserves
-partial work on long delegations.
-
-Spec: docs/plans/2026-06-12-context-compaction-design.md §D6 + §3.4."
-```
+Committed with manager/task-manager wiring, typed adapter, tests, and docs in one Task 6 commit.
 
 ---
 

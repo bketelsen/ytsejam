@@ -34,7 +34,9 @@ import {
   pruneOldBackups,
   verifySessionLoadable,
   runCompactionIfPending,
+  toOpenedForCompaction,
   type CompactionEvent,
+  type CompactionWiringState,
   type OpenedForCompaction,
 } from "../src/compaction.ts";
 
@@ -366,6 +368,34 @@ describe("buildCompactionEvent", () => {
     expect(event.succeeded).toBe(false);
     expect(formatDevLogLine(event)).toMatch(/FAILED/);
   });
+
+  it("uses subagent task id and parent session id from compaction entry", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true,
+        pending: {
+          trigger: "proactive",
+          reason: "above 800000 budget",
+          tokensBefore: 850_000,
+          budget: 800_000,
+        },
+      },
+      {
+        sessionId: "parent-session-123",
+        subagentTaskId: "task-abc",
+        tokensAfter: 120_000,
+      },
+    );
+
+    expect(event.sessionId).toBe("parent-session-123");
+    expect(event.subagentTaskId).toBe("task-abc");
+    expect(formatDevLogLine(event)).toContain(
+      "subagent task task-abc (parent session parent-session-123)",
+    );
+  });
 });
 
 describe("serializeJsonRecord", () => {
@@ -582,6 +612,37 @@ describe("verifySessionLoadable", () => {
     const result = await verifySessionLoadable(reload);
     expect(result.ok).toBe(false);
     expect(result.error?.message).toBe("plain string");
+  });
+});
+
+describe("toOpenedForCompaction", () => {
+  it("adapts session metadata without mutating the original session object", () => {
+    const metadata = {
+      id: "adapter-session",
+      cwd: "chat",
+      path: "/tmp/sessions/--chat--/2026_adapter-session.jsonl",
+      createdAt: "2026-06-12T00:00:00.000Z",
+    } as JsonlSessionMetadata;
+    const session = {
+      getMetadata: async () => metadata,
+    } as unknown as Session<JsonlSessionMetadata>;
+    const harness = { compact: async () => {} } as unknown as AgentHarness;
+    const compaction: CompactionWiringState = {
+      pendingCompaction: null,
+      reactiveRetryAttempted: false,
+    };
+
+    const opened = toOpenedForCompaction({
+      session,
+      metadata,
+      harness,
+      compaction,
+    });
+
+    expect(opened.session.metadata).toBe(metadata);
+    expect(opened.harness).toBe(harness);
+    expect(opened.compaction).toBe(compaction);
+    expect("metadata" in session).toBe(false);
   });
 });
 

@@ -510,6 +510,31 @@ export interface OpenedForCompaction {
   compaction: CompactionWiringState;
 }
 
+/**
+ * Build the structural adapter consumed by the compaction orchestrator.
+ *
+ * pi's Session exposes metadata asynchronously via getMetadata(); it does not
+ * carry a synchronous `.metadata` property. The orchestrator only needs that
+ * canonical JsonlSessionMetadata (especially `.path`) plus the harness and
+ * compaction state, so callers pass their already-loaded metadata here instead
+ * of mutating the third-party Session instance.
+ */
+export function toOpenedForCompaction(input: {
+  session: Session<JsonlSessionMetadata>;
+  metadata: JsonlSessionMetadata;
+  harness: AgentHarness;
+  compaction: CompactionWiringState;
+}): OpenedForCompaction {
+  return {
+    session: {
+      ...input.session,
+      metadata: input.metadata,
+    } as Session<JsonlSessionMetadata> & { metadata: JsonlSessionMetadata },
+    harness: input.harness,
+    compaction: input.compaction,
+  };
+}
+
 export interface RunCompactionResult {
   fired: boolean;
   succeeded?: boolean;

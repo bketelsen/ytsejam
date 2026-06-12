@@ -279,7 +279,7 @@ if (msg.stopReason === "error" && classifyOverflow(msg, harness.getModel())) {
 // reset reactive flag on any successful (non-error) turn
 ```
 
-`task-manager.ts` gets the same wiring on the per-task harness.
+`task-manager.ts` gets the same policy on the per-task harness, adapted to the subagent lifecycle: per-task active state carries `parentSessionId`, `metadata`, `session`, `harness`, and optional compaction state; proactive and reactive decisions are made at `turn_end`; the shared orchestrator runs at `agent_end` because subagents have no next-user-message idle hook; reactive overflow retries once via `setTimeout(0)` + `REACTIVE_RETRY_PROMPT`; surrender logs and fails the task with the diagnostic text. Subagent observability sets `subagentTaskId` to the task id and `sessionId` to the parent session id.
 
 ## 4. Data flow
 
@@ -436,7 +436,7 @@ Runs with `INTEGRATION=1 npm test` or similar. Excluded from `scripts/gate.sh`. 
 | `server/src/compaction.test.ts` | NEW | ~250 | Unit tests (≥15 cases) + wiring tests (mocked harness) |
 | `server/src/compaction.integration.test.ts` | NEW (gate-skipped) | ~80 | Real-LLM smoke against small-context faux model |
 | `server/src/manager.ts` | MODIFIED | +30 | Wire `turn_end`, `session_compact`, reactive-error hooks |
-| `server/src/task-manager.ts` | MODIFIED | +15 | Same wiring on per-task harness |
+| `server/src/task-manager.ts` | MODIFIED | +compaction hooks/state | Same policy on per-task harness; `agent_end` execution, reactive retry, subagent-prefixed observability |
 | `deploy/ytsejam.env.example` | MODIFIED | +5 | Document `YTSEJAM_COMPACTION_ENABLED` |
 | `deploy/README.md` | MODIFIED | +10 | Operator section: emergency disable |
 | **Total** | | **~640 LOC** | (~250 impl + ~330 test + ~60 docs/wiring) |
@@ -449,7 +449,7 @@ PR-1: policy module (compaction.ts + tests)
   │
 PR-2: manager.ts wiring
   └─> depends on PR-1 merged (imports compaction module)
-PR-3: task-manager.ts wiring + integration test
+PR-3: task-manager.ts wiring — DONE in Task 6
   └─> depends on PR-2 merged (uses same wiring pattern)
 PR-4: kill-switch docs + README operator section
   └─> depends on nothing (docs only); can land anytime, but most useful after PR-2 so the docs match shipped behavior
