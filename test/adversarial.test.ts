@@ -81,7 +81,7 @@ describe("adversarial scenarios (PLAN 3.1)", () => {
     expect(profile.attributes.some((f) => f.objectNorm.includes("grafana"))).toBe(false);
   });
 
-  it("sentence-opening conversational fillers never surface in topEntities", async () => {
+  it("sentence-opening conversational fillers never surface as entities", async () => {
     // Negative-space counterpart to the Grafana scenario above: that test
     // asserts what IS in topEntities, this one asserts what is NOT. Assistant
     // openers like "Happy to help" repeat every turn, so without stoplisting
@@ -96,7 +96,10 @@ describe("adversarial scenarios (PLAN 3.1)", () => {
       "Sounds good to me.",
       "Looks like a config issue.",
       "Glad that fixed it.",
+      "Cool, that should work too.",
+      "Right, let me explain.",
       "Awesome, nice work.",
+      "Welcome back!",
     ];
     const dir = tmpDir();
     const mem = MemorySystem.open({ storeDir: path.join(dir, "store"), now: () => NOW });
@@ -119,9 +122,16 @@ describe("adversarial scenarios (PLAN 3.1)", () => {
     const tops = mem.profile().topEntities.map((e) => e.norm);
     // The real entity survives — proves the negative assertions aren't vacuous.
     expect(tops).toContain("grafana");
-    const fillers = ["happy", "good", "great", "absolutely", "definitely", "got", "sounds", "looks", "glad", "awesome"];
+    // Negative assertions run against the FULL entity list, not topEntities: with
+    // 13 fillers competing for 12 topEntities slots, truncation could hide a
+    // regressed filler and let a vacuous not-in-top-12 assertion pass.
+    const norms = mem.listEntities().map((e) => e.norm);
+    const fillers = [
+      "happy", "good", "great", "absolutely", "definitely", "got", "sounds",
+      "looks", "glad", "cool", "right", "awesome", "welcome",
+    ];
     for (const filler of fillers) {
-      expect(tops).not.toContain(filler);
+      expect(norms).not.toContain(filler);
     }
   });
 

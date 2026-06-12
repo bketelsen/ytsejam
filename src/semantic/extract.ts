@@ -233,7 +233,11 @@ const CAP_STOPLIST = new Set(
     // relationship-name captures — so mid-span uses still extract ("Pretty
     // Good Privacy" keeps "Good"). "Let's" needs no entry: the entity regex
     // has no apostrophe in its char class, so it already tokenizes as the
-    // stoplisted "Let".
+    // stoplisted "Let". Deliberate tradeoff: the same set also gates the
+    // person-name captures in the relationship regex paths below, so a name
+    // that collides with a filler — "my dog Right", a friend called "Cool" —
+    // is dropped as a person entity; we accept that loss to keep filler noise
+    // out of the profile.
     "Happy Good Great Absolutely Definitely Got Sounds Looks Glad Cool Right Awesome Welcome"
   ).split(" "),
 );
