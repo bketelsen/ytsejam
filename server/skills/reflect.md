@@ -10,6 +10,17 @@ Self-reflection and memory consolidation. Past-facing — mines interactions, fi
 
 **Take your time.** This is a deep session. Read broadly, cross-reference, and ACT on findings. You're the maintainer of the knowledge base.
 
+## Invocation Scope (domain-aware)
+
+Reflect runs in one of two modes, decided by whether it was handed a domain:
+
+- **Scoped** — invoked with an active project context (the user types `/reflect ytsejam`, or the conversation is plainly about one domain). Pass `domain: "<id>"` to `recent_observations` and `cluster_check` so the daemon filters at the query and returns only that domain's entries. Use the domain **id** here (e.g. `ytsejam`), not its path.
+- **Cross-domain (cron default)** — the daily housekeeping+reflect cron fires with no domain. Behave exactly as before: omit `domain:` and ingest every domain.
+
+Why this matters: a single-domain burst day (e.g. a ytsejam supernova) can produce enough observation volume that an unscoped cross-domain pull blows the context window — that is what crashed reflect on 2026-06-11. Scoping when the session is already scoped is the difference between a clean pass and a context-window failure. When in doubt about whether the session is single-domain, stay unscoped; the cost of an extra domain's worth of entries is small next to dropping a domain the user cared about.
+
+`domain:` is the canonical scope parameter as of 2026-06-12 (cogmemory PR #22). The old `by_domain:` spelling is a deprecated alias accepted only until 2026-07-12 — do not write `by_domain:` in this skill going forward. (`cluster_check` has always used `domain:`.) RPC handlers now reject unknown JSON fields outright, so a misspelled scope key fails loudly rather than being silently ignored.
+
 ## Memory Access
 
 All memory operations go through the cog tools (`cog_read`, `cog_write`, `cog_append`, `cog_patch`, `cog_outline`, `cog_search`, `cog_list`, `cog_move`) and `cog_rpc` envelopes. Paths are relative to the memory root (e.g. `cog-meta/patterns.md`, `projects/foo/observations.md`). Always address files by their domain **path**, never by domain id.
@@ -36,7 +47,7 @@ Scope your work before reading files:
 
 ### Minimum Data Check
 
-Before proceeding, verify there's enough material to work with. Use `cog_rpc("recent_observations")` for counts:
+Before proceeding, verify there's enough material to work with. Use `cog_rpc("recent_observations")` for counts (when scoped, add the domain filter: `cog_rpc("recent_observations", {domain: "<active>"})` — see Invocation Scope; the cron form stays unscoped):
 - If total observations across all domains < 5: stop. Say "Not enough data yet. Keep capturing observations and run again when you have more material."
 - If `changed_recently[]` is empty over the last 7 days: flag it. "Memory hasn't been updated recently. Consider capturing some observations first."
 - If `patterns` (from `session_brief`) is empty and observations < 10: say "Too early to consolidate. You need ~10+ observations before patterns emerge."
@@ -96,7 +107,7 @@ Rigorous observation → pattern promotion. Three gates prevent noise from enter
 
 **Gate 1: Cluster Detection**
 
-`cog_rpc("cluster_check", {"min_cluster_size": 3, "since": "7d"})` replaces manual observation grepping — it returns tag clusters, keyword clusters, and thread candidates in one envelope. A cluster is promotable when ALL conditions are met:
+`cog_rpc("cluster_check", {"min_cluster_size": 3, "since": "7d"})` replaces manual observation grepping — it returns tag clusters, keyword clusters, and thread candidates in one envelope. When this run is scoped to one domain (see Invocation Scope), add the filter so clustering only considers that domain: `cog_rpc("cluster_check", {"min_cluster_size": 3, "since": "7d", "domain": "<active>"})`. The cron's cross-domain run keeps the unscoped form above. A cluster is promotable when ALL conditions are met:
 - ≥3 entries with the same primary tag
 - Entries span ≥7 days (not a single-day burst)
 - ≥3 distinct dates (not the same insight repeated on one day)
