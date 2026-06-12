@@ -107,13 +107,13 @@ export async function git(params: GitParams): Promise<GitResult> {
 
 /** Domain controller exports are implemented in ./domain (PR-1b). */
 /** Build the session-start memory brief envelope; filled in PR-2a. */
-export async function sessionBrief(): Promise<SessionBrief> {
-  return consolidated.sessionBrief();
+export async function sessionBrief(params: object = {}): Promise<SessionBrief> {
+  return consolidated.sessionBrief(params);
 }
 
 /** Scan memory for housekeeping thresholds and stale items; filled in PR-2a. */
-export async function housekeepingScan(): Promise<HousekeepingScan> {
-  return consolidated.housekeepingScan();
+export async function housekeepingScan(params: object = {}): Promise<HousekeepingScan> {
+  return consolidated.housekeepingScan(params);
 }
 
 /** Return unchecked action items, optionally scoped to a domain; filled in PR-2a. */
