@@ -53,10 +53,22 @@ export class EpisodicStore {
     this.log.appendMany(records);
   }
 
+  /**
+   * Record a retrieval access. The in-memory count always updates; the log
+   * snapshot is appended only when the new count is a power of two, so log
+   * growth per record is O(log accesses) instead of one line per retrieval
+   * (PLAN.md Task 2.6). Worst case on crash, a record loses the bumps since
+   * its last power of two — access counts are a decay heuristic, not
+   * accounting, so halved-at-worst is fine.
+   */
   bumpAccess(id: string, now: string): void {
     const r = this.records.get(id);
     if (!r) return;
-    this.upsert({ ...r, accessCount: r.accessCount + 1, lastAccessedAt: now });
+    const updated = { ...r, accessCount: r.accessCount + 1, lastAccessedAt: now };
+    this.records.set(id, updated);
+    if ((updated.accessCount & (updated.accessCount - 1)) === 0) {
+      this.log.append(updated);
+    }
   }
 
   /**

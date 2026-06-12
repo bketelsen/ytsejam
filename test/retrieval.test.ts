@@ -109,6 +109,38 @@ describe("end-to-end retrieval over synthetic sessions", () => {
     expect(after.accessCount).toBe(1);
   });
 
+  it("1000 retrievals grow the episodic log by O(k·log n), not O(k·n) (PLAN 2.6)", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 3, turnsPerSession: 6, seed: 11 });
+    const storeDir = path.join(work, "store");
+    const mem = MemorySystem.open({ storeDir, now: () => truth.horizonEnd });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+
+    const logPath = path.join(storeDir, "episodic.jsonl");
+    const linesBefore = fs.readFileSync(logPath, "utf8").split("\n").filter(Boolean).length;
+
+    const queries = 1000;
+    const k = 3;
+    for (let i = 0; i < queries; i++) {
+      await mem.retrieve("What's my dog called?", { k });
+    }
+
+    const linesAfter = fs.readFileSync(logPath, "utf8").split("\n").filter(Boolean).length;
+    // Power-of-two flushing: each of the ≤k surfaced records appends at most
+    // floor(log2(queries)) + 1 snapshots.
+    const maxExtra = k * (Math.floor(Math.log2(queries)) + 1);
+    expect(linesAfter - linesBefore).toBeLessThanOrEqual(maxExtra);
+
+    // The in-memory count is exact and survives reopen at its last flush.
+    const hit = (await mem.retrieve("What's my dog called?", { k, dryRun: true })).items.find((i) =>
+      i.record.text.includes("Biscuit"),
+    )!;
+    expect(hit.record.accessCount).toBe(queries);
+    const reopened = MemorySystem.open({ storeDir, now: () => truth.horizonEnd });
+    const persisted = reopened.getRecord(hit.record.id)!;
+    expect(persisted.accessCount).toBeGreaterThanOrEqual(512); // last power of two ≤ 1000
+  });
+
   it("ingestion is incremental: re-ingesting the same dir adds nothing", async () => {
     const work = tmpDir();
     generateFixtures({ outDir: path.join(work, "sessions"), sessions: 2, turnsPerSession: 6, seed: 3 });
