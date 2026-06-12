@@ -27,6 +27,7 @@ Read broadly — this is a scan. Four RPC envelopes plus three targeted reads co
 
 1. `cog_rpc("session_brief")` — hot memory, patterns, and all active domains with their paths. This replaces the domain-manifest read and the per-domain hot-memory/action-items fan-out.
 2. `cog_rpc("recent_observations", {since: "7d"})` — recent observations across all domains.
+   - Note: `recent_observations` accepts a `domain:` filter (canonical as of cogmemory PR #22). foresight intentionally does **not** use it — cross-domain convergence is the whole point of this skill, so the call stays unscoped on purpose.
 3. `cog_rpc("housekeeping_scan")` — dormancy signals. Fields: `since`, `changed_recently[]`, `thresholds{...}`, `dormant_domains[]`, `stale_action_items[]`. Domains in `dormant_domains[]`, or absent from `changed_recently[]` for weeks, are your silence signals.
 4. `cog_rpc("open_actions")` — every active item, for velocity classification.
 

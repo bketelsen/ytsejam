@@ -30,6 +30,7 @@ Four RPCs cover the architectural envelope:
 2. `cog_rpc("housekeeping_scan")` — the structural-health envelope. Fields: `since`, `changed_recently[]`, `thresholds{observations_over_cap[], completed_actions_over_cap, improvements_implemented_over_cap, hot_memory_over_cap, patterns_over_cap[]}`, `dormant_domains[]`, `stale_action_items[]`. This is the scorecard substrate and the bloat signal in one call.
 3. `cog_rpc("entity_audit")` — returns `total_entries` and `total_lines`; the entity compression ratio is `total_lines / total_entries`, a divide on the response, not a multi-file scan.
 4. `cog_rpc("recent_observations", {"since": "30d"})` — what housekeeping/reflect/you actually did recently; drives the process-effectiveness audit (§2) and rule-drift detection.
+   - Note: `recent_observations` accepts a `domain:` filter (canonical as of cogmemory PR #22). evolve intentionally does **not** use it — this is the monthly cross-domain process audit, so it spans all domains by design and the call stays unscoped on purpose.
 
 Plus direct reads for evolve's own continuity (rule references, not memory content):
 

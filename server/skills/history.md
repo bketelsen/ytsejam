@@ -30,7 +30,7 @@ Search across:
 
 - Extract keywords from the user's query (names, topics, dates, phrases)
 - Route by query shape:
-  - **Observation-shaped** ("what happened with X", time-bounded events): `cog_rpc("recent_observations", {since: "90d"})` — widen to `"365d"` if the query reaches further back. Filter the returned entries by tag/domain yourself; the entries already carry path, date, tags, and text.
+  - **Observation-shaped** ("what happened with X", time-bounded events): `cog_rpc("recent_observations", {since: "90d"})` — widen to `"365d"` if the query reaches further back. If the question is domain-shaped (e.g. "what happened with ytsejam", "find the truenas-mcp work"), pass the domain so the daemon scopes at the query and you don't pay for entries you'll just discard: `cog_rpc("recent_observations", {since: "90d", domain: "<id>"})` (use the domain **id**). Use the unscoped form + post-filtering only when the question genuinely spans domains; the returned entries carry path, date, tags, and text, so cross-domain filtering by hand is still fine when that's what the question needs. (`domain:` is the canonical scope param as of cogmemory PR #22; don't use the deprecated `by_domain:`.)
   - **Entity-shaped** (a person, place, org, or project): `cog_rpc("entity_audit")` to sweep entity registries for the name, then `cog_read` the matching `entities.md` files.
   - **Archive-shaped** (old data, "did we ever...", "back then"): `cog_read("glacier/index.md")`, then targeted `cog_read` of matching slabs.
   - **Free-text** (no obvious shape): `cog_search(query)` for each keyword.
