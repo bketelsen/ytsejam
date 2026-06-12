@@ -6,7 +6,6 @@ import {
   shouldCompact,
   type AgentMessage,
   type CompactionSettings,
-  type JsonlSessionRepo,
 } from "@earendil-works/pi-agent-core";
 
 /**
@@ -347,18 +346,24 @@ export async function pruneOldBackups(
 }
 
 /**
- * Verify that the session JSONL is loadable by re-reading it through the repo.
+ * Verify the session is reloadable after a compaction wrote new content.
+ *
+ * Takes a `reload` thunk so this helper doesn't depend on pi's specific repo
+ * shape (pi's JSONL session repository exposes `create | open | list | delete | fork`,
+ * not `load(id)`). The caller (Task 5 wiring) constructs the right closure
+ * using pi's actual API, typically `() => repo.open(opened.session.metadata)`.
  *
  * Called immediately after a successful `harness.compact()` to catch the
  * scary "pi wrote a malformed entry" case before it kills the next session
- * resume.
+ * resume. Best-effort: any throw is captured into the `error` field; we do
+ * not re-throw because the orchestrator needs to decide whether to surrender
+ * (vs. happy-path-continue with a warning).
  */
 export async function verifySessionLoadable(
-  sessionId: string,
-  repo: JsonlSessionRepo,
+  reload: () => Promise<unknown>,
 ): Promise<{ ok: boolean; error?: Error }> {
   try {
-    await (repo as unknown as { load(sessionId: string): Promise<unknown> }).load(sessionId);
+    await reload();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };

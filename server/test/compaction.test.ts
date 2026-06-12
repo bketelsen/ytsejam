@@ -412,17 +412,23 @@ describe("snapshotSessionJsonl + pruneOldBackups", () => {
 });
 
 describe("verifySessionLoadable", () => {
-  it("returns ok:true on valid JSONL", async () => {
-    // mock repo with successful load
-    const repo = { load: async () => ({ id: "sid" }) } as any;
-    const result = await verifySessionLoadable("sid", repo);
+  it("returns ok:true when reload resolves", async () => {
+    const reload = async () => ({ id: "sid" });
+    const result = await verifySessionLoadable(reload);
     expect(result.ok).toBe(true);
   });
 
-  it("returns ok:false with error on load failure", async () => {
-    const repo = { load: async () => { throw new Error("corrupted"); } } as any;
-    const result = await verifySessionLoadable("sid", repo);
+  it("returns ok:false with error when reload rejects", async () => {
+    const reload = async () => { throw new Error("corrupted"); };
+    const result = await verifySessionLoadable(reload);
     expect(result.ok).toBe(false);
     expect(result.error?.message).toBe("corrupted");
+  });
+
+  it("captures non-Error throws as Error", async () => {
+    const reload = async () => { throw "plain string"; };
+    const result = await verifySessionLoadable(reload);
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toBe("plain string");
   });
 });
