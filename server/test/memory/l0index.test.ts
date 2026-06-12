@@ -34,6 +34,15 @@ describe("l0index", () => {
     expect(result).not.toContain("no-l0.md");
   });
 
+  test("TestL0IndexIncludesNonMarkdownFiles", async () => {
+    await seed("hot-memory.md", "<!-- L0: Markdown overview -->\n# Hot Memory\n");
+    await seed("notes.txt", "<!-- L0: Text overview -->\nText notes\n");
+
+    const result = (await l0index()).index;
+    expect(result).toContain("hot-memory.md: Markdown overview");
+    expect(result).toContain("notes.txt: Text overview");
+  });
+
   test("TestL0IndexFiltersByDomain", async () => {
     await seed("hot-memory.md", "<!-- L0: Root overview -->\n# Hot Memory\n");
     await seed("projects/hot-memory.md", "<!-- L0: Projects overview -->\n# Projects\n");
@@ -53,6 +62,8 @@ describe("l0index", () => {
   });
 
   test("strict params rejects unknown keys", async () => {
-    await expect(l0index({ domain: "projects", by_domain: "projects" } as any)).rejects.toThrow(/unknown key.*by_domain/);
+    await expect(l0index({ domain: "projects", by_domain: "projects" } as any)).rejects.toThrow(
+      /unknown param key: by_domain/,
+    );
   });
 });

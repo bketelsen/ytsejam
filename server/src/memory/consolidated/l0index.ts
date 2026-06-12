@@ -1,19 +1,14 @@
 import type { L0IndexParams, L0IndexResult } from "../types.ts";
-import { list, read } from "../store/index.ts";
+import { l0Index as storeL0Index } from "../store/outline.ts";
 import { validateParams } from "./params.ts";
 
-const l0RE = /<!--\s*L0:\s*(.+?)\s*-->/;
-
+/**
+ * L0 index envelope. Delegates to the Go-faithful store helper, which
+ * matches Go's `store.L0Index`: walks all non-`.tmp` files (NOT just `.md`)
+ * and extracts the `<!-- L0: ... -->` header line.
+ */
 export async function l0index(params: L0IndexParams = {}): Promise<L0IndexResult> {
   validateParams(params as Record<string, unknown>, ["domain"]);
-  const domain = params.domain ?? "";
-  const prefix = domain ? domain.replace(/\/+$/, "") + "/" : "";
-  const lines: string[] = [];
-  for (const path of (await list()).paths) {
-    if (prefix && !path.startsWith(prefix)) continue;
-    const first = (await read(path)).content.split("\n", 1)[0];
-    const match = first.match(l0RE);
-    if (match) lines.push(`${path}: ${match[1].trim()}`);
-  }
-  return { index: lines.join("\n") };
+  const index = await storeL0Index(params.domain);
+  return { index };
 }
