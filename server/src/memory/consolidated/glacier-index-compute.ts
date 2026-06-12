@@ -10,15 +10,26 @@ export async function glacierIndexCompute(): Promise<GlacierIndexResult> {
     const content = (await read(path)).content;
     const fm = parseFrontmatter(content);
     if (fm) {
-      entry.domain = stringField(fm, "domain");
-      entry.type = stringField(fm, "type");
-      entry.tags = stringArrayField(fm, "tags") ?? [];
-      entry.date_range = stringField(fm, "date_range");
-      entry.entries = numberField(fm, "entries");
-      entry.summary = stringField(fm, "summary");
+      const domain = stringField(fm, "domain");
+      if (domain !== undefined) entry.domain = domain;
+      const type = stringField(fm, "type");
+      if (type !== undefined) entry.type = type;
+      const tags = stringArrayField(fm, "tags");
+      if (tags !== undefined) entry.tags = tags;
+      const dateRange = stringField(fm, "date_range");
+      if (dateRange !== undefined) entry.date_range = dateRange;
+      const entriesCount = numberField(fm, "entries");
+      if (entriesCount !== undefined) {
+        const truncated = Math.trunc(entriesCount);
+        if (truncated !== 0) entry.entries = truncated;
+      }
+      const summary = stringField(fm, "summary");
+      if (summary !== undefined) entry.summary = summary;
     }
     entries.push(entry);
   }
+  // walk.ts also sorts byte-wise; keep this cheap defensive sort so the
+  // consolidated index contract does not depend on the store helper.
   entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { entries, count: entries.length };
 }

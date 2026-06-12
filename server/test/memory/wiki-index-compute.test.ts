@@ -63,6 +63,13 @@ content
     expect(result.count).toBe(2);
   });
 
+  test("omits empty related arrays like Go omitempty", async () => {
+    await seed("wiki/topics/empty-related.md", "---\nrelated: []\n---\nbody\n");
+
+    const [entry] = (await wikiIndexCompute()).entries;
+    expect(entry).not.toHaveProperty("related");
+  });
+
   test("normalizes CRLF frontmatter before parsing", async () => {
     await seed("wiki/topics/crlf.md", "<!-- L0: hi -->\r\n---\r\ntitle: CRLF\r\nsummary: No carriage return\r\n---\r\nbody\r\n");
 

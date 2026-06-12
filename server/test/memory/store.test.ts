@@ -55,11 +55,18 @@ describe("memory primitive store", () => {
     expect(await read("nonexistent.md")).toEqual({ content: "", found: false });
     await seed("projects.md", "# Projects\n\n## Backlog\nold\n\n## Active Projects\nalpha\nbeta\n\n## Done\nomega\n");
     expect((await read("projects.md", { section: "## Active Projects" })).content).toBe("## Active Projects\nalpha\nbeta\n");
+    await seed("abutting.md", "## One\nbody\n## Two\nnext");
+    expect((await read("abutting.md", { section: "One" })).content).toBe("## One\nbody");
+    expect((await read("abutting.md", { section: "Two" })).content).toBe("## Two\nnext");
     await expect(read("projects.md", { section: "## Missing" })).rejects.toThrow(/section not found/);
     await seed("lines.md", "line1\nline2\nline3\nline4\nline5\n");
     expect((await read("lines.md", { start: 2, end: 4 })).content).toBe("line2\nline3\nline4");
     expect((await read("lines.md", { end: 3 })).content).toBe("line1\nline2\nline3");
     expect((await read("lines.md", { start: 5 })).content).toBe("line5");
+  });
+
+  test("read LIST reports not found for a truly empty store", async () => {
+    await expect(read("LIST")).resolves.toEqual({ content: "", found: false });
   });
 
   test("TestReadL0INDEX and TestReadLIST", async () => {
@@ -133,6 +140,14 @@ describe("memory primitive store", () => {
     await expect(outline("missing.md")).rejects.toThrow();
   });
 
+  test("outline ignores mid-file L0-shaped comments", async () => {
+    await seed("notes.md", ["intro", "<!-- L0: Mid-file should not count -->", "## Section"].join("\n"));
+
+    expect(await outline("notes.md")).toEqual({ entries: [
+      { line: 3, text: "Section", level: 2 },
+    ] });
+  });
+
   test("move rename rejects existing/traversal and enforces destination allow-list", async () => {
     await seed("old/path.md", "content\n");
     await expect(move("old/path.md", "new/path.md")).rejects.toThrow(/not allowed/);
@@ -163,12 +178,20 @@ describe("memory primitive store", () => {
     await seed(".git/HEAD", "hello git\n");
     expect((await search("hello")).results.map((r) => r.path)).toEqual(["notes.md", "other.md"]);
     expect((await list()).paths).toEqual(["notes.md", "other.md", "projects/a.md", "projects/sub/b.md"]);
+    await expect(stats("/")).resolves.toMatchObject({ files: 4 });
     const st = await stats("projects/");
     expect(st.files).toBe(2);
     expect(st.per_file.map((f) => f.path)).toEqual(["projects/a.md", "projects/sub/b.md"]);
     expect(st.lines).toBe(5);
     expect((await stats("project")).files).toBe(0);
     expect((await stats("projects/a.md")).files).toBe(1);
+  });
+
+  test("walk/list returns paths in Go byte-wise order", async () => {
+    await seed("Zeta.md", "upper\n");
+    await seed("alpha.md", "lower\n");
+
+    expect((await list()).paths).toEqual(["Zeta.md", "alpha.md"]);
   });
 
   test("search is case-insensitive literal substring", async () => {

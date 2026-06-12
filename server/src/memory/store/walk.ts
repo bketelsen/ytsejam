@@ -6,7 +6,8 @@ export interface ScannedFile { root: string; rel: string; abs: string; size: num
 
 export async function scanFiles(options: { markdownOnly?: boolean; prefix?: string } = {}): Promise<ScannedFile[]> {
   const root = await ensureRoot();
-  const prefix = options.prefix ? normalizeRelPath(options.prefix).replace(/\/$/, "") : "";
+  const trimmedPrefix = options.prefix ? options.prefix.replace(/^\/+|\/+$/g, "") : "";
+  const prefix = trimmedPrefix ? normalizeRelPath(trimmedPrefix).replace(/\/$/, "") : "";
   const out: ScannedFile[] = [];
   async function walk(dir: string, relDir: string): Promise<void> {
     let entries;
@@ -24,5 +25,7 @@ export async function scanFiles(options: { markdownOnly?: boolean; prefix?: stri
     }
   }
   await walk(root, "");
-  return out.sort((a, b) => a.rel.localeCompare(b.rel));
+  // Go uses plain string ordering (byte-wise for UTF-8 paths); avoid localeCompare
+  // so case and punctuation order match sort.Strings.
+  return out.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
 }

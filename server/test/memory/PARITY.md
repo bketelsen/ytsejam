@@ -9,9 +9,9 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | store/store_test.go TestRead | store.test.ts `TestRead / TestReadMissing / extraction` |
 | TestReadMissing | same |
 | TestReadL0INDEX | `TestReadL0INDEX and TestReadLIST` |
-| TestReadLIST | same |
+| TestReadLIST | same; includes empty-store `LIST` returning empty content / found=false parity |
 | TestReadFullContentWithNoExtractionParams | `TestRead / TestReadMissing / extraction` |
-| TestReadSectionByHeading | same |
+| TestReadSectionByHeading | same; includes abutting-heading/EOF case with no forced trailing newline |
 | TestReadSectionNotFoundReturnsError | same |
 | TestReadLineRangeStartAndEnd | same |
 | TestReadLineRangeDefaultStart | same |
@@ -19,7 +19,7 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestWrite | `write allow-list, overwrite, subdir, id-as-path rejection` |
 | TestWriteOverwrite | same |
 | TestWriteCreatesSubdir | same |
-| TestWriteAtomic | covered by atomic-write implementation sanity; no race-specific TS parity case (single process promise scheduling) |
+| TestWriteAtomic | covered by atomic-write implementation sanity; temp-file cleanup on write/fsync failure mirrors Go remove paths (rare failure path, no race-specific TS case) |
 | TestAppend | `append EOF, creates file, newline handling, obs enforcement, id-as-path` |
 | TestAppendCreatesFile | same |
 | TestAppendAddsSeparatorWhenExistingLacksTrailingNewline | same |
@@ -36,7 +36,7 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestPatch | `patch exact occurrence` |
 | TestPatchNotFound | same |
 | TestPatchAmbiguous | same |
-| TestOutlineReturnsMarkdownHeadingsInOrder | `outline includes L0 and markdown headings, missing errors` |
+| TestOutlineReturnsMarkdownHeadingsInOrder | `outline includes L0 and markdown headings, missing errors`; plus spec-tightening regression that mid-file L0-shaped comments are ignored (intentional divergence from Go naive regex) |
 | TestOutlineMissingFileReturnsError | same |
 | TestMoveFile | `move rename rejects existing/traversal and enforces destination allow-list`; intentional divergence from Go: destination is also allow-listed |
 | TestMoveExistingDestinationReturnsError | same |
@@ -46,8 +46,8 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestPathTraversal | `write allow-list...` and move traversal case |
 | TestPathTraversalWrite | `write allow-list...` |
 | TestStats | `search/list/stats skip git and sort/filter` |
-| TestStatsPrefix | same |
-| TestList | same |
+| TestStatsPrefix | same; includes `/` prefix trimming to match Go `strings.Trim(prefix, "/")` |
+| TestList | same; includes Go byte-wise path ordering regression (`Zeta.md` before `alpha.md`) |
 | TestFileScansSkipGitDirectory | same |
 | TestL0Index | PR-1a smoke in `TestReadL0INDEX and TestReadLIST`; full public parity in PR-2c `l0index.test.ts` |
 | TestL0IndexFiltersByDomain | PR-2c `l0index.test.ts` |
@@ -107,7 +107,7 @@ Scope: in-process consolidated replacements for `glacier_index_compute`, `wiki_i
 | TestL0IndexFiltersByDomain | `l0index.test.ts` `TestL0IndexFiltersByDomain` | Ported |
 | TestL0IndexMissingDomainReturnsEmpty | `l0index.test.ts` `TestL0IndexMissingDomainReturnsEmpty` | Ported |
 
-Additional PR-2c coverage: `l0index` strict-param rejection for unknown keys; wiki `category` alias accepted alongside Go's `entity_type` for the tightened TS type/spec wording.
+Additional PR-2c coverage: `l0index` strict-param rejection for unknown keys; wiki `category` alias accepted alongside Go's `entity_type` for the tightened TS type/spec wording. Pre-PR-3 cleanup adds omitempty parity for glacier `entries: 0` and wiki `related: []`, Go-int truncation for fractional glacier `entries`, and an empty-frontmatter regression ensuring only defined keys are present on in-process entry objects.
 ||||||| parent of ad25dd0 (Add PR-2a consolidated memory test parity)
 
 ## Consolidated — Session + Housekeeping (PR-2a)

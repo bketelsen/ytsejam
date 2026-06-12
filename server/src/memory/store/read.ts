@@ -6,7 +6,7 @@ import { list } from "./list.ts";
 import { l0Index } from "./outline.ts";
 
 export async function read(path: string, options: ReadOptions = {}): Promise<ReadResult> {
-  if (path === "LIST") return { content: (await list()).paths.join("\n"), found: true };
+  if (path === "LIST") { const content = (await list()).paths.join("\n"); return { content, found: content !== "" }; }
   if (path === "L0_INDEX") { const content = await l0Index(); return { content, found: content !== "" }; }
   const { abs, rel } = await resolveMemoryPath(path);
   let content: string;
@@ -26,9 +26,7 @@ function extractSection(rel: string, content: string, section: string): string {
     if (lines[i].trim().toLowerCase() !== target) continue;
     let end = lines.length;
     for (let j = i + 1; j < lines.length; j++) if (lines[j].trim().startsWith("##")) { end = j; break; }
-    let sectionText = lines.slice(i, end).join("\n");
-    while (sectionText.endsWith("\n\n")) sectionText = sectionText.slice(0, -1);
-    return sectionText.endsWith("\n") || sectionText === "" ? sectionText : sectionText + "\n";
+    return lines.slice(i, end).join("\n");
   }
   throw new Error(`store: section not found in ${JSON.stringify(rel)}: ${section}`);
 }
