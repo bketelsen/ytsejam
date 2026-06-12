@@ -8,7 +8,7 @@ const untilRE = /\(until\s+(\d{4}-\d{2})\)/g;
 export async function entityAudit(params: EntityAuditParams = {}): Promise<EntityAuditResult> {
   validateParams(params as Record<string, unknown>, ["domain"]);
   const c = controller();
-  const targets = params.domain ? (c.get(params.domain), c.entities(params.domain)) : c.entities();
+  const targets = params.domain ? (c.resolveFile(params.domain, "entities"), c.entities(params.domain)) : c.entities();
   const res: EntityAuditResult = { format_violations: [], glacier_candidates: [], missing_metadata: [], temporal_violations: [], total_entries: 0, total_lines: 0 };
   for (const t of targets.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
     const data = await readRel(t.path);

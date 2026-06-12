@@ -75,6 +75,16 @@ describe("entity_audit", () => {
   test("TestEntityAuditEmpty / MissingFileSkipped", async () => {
     expect(await entityAudit()).toMatchObject({ format_violations: [], glacier_candidates: [], missing_metadata: [], temporal_violations: [], total_entries: 0, total_lines: 0 });
   });
+  test("entityAudit throws when domain doesn't declare entities (Go parity, matches clusterCheck sibling)", async () => {
+    await mkdir(join(root, "limited"), { recursive: true });
+    await writeFile(join(root, "limited", "hot-memory.md"), "<!-- L0: limited domain -->\n");
+    await writeFile(join(root, "limited", "observations.md"), "<!-- L0: obs -->\n");
+    await writeFile(
+      join(root, "domains.yml"),
+      "domains:\n  - id: limited\n    path: limited\n    files: [hot-memory, observations]\n"
+    );
+    await expect(entityAudit({ domain: "limited" })).rejects.toThrow(/does not declare file/);
+  });
   test("TestEntityAuditCompactBlockClean", async () => {
     await seed("work/microsoft/entities.md", "# Work — Entities\n\n### Microsoft (employer)\nRole: Principal Engineering Manager\nstatus: active | last: 2026-05-27\n");
     const res = await entityAudit({ domain: "work" });
