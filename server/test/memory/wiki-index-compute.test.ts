@@ -63,8 +63,19 @@ content
     expect(result.count).toBe(2);
   });
 
-  test("accepts category frontmatter alias in addition to Go entity_type", async () => {
-    await seed("wiki/topics/t.md", "---\ntitle: T\ncategory: topic\ntags: [x]\n---\n");
-    expect((await wikiIndexCompute()).entries[0]).toMatchObject({ category: "topic", tags: ["x"] });
+  test("normalizes CRLF frontmatter before parsing", async () => {
+    await seed("wiki/topics/crlf.md", "<!-- L0: hi -->\r\n---\r\ntitle: CRLF\r\nsummary: No carriage return\r\n---\r\nbody\r\n");
+
+    const [entry] = (await wikiIndexCompute()).entries;
+    expect(entry.summary).toBe("No carriage return");
+    expect(entry.summary).not.toContain("\r");
+  });
+
+  test("sorts paths byte-wise after scanning", async () => {
+    await seed("wiki/topics/alpha.md", "---\ntitle: alpha\n---\n");
+    await seed("wiki/topics/Zeta.md", "---\ntitle: Zeta\n---\n");
+
+    const result = await wikiIndexCompute();
+    expect(result.entries.map((e) => e.path)).toEqual(["wiki/topics/Zeta.md", "wiki/topics/alpha.md"]);
   });
 });

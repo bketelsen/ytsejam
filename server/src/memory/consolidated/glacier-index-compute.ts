@@ -19,5 +19,6 @@ export async function glacierIndexCompute(): Promise<GlacierIndexResult> {
     }
     entries.push(entry);
   }
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { entries, count: entries.length };
 }
