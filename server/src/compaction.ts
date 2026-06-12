@@ -80,6 +80,43 @@ export function decideCompaction(
 }
 
 /**
+ * Structural token estimate for a post-compaction kept-set.
+ *
+ * Deliberately bypasses pi's `estimateContextTokens` because that function
+ * anchors on the last surviving assistant message's `usage.totalTokens` — a
+ * value that, immediately post-compaction, is the STALE pre-compaction
+ * snapshot from the very turn that triggered compaction. Reading it would
+ * tautologically return `tokens_before`.
+ *
+ * Walks each message's content with a char/4 heuristic and adds the
+ * summary's own token count. Conservative-optimistic: we under-count
+ * tool_use payloads (just the text parts), trusting the budget cushion
+ * (`reserveTokens` = ~48k) to absorb the slop. Good enough to gate the
+ * `succeeded` post-condition.
+ *
+ * See docs/plans/2026-06-12-issue-72-design.md §D4 for the design rationale.
+ */
+export function estimateKeptSetTokens(
+  messages: AgentMessage[],
+  summaryTokens: number,
+): number {
+  let chars = 0;
+  for (const msg of messages) {
+    const content = (msg as any).content;
+    if (typeof content === "string") {
+      chars += content.length;
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (part && part.type === "text" && typeof part.text === "string") {
+          chars += part.text.length;
+        }
+      }
+    }
+  }
+  return summaryTokens + Math.ceil(chars / 4);
+}
+
+/**
  * Wrapper around pi-ai's isContextOverflow for the reactive-backstop path.
  *
  * Deliberately scoped to errors that pi-ai surfaces as `stopReason === "error"`

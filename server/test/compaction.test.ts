@@ -21,6 +21,7 @@ import {
   computeReserveTokens,
   buildSettings,
   decideCompaction,
+  estimateKeptSetTokens,
   classifyOverflow,
   CUSTOM_INSTRUCTIONS,
   buildSurrenderMessage,
@@ -146,6 +147,71 @@ describe("decideCompaction", () => {
     const model = fauxModel(1_000_000, 64_000);
     const d = decideCompaction([assistantMsgWithUsage(950_000)], model);
     expect(d.reason).toMatch(/above .* budget/);
+  });
+});
+
+describe("estimateKeptSetTokens", () => {
+  it("returns summaryTokens alone when messages array is empty", () => {
+    const r = estimateKeptSetTokens([], 1500);
+    expect(r).toBe(1500);
+  });
+
+  it("adds char/4 heuristic for string-content messages", () => {
+    const messages: any[] = [
+      { role: "user", content: "x".repeat(400) }, // 100 tokens
+      { role: "assistant", content: "y".repeat(800) }, // 200 tokens
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(300);
+  });
+
+  it("adds char/4 heuristic for array-content messages (text parts)", () => {
+    const messages: any[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "x".repeat(400) }, // 100
+          { type: "text", text: "y".repeat(400) }, // 100
+        ],
+      },
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(200);
+  });
+
+  it("ignores non-text content parts (tool_use/tool_result shapes)", () => {
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "x".repeat(400) }, // 100
+          { type: "tool_use", id: "t1", name: "x", input: { huge: "y".repeat(10_000) } },
+        ],
+      },
+    ];
+    // We deliberately under-count tool_use payloads here — the heuristic is
+    // intentionally conservative-optimistic; the budget cushion absorbs slop.
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(100);
+  });
+
+  it("sums summaryTokens + messages heuristic", () => {
+    const messages: any[] = [{ role: "user", content: "x".repeat(400) }]; // 100
+    const r = estimateKeptSetTokens(messages, 2500);
+    expect(r).toBe(2600);
+  });
+
+  it("does NOT consult usage.totalTokens on any message", () => {
+    // The whole point of this helper: ignore stale provider-usage anchors.
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: "x".repeat(400), // 100 tokens by heuristic
+        usage: { totalTokens: 999_999, input: 0, output: 0 },
+      },
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(100);
   });
 });
 
