@@ -1003,7 +1003,7 @@ export async function verifySessionLoadable(
   repo: JsonlSessionRepo,
 ): Promise<{ ok: boolean; error?: Error }> {
   try {
-    await repo.load(sessionId);
+    await repo.open(opened.session.metadata);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
@@ -1032,7 +1032,7 @@ git commit -m "feat(compaction): async writers + kill switch + backup/verify hel
 - compactionEnabled(): reads YTSEJAM_COMPACTION_ENABLED kill switch (defaults true)
 - appendDevLogLine / appendSessionCompactionJsonl: best-effort observability writes
 - snapshotSessionJsonl / pruneOldBackups: pre-compact backup chain (keep last 3)
-- verifySessionLoadable: post-compact corruption check via repo.load()
+- verifySessionLoadable: post-compact corruption check via repo.open(metadata)
 
 All writes are best-effort with logged-and-swallowed errors so observability
 or backup failures never break the conversation.

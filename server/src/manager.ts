@@ -10,7 +10,11 @@ import {
   type Session,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { completeSimple, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import {
+  completeSimple,
+  type AssistantMessage,
+  type Model,
+} from "@earendil-works/pi-ai";
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -18,20 +22,23 @@ import { makeApiKeyResolver } from "./pi-auth.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
+import { memoryRoot } from "./memory/index.ts";
 import { createSessionCwdTools } from "./tools/index.ts";
 import {
   appendDevLogLine,
   appendSessionCompactionJsonl,
+  buildCompactionEvent,
   buildSurrenderMessage,
   classifyOverflow,
   compactionEnabled,
   computeReserveTokens,
   decideCompaction,
   formatDevLogLine,
+  REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
   serializeJsonRecord,
-  type CompactionEvent,
   type CompactionWiringState,
+  type RunCompactionResult,
 } from "./compaction.ts";
 
 const SESSIONS_CWD = "chat";
@@ -168,20 +175,29 @@ export class AgentManager {
   }
 
   private async openSession(id: string): Promise<OpenSession> {
-    const metadata = (await this.repo.list({ cwd: SESSIONS_CWD })).find((m) => m.id === id);
+    const metadata = (await this.repo.list({ cwd: SESSIONS_CWD })).find(
+      (m) => m.id === id,
+    );
     if (!metadata) throw new Error(`Session not found: ${id}`);
     const session = await this.repo.open(metadata);
     const context = await session.buildContext();
     const model = context.model
-      ? this.opts.resolveModel(`${context.model.provider}/${context.model.modelId}`)
+      ? this.opts.resolveModel(
+          `${context.model.provider}/${context.model.modelId}`,
+        )
       : this.opts.resolveModel(this.opts.defaultModel);
     const opened = this.wire(metadata, session, model);
     this.open.set(id, opened);
     return opened;
   }
 
-  private wire(metadata: JsonlSessionMetadata, session: Session, model: Model<any>): OpenSession {
-    const sessionCwd = this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
+  private wire(
+    metadata: JsonlSessionMetadata,
+    session: Session,
+    model: Model<any>,
+  ): OpenSession {
+    const sessionCwd =
+      this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
     const harness = new AgentHarness({
       env: this.env,
       session,
@@ -195,13 +211,15 @@ export class AgentManager {
         // prompt sections must never block or break a session
         // resolve the workdir fresh each turn so a mid-session change picks up
         // new AGENTS.md ancestry without reopening
-        const liveCwd = this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
-        const [persona, cogSection, skillsSection, contextFiles] = await Promise.all([
-          this.opts.persona.load(),
-          this.opts.cogBrief?.promptSection().catch(() => undefined),
-          this.opts.skills?.promptSection().catch(() => undefined),
-          this.opts.loadContextFiles?.(liveCwd).catch(() => ""),
-        ]);
+        const liveCwd =
+          this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
+        const [persona, cogSection, skillsSection, contextFiles] =
+          await Promise.all([
+            this.opts.persona.load(),
+            this.opts.cogBrief?.promptSection().catch(() => undefined),
+            this.opts.skills?.promptSection().catch(() => undefined),
+            this.opts.loadContextFiles?.(liveCwd).catch(() => ""),
+          ]);
         return composeSystemPrompt(persona, {
           dataDir: this.opts.dataDir,
           cogSection,
@@ -211,23 +229,40 @@ export class AgentManager {
       },
       getApiKeyAndHeaders: makeApiKeyResolver(this.opts.authStore),
     });
-    const opened: OpenSession = { id: metadata.id, metadata, session, harness, running: false };
+    const opened: OpenSession = {
+      id: metadata.id,
+      metadata,
+      session,
+      harness,
+      running: false,
+    };
     (opened.session as any).metadata = metadata;
 
+    // Catch + swallow: a compaction-bookkeeping bug must not kill the user's
+    // turn. Errors are still console.error'd inside onHarnessEvent.
     harness.subscribe((event: AgentHarnessEvent) =>
       this.onHarnessEvent(opened, event).catch((err) =>
-        console.error(`agent event handler failed for session ${opened.id}`, err),
+        console.error(
+          `agent event handler failed for session ${opened.id}`,
+          err,
+        ),
       ),
     );
 
     // Compaction wiring (no-op if YTSEJAM_COMPACTION_ENABLED=false at boot)
     if (compactionEnabled()) {
-      opened.compaction = { pendingCompaction: null, reactiveRetryAttempted: false };
+      opened.compaction = {
+        pendingCompaction: null,
+        reactiveRetryAttempted: false,
+      };
     }
     return opened;
   }
 
-  private async onHarnessEvent(opened: OpenSession, event: AgentHarnessEvent): Promise<void> {
+  private async onHarnessEvent(
+    opened: OpenSession,
+    event: AgentHarnessEvent,
+  ): Promise<void> {
     if (event.type === "agent_start") opened.running = true;
     if (event.type === "agent_end") opened.running = false;
 
@@ -236,7 +271,11 @@ export class AgentManager {
     }
 
     if (FORWARDED_EVENTS.has(event.type)) {
-      this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: event as any });
+      this.opts.bus.emit({
+        type: "agent",
+        sessionId: opened.id,
+        event: event as any,
+      });
     }
 
     if (event.type === "turn_end") {
@@ -244,9 +283,7 @@ export class AgentManager {
     }
 
     if (event.type === "session_compact" && opened.compaction) {
-      void this.recordCompactionEvent(opened, event).catch((err) =>
-        console.error("[compaction] session_compact observability failed:", err),
-      );
+      opened.compaction.lastCompactionDetails = (event as any).compactionEntry;
     }
 
     if (event.type === "agent_end") {
@@ -259,7 +296,12 @@ export class AgentManager {
           if (this.open.get(opened.id) !== opened) return; // closed or deleted
           void opened.session
             .appendSessionName(pending)
-            .catch((err) => console.error(`failed to flush pending title for ${opened.id}`, err));
+            .catch((err) =>
+              console.error(
+                `failed to flush pending title for ${opened.id}`,
+                err,
+              ),
+            );
         }, 0);
       }
       this.emitMeta(opened.id);
@@ -268,15 +310,35 @@ export class AgentManager {
         setTimeout(() => void this.maybeGenerateTitle(opened), 0);
       }
       if (opened.compaction?.pendingCompaction?.trigger === "reactive") {
+        // Reactive overflow recovery runs at agent_end, not turn_end, because:
+        //   (1) harness.compact() requires phase === "idle" — the agent_end
+        //       handler runs AFTER phase has been set to idle (see pi's
+        //       handleAgentEvent in agent-loop.js).
+        //   (2) turn_end's listener still runs while the agent is mid-loop;
+        //       calling compact() from there would throw "busy".
+        // The retry uses setTimeout(0) to leave the awaited listener settlement
+        // before calling prompt(), avoiding pi's reentrancy guard.
+        opened.compaction.lastCompactionDetails = undefined;
         const result = await runCompactionIfPending(opened as any, this.repo);
+        if (result.fired) {
+          await this.recordCompactionEvent(
+            opened,
+            result,
+            opened.compaction.lastCompactionDetails,
+          );
+          opened.compaction.lastCompactionDetails = undefined;
+        }
         if (!result.succeeded) {
           await this.emitCompactionSurrender(opened);
         } else {
           setTimeout(() => {
             if (this.open.get(opened.id) !== opened) return; // closed or deleted
             opened.running = true;
-            opened.harness.prompt("Please retry your previous response now that the conversation context has been compacted.").catch((err) => {
-              console.error(`reactive retry prompt failed for session ${opened.id}`, err);
+            opened.harness.prompt(REACTIVE_RETRY_PROMPT).catch((err) => {
+              console.error(
+                `reactive retry prompt failed for session ${opened.id}`,
+                err,
+              );
               opened.running = false;
             });
           }, 0);
@@ -285,7 +347,10 @@ export class AgentManager {
     }
   }
 
-  private async handleCompactionTurnEnd(opened: OpenSession, event: AgentHarnessEvent): Promise<void> {
+  private async handleCompactionTurnEnd(
+    opened: OpenSession,
+    event: AgentHarnessEvent,
+  ): Promise<void> {
     if (!opened.compaction || event.type !== "turn_end") return;
     const msg = event.message as AssistantMessage;
     const model = opened.harness.getModel();
@@ -326,9 +391,20 @@ export class AgentManager {
     }
   }
 
-  private async runPendingCompactionAtIdle(opened: OpenSession): Promise<boolean> {
+  private async runPendingCompactionAtIdle(
+    opened: OpenSession,
+  ): Promise<boolean> {
     if (!opened.compaction?.pendingCompaction) return true;
+    opened.compaction.lastCompactionDetails = undefined;
     const result = await runCompactionIfPending(opened as any, this.repo);
+    if (result.fired) {
+      await this.recordCompactionEvent(
+        opened,
+        result,
+        opened.compaction.lastCompactionDetails,
+      );
+      opened.compaction.lastCompactionDetails = undefined;
+    }
     if (result.surrendered) {
       await this.emitCompactionSurrender(opened);
       return false;
@@ -339,7 +415,11 @@ export class AgentManager {
   private recordMessageEnd(opened: OpenSession, message: AgentMessage): void {
     const preview = previewOf(message);
     if (preview) {
-      this.opts.indexer.touchSession(opened.id, new Date().toISOString(), preview);
+      this.opts.indexer.touchSession(
+        opened.id,
+        new Date().toISOString(),
+        preview,
+      );
     }
     if ((message as any).role === "assistant") {
       this.opts.indexer.setUnread(opened.id, true);
@@ -351,7 +431,9 @@ export class AgentManager {
     const model = opened.harness.getModel();
     let tokens = 0;
     try {
-      tokens = estimateContextTokens((await opened.session.buildContext()).messages).tokens;
+      tokens = estimateContextTokens(
+        (await opened.session.buildContext()).messages,
+      ).tokens;
     } catch {
       // Best-effort diagnostic only.
     }
@@ -364,66 +446,74 @@ export class AgentManager {
       provider: model.provider,
       model: model.id,
       timestamp: Date.now(),
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
     } as AgentMessage;
     await opened.harness.appendMessage(message);
     this.recordMessageEnd(opened, message);
-    this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: { type: "message_start", message } as any });
-    this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: { type: "message_end", message } as any });
-    this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: { type: "turn_end", message, toolResults: [] } as any });
+    this.opts.bus.emit({
+      type: "agent",
+      sessionId: opened.id,
+      event: { type: "message_start", message } as any,
+    });
+    this.opts.bus.emit({
+      type: "agent",
+      sessionId: opened.id,
+      event: { type: "message_end", message } as any,
+    });
+    this.opts.bus.emit({
+      type: "agent",
+      sessionId: opened.id,
+      event: { type: "turn_end", message, toolResults: [] } as any,
+    });
   }
 
   private async recordCompactionEvent(
     opened: OpenSession,
-    event: any /* the session_compact harness event */,
+    result: RunCompactionResult,
+    compactionEntry?: any,
   ): Promise<void> {
     if (!opened.compaction) return;
     const model = opened.harness.getModel();
-    const pending = opened.compaction.pendingCompaction;
     const sessionFilePath = opened.metadata.path;
 
-    // Best-effort: extract details from the pi compaction entry
-    const compactionEntry = (event as any).compactionEntry ?? {};
-    const summaryText = compactionEntry.summary ?? "";
-
-    let tokensAfter = 0;
+    let tokensAfter = compactionEntry?.tokensAfter ?? 0;
     try {
       const messages = (await opened.session.buildContext()).messages;
       tokensAfter = estimateContextTokens(messages).tokens;
     } catch {
-      // Best-effort
+      // Best-effort diagnostic only; buildCompactionEvent falls back to 0.
     }
 
-    const details = compactionEntry.details ?? {};
-    const compactionEvent: CompactionEvent = {
-      timestamp: new Date(),
+    const enrichedEntry = {
+      ...(compactionEntry ?? {}),
       sessionId: opened.metadata.id,
-      subagentTaskId: null,
-      trigger: pending?.trigger ?? "proactive",
-      reason: pending?.reason ?? "session_compact fired",
-      model: `${model.provider}/${model.id}`,
-      contextWindow: model.contextWindow,
-      reserveTokens: computeReserveTokens(model),
-      keepRecentTokens: 20_000,
-      tokensBefore: pending?.tokensBefore ?? compactionEntry.tokensBefore ?? 0,
       tokensAfter,
-      summaryTokens: Math.ceil(summaryText.length / 4), // char/4 heuristic
-      firstKeptEntryId: compactionEntry.firstKeptEntryId ?? "",
-      droppedTurns: 0, // best-effort; not always available from pi event
-      filesRead: Array.isArray(details.readFiles) ? details.readFiles : [],
-      filesModified: Array.isArray(details.modifiedFiles) ? details.modifiedFiles : [],
-      compactionDurationMs: 0, // orchestrator already returned this; can be plumbed if needed
-      succeeded: true,
-      backupPath: "", // orchestrator already returned this; not available in this event
     };
+    const devLogPath = `${memoryRoot()}/projects/ytsejam/dev-log.md`;
+    const compactionEvent = buildCompactionEvent(
+      model,
+      sessionFilePath,
+      result,
+      enrichedEntry,
+      devLogPath,
+    );
 
-    // Dev-log entry — write to the cog memory dev-log file
-    const devLogPath = `${this.opts.dataDir}/memory/projects/ytsejam/dev-log.md`;
+    // Dev-log entry — write to the cog memory dev-log file.
     await appendDevLogLine(formatDevLogLine(compactionEvent), devLogPath);
 
-    // Per-session JSONL record — co-located with the session file
-    await appendSessionCompactionJsonl(sessionFilePath, serializeJsonRecord(compactionEvent));
+    // Per-session JSONL record — co-located with the session file.
+    await appendSessionCompactionJsonl(
+      sessionFilePath,
+      serializeJsonRecord(compactionEvent),
+    );
   }
-
 
   // ---- messaging ---------------------------------------------------------
 
@@ -628,7 +718,10 @@ export class AgentManager {
   private emitMeta(id: string): void {
     const row = this.opts.indexer.getSession(id);
     if (row) {
-      this.opts.bus.emit({ type: "session_meta", session: { ...row, running: this.isRunning(id) } });
+      this.opts.bus.emit({
+        type: "session_meta",
+        session: { ...row, running: this.isRunning(id) },
+      });
     }
   }
 }

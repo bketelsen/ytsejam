@@ -1,6 +1,10 @@
 import { appendFile, copyFile, mkdir, readdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { isContextOverflow, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import {
+  isContextOverflow,
+  type AssistantMessage,
+  type Model,
+} from "@earendil-works/pi-ai";
 import {
   estimateContextTokens,
   shouldCompact,
@@ -140,6 +144,20 @@ CONDENSE aggressively:
 `.trim();
 
 /**
+ * Generic retry prompt used after a successful reactive compaction.
+ *
+ * NB: This is NOT a byte-for-byte replay of the user's original message —
+ * the manager doesn't retain the raw user turn, and pi's AgentHarness
+ * exposes no "re-run last turn" primitive. The summary preserves the user's
+ * most recent stated goal (per CUSTOM_INSTRUCTIONS), so this nudge lets
+ * the model resume with that context. UX trade-off documented in
+ * docs/plans/2026-06-12-context-compaction-design.md §3.6 and acknowledged
+ * acceptable by Task 5 review.
+ */
+export const REACTIVE_RETRY_PROMPT =
+  "Please retry your previous response now that the conversation context has been compacted.";
+
+/**
  * Build the user-visible surrender message when both proactive compaction
  * and the reactive retry fail to fit the prompt.
  *
@@ -166,8 +184,10 @@ export function buildSurrenderMessage(
 }
 
 /**
- * Per-compaction event record. Constructed at session_compact handler time,
- * fed to both formatDevLogLine (one-line cog dev-log entry) and
+ * Per-compaction event record. Constructed by the manager after the
+ * orchestrator returns, using the pending snapshot captured before the
+ * eager-clear race with pi's synchronous session_compact event.
+ * Fed to both formatDevLogLine (one-line cog dev-log entry) and
  * serializeJsonRecord (full structured record for per-session JSONL).
  */
 export interface CompactionEvent {
@@ -205,8 +225,12 @@ export function formatDevLogLine(e: CompactionEvent): string {
   const sessionPart = e.subagentTaskId
     ? `subagent task ${e.subagentTaskId} (parent session ${e.sessionId})`
     : `session ${e.sessionId}`;
-  const filesReadStr = e.filesRead.length ? `[${e.filesRead.join(", ")}]` : "[]";
-  const filesModStr = e.filesModified.length ? `[${e.filesModified.join(", ")}]` : "[]";
+  const filesReadStr = e.filesRead.length
+    ? `[${e.filesRead.join(", ")}]`
+    : "[]";
+  const filesModStr = e.filesModified.length
+    ? `[${e.filesModified.join(", ")}]`
+    : "[]";
   const failedMarker = e.succeeded ? "" : " FAILED";
   return (
     `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
@@ -223,7 +247,9 @@ export function formatDevLogLine(e: CompactionEvent): string {
  * Keys use snake_case to match conventional JSONL ergonomics; values are
  * primitives + arrays only (round-trips through JSON.stringify cleanly).
  */
-export function serializeJsonRecord(e: CompactionEvent): Record<string, unknown> {
+export function serializeJsonRecord(
+  e: CompactionEvent,
+): Record<string, unknown> {
   return {
     timestamp: e.timestamp.toISOString(),
     session_id: e.sessionId,
@@ -247,6 +273,66 @@ export function serializeJsonRecord(e: CompactionEvent): Record<string, unknown>
   };
 }
 
+function sessionIdFromFilePath(sessionFilePath: string): string {
+  const basename = sessionFilePath.split(/[\\/]/).pop() ?? sessionFilePath;
+  const match = basename.match(/^[^_]+_(.+)\.jsonl$/);
+  return match?.[1] ?? basename.replace(/\.jsonl$/, "");
+}
+
+/**
+ * Build the structured observability event from the orchestrator result.
+ *
+ * This intentionally reads trigger/reason/tokensBefore from result.pending,
+ * not from live opened.compaction.pendingCompaction: runCompactionIfPending
+ * clears that live field before calling harness.compact() for race-safety,
+ * and pi emits session_compact synchronously inside compact(). The event
+ * handler can only cache pi's compactionEntry details; the caller-side
+ * orchestrator result is the source of truth for labeling.
+ */
+export function buildCompactionEvent(
+  model: Model<any>,
+  sessionFilePath: string,
+  result: RunCompactionResult,
+  compactionEntry: any = {},
+  _devLogPath?: string,
+): CompactionEvent {
+  const pending = result.pending;
+  const details = compactionEntry?.details ?? {};
+  const summaryText = compactionEntry?.summary ?? "";
+  const succeeded = result.succeeded === true;
+  const reason = result.surrendered
+    ? `VERIFY CORRUPTED: ${result.error?.message ?? "unknown error"}`
+    : result.succeeded === false && !result.backupPath
+      ? `SKIPPED: ${result.error?.message ?? pending?.reason ?? "backup failed"}`
+      : (pending?.reason ?? result.error?.message ?? "compaction fired");
+
+  return {
+    timestamp: new Date(),
+    sessionId:
+      compactionEntry?.sessionId ?? sessionIdFromFilePath(sessionFilePath),
+    subagentTaskId: compactionEntry?.subagentTaskId ?? null,
+    trigger: pending?.trigger ?? "proactive",
+    reason,
+    model: `${model.provider}/${model.id}`,
+    contextWindow: model.contextWindow,
+    reserveTokens: computeReserveTokens(model),
+    keepRecentTokens: 20_000,
+    tokensBefore: pending?.tokensBefore ?? compactionEntry?.tokensBefore ?? 0,
+    tokensAfter: compactionEntry?.tokensAfter ?? 0,
+    summaryTokens:
+      compactionEntry?.summaryTokens ??
+      Math.ceil(String(summaryText).length / 4),
+    firstKeptEntryId: compactionEntry?.firstKeptEntryId ?? "",
+    droppedTurns: compactionEntry?.droppedTurns ?? 0,
+    filesRead: Array.isArray(details.readFiles) ? details.readFiles : [],
+    filesModified: Array.isArray(details.modifiedFiles)
+      ? details.modifiedFiles
+      : [],
+    compactionDurationMs: result.durationMs ?? 0,
+    succeeded,
+    backupPath: result.backupPath ?? "",
+  };
+}
 
 /**
  * Read the kill-switch env var. Defaults to enabled.
@@ -277,7 +363,10 @@ export async function appendDevLogLine(
     await mkdir(dirname(filePath), { recursive: true });
     await appendFile(filePath, line + "\n", "utf8");
   } catch (err) {
-    console.error(`[compaction] failed to append dev-log line to ${filePath}:`, err);
+    console.error(
+      `[compaction] failed to append dev-log line to ${filePath}:`,
+      err,
+    );
   }
 }
 
@@ -344,9 +433,7 @@ export async function pruneOldBackups(
   const prefix = `${basename}.pre-compact-`;
   try {
     const all = await readdir(sessionDir);
-    const backups = all
-      .filter((f) => f.startsWith(prefix))
-      .sort(); // string sort matches numeric sort for ms timestamps
+    const backups = all.filter((f) => f.startsWith(prefix)).sort(); // string sort matches numeric sort for ms timestamps
     if (backups.length <= keepLast) return;
     const toDelete = backups.slice(0, backups.length - keepLast);
     for (const f of toDelete) {
@@ -382,10 +469,12 @@ export async function verifySessionLoadable(
     await reload();
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
 }
-
 
 /**
  * Per-opened-session state we need to carry for compaction wiring.
@@ -398,6 +487,8 @@ export async function verifySessionLoadable(
 export interface CompactionWiringState {
   pendingCompaction: PendingCompaction | null;
   reactiveRetryAttempted: boolean;
+  /** Last pi session_compact payload, cached only to enrich caller-side observability. */
+  lastCompactionDetails?: any;
 }
 
 export interface PendingCompaction {
@@ -426,6 +517,15 @@ export interface RunCompactionResult {
   durationMs?: number;
   backupPath?: string;
   error?: Error;
+  /**
+   * Snapshot of the pendingCompaction state at the moment the orchestrator
+   * decided to fire (captured BEFORE the eager-clear). The caller uses this
+   * to correctly label observability writes — pi's session_compact event
+   * fires synchronously inside harness.compact() at a moment when the live
+   * pendingCompaction field has already been cleared, so the event handler
+   * cannot read the trigger/reason directly.
+   */
+  pending?: PendingCompaction;
 }
 
 /**
@@ -444,8 +544,8 @@ export interface RunCompactionResult {
  *
  * Caller decides what to do based on the returned flags:
  *   - fired=false      → nothing to do
- *   - succeeded=true   → safe to continue (session_compact handler ran the observability write)
- *   - succeeded=false  → harness.compact errored; clear pending; if reactive caller, surrender
+ *   - succeeded=true   → safe to continue; caller writes observability from result.pending
+ *   - succeeded=false  → caller still writes FAILED observability, then decides whether to surrender
  *   - surrendered=true → JSONL corrupted post-compact; surrender message MUST be emitted by caller
  */
 export async function runCompactionIfPending(
@@ -454,6 +554,9 @@ export async function runCompactionIfPending(
 ): Promise<RunCompactionResult> {
   const pending = opened.compaction.pendingCompaction;
   if (!pending) return { fired: false };
+
+  // Snapshot BEFORE eager-clear so the caller can label observability correctly.
+  const pendingSnapshot = { ...pending };
 
   // Clear flag eagerly so concurrent triggers don't double-fire
   opened.compaction.pendingCompaction = null;
@@ -465,8 +568,16 @@ export async function runCompactionIfPending(
   try {
     backupPath = await snapshotSessionJsonl(sessionFilePath);
   } catch (err) {
-    console.error(`[compaction] backup failed for session ${opened.session.metadata.id}, ABORTING compaction:`, err);
-    return { fired: true, succeeded: false, error: err instanceof Error ? err : new Error(String(err)) };
+    console.error(
+      `[compaction] backup failed for session ${opened.session.metadata.id}, ABORTING compaction:`,
+      err,
+    );
+    return {
+      fired: true,
+      succeeded: false,
+      pending: pendingSnapshot,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
 
   // Best-effort prune (no abort on failure)
@@ -476,18 +587,24 @@ export async function runCompactionIfPending(
     await opened.harness.compact(CUSTOM_INSTRUCTIONS);
   } catch (err) {
     const e = err instanceof Error ? err : new Error(String(err));
-    console.error(`[compaction] harness.compact failed for session ${opened.session.metadata.id}:`, e);
+    console.error(
+      `[compaction] harness.compact failed for session ${opened.session.metadata.id}:`,
+      e,
+    );
     return {
       fired: true,
       succeeded: false,
       durationMs: Date.now() - start,
       backupPath,
+      pending: pendingSnapshot,
       error: e,
     };
   }
 
   // Verify the session is still loadable after compaction wrote
-  const verify = await verifySessionLoadable(() => repo.open(opened.session.metadata));
+  const verify = await verifySessionLoadable(() =>
+    repo.open(opened.session.metadata),
+  );
   if (!verify.ok) {
     console.error(
       `[compaction] post-compact load verification FAILED for session ${opened.session.metadata.id}:`,
@@ -499,6 +616,7 @@ export async function runCompactionIfPending(
       surrendered: true,
       durationMs: Date.now() - start,
       backupPath,
+      pending: pendingSnapshot,
       error: verify.error,
     };
   }
@@ -508,5 +626,6 @@ export async function runCompactionIfPending(
     succeeded: true,
     durationMs: Date.now() - start,
     backupPath,
+    pending: pendingSnapshot,
   };
 }

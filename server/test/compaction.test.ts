@@ -1,9 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, writeFile, readdir, readFile, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  readdir,
+  readFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model, AssistantMessage } from "@earendil-works/pi-ai";
-import type { AgentHarness, AgentMessage, JsonlSessionMetadata, JsonlSessionRepo, Session } from "@earendil-works/pi-agent-core";
+import type {
+  AgentHarness,
+  AgentMessage,
+  JsonlSessionMetadata,
+  JsonlSessionRepo,
+  Session,
+} from "@earendil-works/pi-agent-core";
 import {
   computeReserveTokens,
   buildSettings,
@@ -11,6 +24,7 @@ import {
   classifyOverflow,
   CUSTOM_INSTRUCTIONS,
   buildSurrenderMessage,
+  buildCompactionEvent,
   formatDevLogLine,
   serializeJsonRecord,
   compactionEnabled,
@@ -36,7 +50,7 @@ const fauxModel = (cw: number, mt: number): Model<any> =>
     cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
     contextWindow: cw,
     maxTokens: mt,
-  } as Model<any>);
+  }) as Model<any>;
 
 describe("computeReserveTokens", () => {
   it("returns maxTokens + 16k for large-output models", () => {
@@ -82,10 +96,10 @@ describe("decideCompaction", () => {
       api: "anthropic-messages",
       provider: "anthropic",
       model: "test-model",
-    } as AgentMessage);
+    }) as AgentMessage;
 
   const userMsg = (text: string): AgentMessage =>
-    ({ role: "user", content: [{ type: "text", text }] } as AgentMessage);
+    ({ role: "user", content: [{ type: "text", text }] }) as AgentMessage;
 
   it("fires when tokens exceed budget", () => {
     const model = fauxModel(1_000_000, 64_000); // budget = 919_616
@@ -106,8 +120,12 @@ describe("decideCompaction", () => {
     // pi's shouldCompact uses `tokens > contextWindow - reserveTokens` (strict)
     // so exactly-at-budget should NOT fire
     const model = fauxModel(1_000_000, 64_000);
-    expect(decideCompaction([assistantMsgWithUsage(919_616)], model).shouldFire).toBe(false);
-    expect(decideCompaction([assistantMsgWithUsage(919_617)], model).shouldFire).toBe(true);
+    expect(
+      decideCompaction([assistantMsgWithUsage(919_616)], model).shouldFire,
+    ).toBe(false);
+    expect(
+      decideCompaction([assistantMsgWithUsage(919_617)], model).shouldFire,
+    ).toBe(true);
   });
 
   it("returns shouldFire=false on empty messages", () => {
@@ -128,7 +146,6 @@ describe("decideCompaction", () => {
     expect(d.reason).toMatch(/above .* budget/);
   });
 });
-
 
 describe("classifyOverflow", () => {
   const overflowMsg: AssistantMessage = {
@@ -160,17 +177,27 @@ describe("classifyOverflow", () => {
   });
 
   it("returns true on Anthropic 'request_too_large' error", () => {
-    const m = { ...overflowMsg, errorMessage: "request_too_large: tokens exceed" } as AssistantMessage;
+    const m = {
+      ...overflowMsg,
+      errorMessage: "request_too_large: tokens exceed",
+    } as AssistantMessage;
     expect(classifyOverflow(m, model)).toBe(true);
   });
 
   it("returns false on rate-limit error (stopReason=error but not overflow)", () => {
-    const m = { ...overflowMsg, errorMessage: "429 rate limit exceeded, retry after 30s" } as AssistantMessage;
+    const m = {
+      ...overflowMsg,
+      errorMessage: "429 rate limit exceeded, retry after 30s",
+    } as AssistantMessage;
     expect(classifyOverflow(m, model)).toBe(false);
   });
 
   it("returns false on stopReason=stop (not an error at all)", () => {
-    const m = { ...overflowMsg, stopReason: "stop", errorMessage: undefined } as AssistantMessage;
+    const m = {
+      ...overflowMsg,
+      stopReason: "stop",
+      errorMessage: undefined,
+    } as AssistantMessage;
     expect(classifyOverflow(m, model)).toBe(false);
   });
 });
@@ -209,7 +236,6 @@ describe("buildSurrenderMessage", () => {
   });
 });
 
-
 describe("formatDevLogLine", () => {
   const baseEvent: CompactionEvent = {
     timestamp: new Date("2026-06-12T14:32:18.412Z"),
@@ -230,12 +256,15 @@ describe("formatDevLogLine", () => {
     filesModified: ["server/src/compaction.ts"],
     compactionDurationMs: 8_412,
     succeeded: true,
-    backupPath: "/home/bjk/.ytsejam/data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000",
+    backupPath:
+      "/home/bjk/.ytsejam/data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000",
   };
 
   it("formats a single line for proactive main-session compaction", () => {
     const line = formatDevLogLine(baseEvent);
-    expect(line).toMatch(/^2026-06-12.*: compaction in session abc123 — proactive/);
+    expect(line).toMatch(
+      /^2026-06-12.*: compaction in session abc123 — proactive/,
+    );
     expect(line).toMatch(/anthropic\/claude-sonnet-4-6/);
     expect(line).toMatch(/ctx 947112→184309 tokens/);
     expect(line).toMatch(/dropped 27 turns/);
@@ -250,7 +279,11 @@ describe("formatDevLogLine", () => {
   });
 
   it("formats reactive trigger explicitly", () => {
-    const e = { ...baseEvent, trigger: "reactive" as const, reason: "isContextOverflow" };
+    const e = {
+      ...baseEvent,
+      trigger: "reactive" as const,
+      reason: "isContextOverflow",
+    };
     const line = formatDevLogLine(e);
     expect(line).toMatch(/reactive/);
     expect(line).toMatch(/Trigger: isContextOverflow/);
@@ -259,6 +292,79 @@ describe("formatDevLogLine", () => {
   it("includes FAILED marker when succeeded=false", () => {
     const e = { ...baseEvent, succeeded: false };
     expect(formatDevLogLine(e)).toMatch(/FAILED/);
+  });
+});
+
+describe("buildCompactionEvent", () => {
+  const sessionFilePath =
+    "/tmp/sessions/--chat--/2026-06-12T00-00-00-000Z_test-session.jsonl";
+
+  it("uses the result.pending snapshot for trigger label (PROACTIVE case)", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true,
+        durationMs: 1234,
+        backupPath: "/tmp/session.jsonl.pre-compact-1",
+        pending: {
+          trigger: "proactive",
+          reason: "above 800000 budget",
+          tokensBefore: 850_000,
+          budget: 800_000,
+        },
+      },
+    );
+
+    expect(event.trigger).toBe("proactive");
+    expect(event.reason).toBe("above 800000 budget");
+    expect(event.tokensBefore).toBe(850_000);
+    expect(formatDevLogLine(event)).toContain("proactive");
+    expect(formatDevLogLine(event)).toContain("Trigger: above 800000 budget");
+  });
+
+  it("uses the result.pending snapshot for trigger label (REACTIVE case)", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true,
+        pending: {
+          trigger: "reactive",
+          reason: "isContextOverflow",
+          tokensBefore: 0,
+          budget: 800_000,
+        },
+      },
+    );
+
+    expect(event.trigger).toBe("reactive");
+    expect(event.reason).toBe("isContextOverflow");
+    expect(formatDevLogLine(event)).toContain("reactive");
+    expect(formatDevLogLine(event)).toContain("Trigger: isContextOverflow");
+  });
+
+  it("records succeeded:false correctly when result.succeeded is false", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: false,
+        error: new Error("summarization_failed"),
+        pending: {
+          trigger: "proactive",
+          reason: "above 800000 budget",
+          tokensBefore: 850_000,
+          budget: 800_000,
+        },
+      },
+    );
+
+    expect(event.succeeded).toBe(false);
+    expect(formatDevLogLine(event)).toMatch(/FAILED/);
   });
 });
 
@@ -305,7 +411,6 @@ describe("serializeJsonRecord", () => {
   });
 });
 
-
 describe("compactionEnabled", () => {
   const prev = process.env.YTSEJAM_COMPACTION_ENABLED;
   afterEach(() => {
@@ -342,7 +447,10 @@ describe("appendDevLogLine + appendSessionCompactionJsonl", () => {
     tmp = await mkdtemp(join(tmpdir(), "compaction-test-"));
     const sessionDir = join(tmp, "sessions", "--chat--");
     await mkdir(sessionDir, { recursive: true });
-    sessionFilePath = join(sessionDir, "2026-06-12T00-00-00-000Z_test-uuid.jsonl");
+    sessionFilePath = join(
+      sessionDir,
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl",
+    );
     await writeFile(sessionFilePath, "line1\nline2\n");
   });
   afterEach(async () => {
@@ -362,7 +470,10 @@ describe("appendDevLogLine + appendSessionCompactionJsonl", () => {
     await appendSessionCompactionJsonl(sessionFilePath, { foo: 2 });
     const path = `${sessionFilePath}.compactions.jsonl`;
     const content = await readFile(path, "utf8");
-    const lines = content.trim().split("\n").map((l) => JSON.parse(l));
+    const lines = content
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
     expect(lines).toEqual([{ foo: 1, bar: "x" }, { foo: 2 }]);
   });
 });
@@ -375,7 +486,10 @@ describe("snapshotSessionJsonl + pruneOldBackups", () => {
     tmp = await mkdtemp(join(tmpdir(), "compaction-test-"));
     sessionDir = join(tmp, "sessions", "--chat--");
     await mkdir(sessionDir, { recursive: true });
-    sessionFilePath = join(sessionDir, "2026-06-12T00-00-00-000Z_test-uuid.jsonl");
+    sessionFilePath = join(
+      sessionDir,
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl",
+    );
     await writeFile(sessionFilePath, "line1\nline2\n");
   });
   afterEach(async () => {
@@ -398,7 +512,10 @@ describe("snapshotSessionJsonl + pruneOldBackups", () => {
   it("pruneOldBackups keeps the N most recent", async () => {
     // create 5 backups with increasing timestamps in the filename
     for (let i = 1; i <= 5; i++) {
-      await writeFile(`${sessionFilePath}.pre-compact-${1000 + i}`, `backup ${i}`);
+      await writeFile(
+        `${sessionFilePath}.pre-compact-${1000 + i}`,
+        `backup ${i}`,
+      );
     }
     await pruneOldBackups(sessionFilePath, 3);
     const files = (await readdir(sessionDir))
@@ -414,15 +531,21 @@ describe("snapshotSessionJsonl + pruneOldBackups", () => {
   it("pruneOldBackups is a no-op when fewer backups than keepLast", async () => {
     await writeFile(`${sessionFilePath}.pre-compact-1001`, "only one");
     await pruneOldBackups(sessionFilePath, 3);
-    const files = (await readdir(sessionDir))
-      .filter((f) => f.includes("pre-compact"));
+    const files = (await readdir(sessionDir)).filter((f) =>
+      f.includes("pre-compact"),
+    );
     expect(files).toEqual([
       "2026-06-12T00-00-00-000Z_test-uuid.jsonl.pre-compact-1001",
     ]);
   });
 
   it("pruneOldBackups handles realistic 13-digit ms timestamps correctly", async () => {
-    for (const ts of ["1718193600000", "1718193600001", "1718193600999", "1718280000000"]) {
+    for (const ts of [
+      "1718193600000",
+      "1718193600001",
+      "1718193600999",
+      "1718280000000",
+    ]) {
       await writeFile(`${sessionFilePath}.pre-compact-${ts}`, `backup ${ts}`);
     }
     await pruneOldBackups(sessionFilePath, 2);
@@ -444,20 +567,23 @@ describe("verifySessionLoadable", () => {
   });
 
   it("returns ok:false with error when reload rejects", async () => {
-    const reload = async () => { throw new Error("corrupted"); };
+    const reload = async () => {
+      throw new Error("corrupted");
+    };
     const result = await verifySessionLoadable(reload);
     expect(result.ok).toBe(false);
     expect(result.error?.message).toBe("corrupted");
   });
 
   it("captures non-Error throws as Error", async () => {
-    const reload = async () => { throw "plain string"; };
+    const reload = async () => {
+      throw "plain string";
+    };
     const result = await verifySessionLoadable(reload);
     expect(result.ok).toBe(false);
     expect(result.error?.message).toBe("plain string");
   });
 });
-
 
 describe("runCompactionIfPending", () => {
   let tmp: string;
@@ -466,7 +592,10 @@ describe("runCompactionIfPending", () => {
     tmp = await mkdtemp(join(tmpdir(), "orchestrator-test-"));
     const sessionDir = join(tmp, "sessions", "--chat--");
     await mkdir(sessionDir, { recursive: true });
-    sessionFilePath = join(sessionDir, "2026-06-12T00-00-00-000Z_test-uuid.jsonl");
+    sessionFilePath = join(
+      sessionDir,
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl",
+    );
     await writeFile(sessionFilePath, "line\n");
   });
   afterEach(async () => {
@@ -474,55 +603,84 @@ describe("runCompactionIfPending", () => {
   });
 
   // Helper: build a mock OpenedForCompaction with a controllable harness.compact()
-  const makeMockOpened = (compactImpl: () => Promise<void>): OpenedForCompaction => {
+  const makeMockOpened = (
+    compactImpl: () => Promise<void>,
+  ): OpenedForCompaction => {
     const harness = { compact: compactImpl } as unknown as AgentHarness;
     return {
       session: {
-        metadata: { id: "test-uuid", path: sessionFilePath } as JsonlSessionMetadata,
-      } as unknown as Session<JsonlSessionMetadata> & { metadata: JsonlSessionMetadata },
+        metadata: {
+          id: "test-uuid",
+          path: sessionFilePath,
+        } as JsonlSessionMetadata,
+      } as unknown as Session<JsonlSessionMetadata> & {
+        metadata: JsonlSessionMetadata;
+      },
       harness,
       compaction: { pendingCompaction: null, reactiveRetryAttempted: false },
     };
   };
 
   const okRepo = { open: async () => ({}) } as unknown as JsonlSessionRepo;
-  const failingRepo = { open: async () => { throw new Error("corrupt"); } } as unknown as JsonlSessionRepo;
+  const failingRepo = {
+    open: async () => {
+      throw new Error("corrupt");
+    },
+  } as unknown as JsonlSessionRepo;
 
   it("returns fired:false when no pending", async () => {
-    const opened = makeMockOpened(async () => { });
+    const opened = makeMockOpened(async () => {});
     const r = await runCompactionIfPending(opened, okRepo);
     expect(r.fired).toBe(false);
   });
 
   it("calls harness.compact and returns succeeded:true on happy path", async () => {
     let called = false;
-    const opened = makeMockOpened(async () => { called = true; });
+    const opened = makeMockOpened(async () => {
+      called = true;
+    });
     opened.compaction.pendingCompaction = {
-      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+      trigger: "proactive",
+      reason: "test",
+      tokensBefore: 900_000,
+      budget: 800_000,
     };
     const r = await runCompactionIfPending(opened, okRepo);
     expect(called).toBe(true);
     expect(r.fired).toBe(true);
     expect(r.succeeded).toBe(true);
+    expect(r.pending?.trigger).toBe("proactive");
+    expect(r.pending?.reason).toBe("test");
     expect(r.backupPath).toMatch(/\.pre-compact-\d+$/);
     expect(opened.compaction.pendingCompaction).toBeNull(); // cleared
   });
 
   it("returns succeeded:false on harness.compact error", async () => {
-    const opened = makeMockOpened(async () => { throw new Error("summarization_failed"); });
+    const opened = makeMockOpened(async () => {
+      throw new Error("summarization_failed");
+    });
     opened.compaction.pendingCompaction = {
-      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+      trigger: "proactive",
+      reason: "test",
+      tokensBefore: 900_000,
+      budget: 800_000,
     };
     const r = await runCompactionIfPending(opened, okRepo);
     expect(r.fired).toBe(true);
     expect(r.succeeded).toBe(false);
+    expect(r.pending?.trigger).toBe("proactive");
     expect(r.error?.message).toBe("summarization_failed");
   });
 
   it("returns surrendered:true when post-compact load fails", async () => {
-    const opened = makeMockOpened(async () => { /* compact succeeds */ });
+    const opened = makeMockOpened(async () => {
+      /* compact succeeds */
+    });
     opened.compaction.pendingCompaction = {
-      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+      trigger: "proactive",
+      reason: "test",
+      tokensBefore: 900_000,
+      budget: 800_000,
     };
     const r = await runCompactionIfPending(opened, failingRepo);
     expect(r.fired).toBe(true);
@@ -532,11 +690,14 @@ describe("runCompactionIfPending", () => {
   });
 
   it("returns succeeded:false on backup failure (source file missing)", async () => {
-    const opened = makeMockOpened(async () => { });
+    const opened = makeMockOpened(async () => {});
     // Point the session at a path that doesn't exist:
     (opened.session as any).metadata.path = join(tmp, "does-not-exist.jsonl");
     opened.compaction.pendingCompaction = {
-      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+      trigger: "proactive",
+      reason: "test",
+      tokensBefore: 900_000,
+      budget: 800_000,
     };
     const r = await runCompactionIfPending(opened, okRepo);
     expect(r.fired).toBe(true);
