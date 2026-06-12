@@ -1,9 +1,12 @@
+import { appendFile, copyFile, mkdir, readdir, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { isContextOverflow, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   estimateContextTokens,
   shouldCompact,
+  type AgentMessage,
   type CompactionSettings,
+  type JsonlSessionRepo,
 } from "@earendil-works/pi-agent-core";
 
 /**
@@ -239,4 +242,125 @@ export function serializeJsonRecord(e: CompactionEvent): Record<string, unknown>
     succeeded: e.succeeded,
     backup_path: e.backupPath,
   };
+}
+
+
+/**
+ * Read the kill-switch env var. Defaults to enabled.
+ *
+ * Only `false` (case-insensitive) disables. Any other value (including
+ * unset, empty, "true", "1") enables. This is a one-way safety valve —
+ * the env var is read once per process at wire-time; flipping requires
+ * `systemctl --user restart ytsejam`.
+ */
+export function compactionEnabled(): boolean {
+  const v = process.env.YTSEJAM_COMPACTION_ENABLED;
+  if (v && v.toLowerCase() === "false") return false;
+  return true;
+}
+
+/**
+ * Append a line + newline to a file. Creates parent directories.
+ *
+ * Used for both the cog dev-log entry and as a primitive for the JSONL
+ * writer. Best-effort: errors are caught and logged to console (we don't
+ * want observability writes to break the conversation).
+ */
+export async function appendDevLogLine(
+  line: string,
+  filePath: string,
+): Promise<void> {
+  try {
+    await mkdir(dirname(filePath), { recursive: true });
+    await appendFile(filePath, line + "\n", "utf8");
+  } catch (err) {
+    console.error(`[compaction] failed to append dev-log line to ${filePath}:`, err);
+  }
+}
+
+/**
+ * Append a JSON record (one line per record) to the per-session compactions log.
+ *
+ * Path: `<dataDir>/sessions/<sessionId>/compactions.jsonl`.
+ * Best-effort like appendDevLogLine.
+ */
+export async function appendSessionCompactionJsonl(
+  sessionId: string,
+  record: Record<string, unknown>,
+  dataDir: string,
+): Promise<void> {
+  const path = join(dataDir, "sessions", sessionId, "compactions.jsonl");
+  await appendDevLogLine(JSON.stringify(record), path);
+}
+
+/**
+ * Copy the session JSONL file to a backup with a `pre-compact-<unix-ts>` suffix.
+ * Returns the backup path.
+ *
+ * NB: timestamp is millisecond-precision integer for sortability.
+ */
+export async function snapshotSessionJsonl(
+  sessionId: string,
+  dataDir: string,
+): Promise<string> {
+  const sessionDir = join(dataDir, "sessions", sessionId);
+  const src = join(sessionDir, "session.jsonl");
+  const ts = Date.now();
+  const dst = join(sessionDir, `session.jsonl.pre-compact-${ts}`);
+  await copyFile(src, dst);
+  return dst;
+}
+
+/**
+ * Keep only the N most recent pre-compact backups for a session.
+ *
+ * Sorts by timestamp embedded in the filename (lexicographic == numeric here
+ * because timestamps are fixed-width-enough that string sort matches numeric
+ * sort for any realistic span). Deletes the older ones.
+ *
+ * Best-effort: errors during prune are logged and swallowed (we'd rather
+ * have extra backups than skip the compaction itself).
+ */
+export async function pruneOldBackups(
+  sessionId: string,
+  dataDir: string,
+  keepLast: number,
+): Promise<void> {
+  const sessionDir = join(dataDir, "sessions", sessionId);
+  try {
+    const all = await readdir(sessionDir);
+    const backups = all
+      .filter((f) => f.startsWith("session.jsonl.pre-compact-"))
+      .sort(); // string sort matches numeric sort for ms timestamps
+    if (backups.length <= keepLast) return;
+    const toDelete = backups.slice(0, backups.length - keepLast);
+    for (const f of toDelete) {
+      try {
+        await unlink(join(sessionDir, f));
+      } catch (err) {
+        console.error(`[compaction] failed to prune backup ${f}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error(`[compaction] failed to scan backups in ${sessionDir}:`, err);
+  }
+}
+
+/**
+ * Verify that the session JSONL is loadable by re-reading it through the repo.
+ *
+ * Called immediately after a successful `harness.compact()` to catch the
+ * scary "pi wrote a malformed entry" case before it kills the next session
+ * resume.
+ */
+export async function verifySessionLoadable(
+  sessionId: string,
+  repo: JsonlSessionRepo,
+): Promise<{ ok: boolean; error?: Error }> {
+  try {
+    await (repo as unknown as { load(sessionId: string): Promise<unknown> }).load(sessionId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
+  }
 }

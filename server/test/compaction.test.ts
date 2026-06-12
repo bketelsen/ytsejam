@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, mkdir, writeFile, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Model, AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
@@ -10,6 +13,12 @@ import {
   buildSurrenderMessage,
   formatDevLogLine,
   serializeJsonRecord,
+  compactionEnabled,
+  appendDevLogLine,
+  appendSessionCompactionJsonl,
+  snapshotSessionJsonl,
+  pruneOldBackups,
+  verifySessionLoadable,
   type CompactionEvent,
 } from "../src/compaction.ts";
 
@@ -291,5 +300,129 @@ describe("serializeJsonRecord", () => {
     expect(parsed.compaction_duration_ms).toBe(100);
     expect(parsed.succeeded).toBe(true);
     expect(parsed.backup_path).toBe("/tmp/x");
+  });
+});
+
+
+describe("compactionEnabled", () => {
+  const prev = process.env.YTSEJAM_COMPACTION_ENABLED;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    else process.env.YTSEJAM_COMPACTION_ENABLED = prev;
+  });
+
+  it("defaults to true when unset", () => {
+    delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    expect(compactionEnabled()).toBe(true);
+  });
+
+  it("returns false when set to 'false' (case-insensitive)", () => {
+    process.env.YTSEJAM_COMPACTION_ENABLED = "false";
+    expect(compactionEnabled()).toBe(false);
+    process.env.YTSEJAM_COMPACTION_ENABLED = "FALSE";
+    expect(compactionEnabled()).toBe(false);
+    process.env.YTSEJAM_COMPACTION_ENABLED = "False";
+    expect(compactionEnabled()).toBe(false);
+  });
+
+  it("returns true for any other value", () => {
+    for (const v of ["true", "1", "yes", "on", "", "anything"]) {
+      process.env.YTSEJAM_COMPACTION_ENABLED = v;
+      expect(compactionEnabled()).toBe(true);
+    }
+  });
+});
+
+describe("appendDevLogLine + appendSessionCompactionJsonl", () => {
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "compaction-test-"));
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("appends a line + newline to the given file (creates parents)", async () => {
+    const path = join(tmp, "deep/nested/dev-log.md");
+    await appendDevLogLine("- 2026-06-12: hello", path);
+    await appendDevLogLine("- 2026-06-12: world", path);
+    const content = await readFile(path, "utf8");
+    expect(content).toBe("- 2026-06-12: hello\n- 2026-06-12: world\n");
+  });
+
+  it("appends a JSON line to <dataDir>/sessions/<id>/compactions.jsonl", async () => {
+    const dataDir = tmp;
+    await mkdir(join(dataDir, "sessions", "abc"), { recursive: true });
+    await appendSessionCompactionJsonl("abc", { foo: 1, bar: "x" }, dataDir);
+    await appendSessionCompactionJsonl("abc", { foo: 2 }, dataDir);
+    const path = join(dataDir, "sessions", "abc", "compactions.jsonl");
+    const content = await readFile(path, "utf8");
+    const lines = content.trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines).toEqual([{ foo: 1, bar: "x" }, { foo: 2 }]);
+  });
+});
+
+describe("snapshotSessionJsonl + pruneOldBackups", () => {
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "compaction-test-"));
+    await mkdir(join(tmp, "sessions", "sid"), { recursive: true });
+    await writeFile(join(tmp, "sessions", "sid", "session.jsonl"), "line1\nline2\n");
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("creates a backup file with pre-compact-<timestamp> suffix", async () => {
+    const backupPath = await snapshotSessionJsonl("sid", tmp);
+    expect(backupPath).toMatch(/session\.jsonl\.pre-compact-\d+$/);
+    const content = await readFile(backupPath, "utf8");
+    expect(content).toBe("line1\nline2\n");
+  });
+
+  it("pruneOldBackups keeps the N most recent", async () => {
+    // create 5 backups with increasing timestamps in the filename
+    for (let i = 1; i <= 5; i++) {
+      await writeFile(
+        join(tmp, "sessions", "sid", `session.jsonl.pre-compact-${1000 + i}`),
+        `backup ${i}`,
+      );
+    }
+    await pruneOldBackups("sid", tmp, 3);
+    const files = (await readdir(join(tmp, "sessions", "sid")))
+      .filter((f) => f.includes("pre-compact"))
+      .sort();
+    expect(files).toEqual([
+      "session.jsonl.pre-compact-1003",
+      "session.jsonl.pre-compact-1004",
+      "session.jsonl.pre-compact-1005",
+    ]);
+  });
+
+  it("pruneOldBackups is a no-op when fewer backups than keepLast", async () => {
+    await writeFile(
+      join(tmp, "sessions", "sid", "session.jsonl.pre-compact-1001"),
+      "only one",
+    );
+    await pruneOldBackups("sid", tmp, 3);
+    const files = (await readdir(join(tmp, "sessions", "sid")))
+      .filter((f) => f.includes("pre-compact"));
+    expect(files).toEqual(["session.jsonl.pre-compact-1001"]);
+  });
+});
+
+describe("verifySessionLoadable", () => {
+  it("returns ok:true on valid JSONL", async () => {
+    // mock repo with successful load
+    const repo = { load: async () => ({ id: "sid" }) } as any;
+    const result = await verifySessionLoadable("sid", repo);
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns ok:false with error on load failure", async () => {
+    const repo = { load: async () => { throw new Error("corrupted"); } } as any;
+    const result = await verifySessionLoadable("sid", repo);
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toBe("corrupted");
   });
 });
