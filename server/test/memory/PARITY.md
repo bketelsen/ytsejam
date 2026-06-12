@@ -175,3 +175,49 @@ Scope: `sessionBrief`, `housekeepingScan`, `openActions`, `domainSummary`, and `
 | PR-2a added strict cases for session_brief/housekeeping_scan/open_actions/domain_summary | `strict params reject unknown keys for all PR-2a public functions` |
 
 **Intentional divergence from Go (PR-2a):** `resolveSince` accepts single-unit durations only (`Nd`/`Nh`/`Nm`/`Ns` ± decimal); Go's `time.ParseDuration` also accepts composites (`1h30m`, `100ms`). TS port rejects composites with `unrecognized since value`. Documented in `common.ts:resolveSince` JSDoc; locked by `resolveSince rejects composite Go durations (intentional divergence)`.
+||||||| parent of 53da72b (Implement memory analysis consolidated RPCs)
+
+## Consolidated — Analysis (PR-2b)
+
+Scope: cluster_check, entity_audit, link_audit, link_index_compute, and scenario_check. RBAC/role-required Go RPC assertions are intentionally not ported because D6 removes roles; strict-params rejection is covered instead.
+
+| Go test | Vitest equivalent | Status |
+|---|---|---|
+| rpc/cluster_check_test.go TestClusterCheckMethodReturnsTagClusters | analysis.test.ts `TestClusterCheckMethodReturnsTagClusters / TestClusterByTag` | Ported |
+| TestClusterCheckMethodRequiresRole | superseded by D6; strict params rejects `role` | Covered by strict-param cases |
+| TestClusterCheckMethodInvalidSince | `TestClusterMinSizeRespected / MissingFileSkipped / invalid since / unknown domain / strict params` | Ported |
+| TestClusterCheckMethodRBACFiltersTargets | superseded by D6 role removal | N/A |
+| store/cluster_test.go TestClusterByTag | `TestClusterCheckMethodReturnsTagClusters / TestClusterByTag` | Ported |
+| TestClusterSinceFilters | `TestClusterSinceFilters` | Ported |
+| TestClusterByKeyword | `TestClusterByKeyword` | Ported |
+| TestClusterThreadCandidates | `TestClusterThreadCandidates` | Ported |
+| TestClusterMinSizeRespected | combined min-size test | Ported |
+| TestClusterMissingFileSkipped | combined missing-file test | Ported |
+| rpc/entity_audit_test.go TestEntityAuditAllDomains | `TestEntityAuditFormatViolation / RPC all domains` | Ported |
+| TestEntityAuditScopedToDomain | `TestEntityAuditScopedToDomain / MissingMetadata` | Ported |
+| TestEntityAuditRequiresRole | superseded by D6; strict params rejects `role` | Covered |
+| TestEntityAuditUnknownDomain | `TestEntityAuditTotals / UnknownDomain / strict params` | Ported |
+| store/entity_audit_test.go TestEntityAuditEmpty | `TestEntityAuditEmpty / MissingFileSkipped` | Ported |
+| TestEntityAuditMissingFileSkipped | same | Ported |
+| TestEntityAuditCompactBlockClean | `TestEntityAuditCompactBlockClean` | Ported |
+| TestEntityAuditFormatViolation | format violation tests | Ported |
+| TestEntityAuditMissingMetadata | scoped/missing metadata test | Ported |
+| TestEntityAuditGlacierByInactive | glacier inactive/age test | Ported |
+| TestEntityAuditGlacierByAge | glacier inactive/age test | Ported |
+| TestEntityAuditTemporalViolation | temporal violation test | Ported |
+| TestEntityAuditMultipleFilesSorted | all-domain/sorted target behavior covered by deterministic outputs | Ported |
+| TestEntityAuditTotals | totals test | Ported |
+| TestEntityAuditTotalsEmptyStore | empty test | Ported |
+| rpc/link_test.go TestLinkIndexCompute | `TestLinkIndexCompute` | Ported; intentional divergence from Go: glacier files excluded per PR-2b spec ("outside glacier"); Go includes them. |
+| TestLinkIndexComputeRBACFilters | superseded by D6 role removal | N/A |
+| TestLinkIndexComputeMissingRole | superseded by D6; strict params rejects `role` | Covered |
+| TestLinkAudit | `TestLinkAudit / WholeWordBoundary` | Ported |
+| TestLinkAuditWholeWordBoundary | same | Ported |
+| TestLinkAuditMissingRole | superseded by D6; strict params rejects `role` | Covered |
+| TestLinkIndexComputeRelatedFrontmatter | related-frontmatter test | Ported |
+| store/store_test.go TestScenarioCheckClassifiesByDate | `TestScenarioCheckClassifiesByDate / ReturnsScheduledEntries / EmptyArray` | Ported |
+| TestScenarioCheckMissingDirReturnsEmpty | missing-dir scenario test | Ported |
+| rpc/server_test.go TestScenarioCheckReturnsScheduledEntries | scenario scheduled entries test | Ported |
+| TestScenarioCheckEmptyResultIsArray | empty array assertion | Ported |
+| TestScenarioCheckMissingRole | superseded by D6; strict params rejects `role` | Covered |
+| TestScenarioCheckRBACFiltersUnreadable | superseded by D6 role removal | N/A |

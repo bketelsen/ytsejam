@@ -91,3 +91,49 @@ export function resolveSince(raw = ""): { cutoff: Date; since: string } {
   }
   throw new Error(`unrecognized \`since\` value ${JSON.stringify(raw)} (want YYYY-MM-DD, RFC3339, or duration like "7d"/"168h")`);
 }
+
+// Re-export validateParams from canonical params.ts so PR-2b consumers
+// importing from common.ts continue to work; dedup in PR-3 cleanup batch.
+export { validateParams } from "./params.ts";
+
+// PR-2b additions (analysis cluster helpers):
+
+import { parse } from "yaml";
+import { read as storeRead } from "../store/index.ts";
+import { scanFiles, type ScannedFile } from "../store/walk.ts";
+
+export async function readRel(rel: string): Promise<string | null> {
+  const result = await storeRead(rel);
+  return result.found ? result.content : null;
+}
+
+export async function markdownFiles(prefix?: string): Promise<ScannedFile[]> {
+  return scanFiles({ markdownOnly: true, prefix });
+}
+
+export function stripParenSuffix(name: string): string {
+  name = name.trim();
+  if (!name.endsWith(")")) return name;
+  const i = name.lastIndexOf("(");
+  return i <= 0 ? name : name.slice(0, i).trim();
+}
+
+export function extractFrontmatter(data: string): Record<string, unknown> | null {
+  const lines = data.replace(/^\ufeff/, "").split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  if (i < lines.length && lines[i].trim().startsWith("<!--") && lines[i].trim().endsWith("-->")) i++;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  if (i >= lines.length || lines[i].trim() !== "---") return null;
+  const start = ++i;
+  while (i < lines.length && lines[i].trim() !== "---") i++;
+  if (i >= lines.length) return null;
+  try {
+    const parsed = parse(lines.slice(start, i).join("\n"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch { return null; }
+}
+
+export function todayUtc(d = new Date()): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
