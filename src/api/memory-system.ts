@@ -27,7 +27,7 @@ import type {
 import { mergeConfig, type LtmConfigPatch } from "../types.ts";
 import { HashEmbedder, type Embedder } from "../embedding/embedder.ts";
 import { EpisodicStore } from "../episodic/store.ts";
-import { consolidate, extractiveSummary, type Summarizer } from "../episodic/consolidate.ts";
+import { consolidate, extractiveSummary, summaryId, type Summarizer } from "../episodic/consolidate.ts";
 import { retention } from "../episodic/decay.ts";
 import { SemanticStore } from "../semantic/store.ts";
 import { PreferenceGraph } from "../semantic/graph.ts";
@@ -314,7 +314,7 @@ export class MemorySystem {
         if (text) {
           this.episodic.upsert({
             ...summary,
-            id: `${summary.id}-r${this.auditSeq}`,
+            id: summaryId(summary.sessionId, survivors.map((r) => r.id)),
             sourceIds: survivors.map((r) => r.id),
             text,
             embedding: await this.embedder.embed(text),

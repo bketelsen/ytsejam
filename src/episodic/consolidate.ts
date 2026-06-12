@@ -6,6 +6,7 @@
  * deterministic; an async LLM summarizer can be injected.
  */
 
+import crypto from "node:crypto";
 import type {
   ConsolidationConfig,
   DecayConfig,
@@ -66,6 +67,22 @@ export interface ConsolidationResult {
   consolidatedChildren: number;
 }
 
+/**
+ * Content-addressed summary id: hash of the sorted child ids. Stateless and
+ * collision-proof across repeat consolidations and redaction rebuilds — the
+ * same child set means the same summary (idempotent), any other child set
+ * gets a fresh id instead of silently replacing an earlier summary via
+ * latest-wins (PLAN.md Task 2.3).
+ */
+export function summaryId(sessionId: string, sourceIds: string[]): string {
+  const digest = crypto
+    .createHash("sha256")
+    .update([...sourceIds].sort().join("\n"))
+    .digest("hex")
+    .slice(0, 12);
+  return `con-${sessionId}-${digest}`;
+}
+
 export async function consolidate(
   store: EpisodicStore,
   embedder: Embedder,
@@ -95,7 +112,7 @@ export async function consolidate(
     if (!summary) continue;
 
     const record: EpisodicRecord = {
-      id: `con-${sessionId}-${group[0].id.split("#")[0].split("/")[1] ?? "0"}`,
+      id: summaryId(sessionId, group.map((r) => r.id)),
       kind: "consolidated",
       sessionId,
       sourceIds: group.map((r) => r.id),
