@@ -38,3 +38,24 @@ _Added: 2026-06-12 | Task: Task 6: subagent wiring in task-manager.ts_
 When a prescriptive lesson (e.g. "wiring test for the compaction state machine") is triggered on one code path, audit for structurally symmetric call sites and apply the same fix to ALL of them — not just the one that surfaced it. In the context-compaction PR, the subagent path got wiring tests in server/test/task-manager.test.ts, but the symmetric main-session path in server/src/manager.ts was left with zero coverage (grep manager.test.ts for compaction/overflow/surrender returned 0 hits). Symmetric does not mean identical: manager.ts fires reactive compaction at agent_end (gated ~line 312) and surrenders by hand-building an AssistantMessage plus emitting message_start/message_end/turn_end bus events the web UI consumes — different, higher-risk code than the subagent's surrenderMessage flag. Add manager.test.ts wiring tests driving overflow→reactive→agent_end→compact→retry against the faux provider, and assert both the synthetic surrender diagnostic text and the exact bus-event sequence via toEqual; mutation-test them (drop a bus emit or no-op the retry prompt) to confirm they actually catch breakage.
 
 _Added: 2026-06-12 | Task: Final review fixes: manager wiring test + diagnostics_
+
+## Verify Content Block Types Against Real Source
+
+When writing docstrings and tests that reference library-specific shapes (e.g.
+content-block types in @earendil-works/pi-ai), verify the vocabulary empirically
+against the actual TypeScript definitions (pi-ai/dist/types.d.ts) and real data
+(session transcripts under ~/.ytsejam/data/sessions/) rather than relying on a
+model's prior exposure to similar libraries. The real content-block types are
+text, toolCall (camelCase, payload in .arguments), and thinking (text in
+.thinking); tool_use and tool_result do not exist — a tool result is a top-level
+message with role:"toolResult" whose .content is an array of text blocks. This
+matters because estimateKeptSetTokens in server/src/compaction.ts counts only
+message text, so it actually drops toolCall.arguments JSON and thinking.thinking
+text while still counting toolResult message text — the opposite of what the
+original docstring and the straw-man test 4 claimed. Avoid self-consistent
+spec/test pairs that share the same wrong vocabulary; they validate each other
+and pass by exercising shapes that can never appear in production. Always grep
+the library types and a corpus of real transcripts before encoding any shape
+into tests or docs.
+
+_Added: 2026-06-12 | Task: Add estimateKeptSetTokens pure helper for issue #72 fix_
