@@ -210,11 +210,14 @@ after each), runs a consolidation pass two-thirds through, then scores:
   learned it must persist with the right polarity through every later
   snapshot.
 
-`npm run eval` prints the report and exits non-zero below thresholds
-(recall@5 ≥ 0.85, MRR ≥ 0.6, F1 ≥ 0.75, stability ≥ 0.95). Current results
-(seeds 42 and 1337): recall@1 100%, MRR 1.0, F1 1.0, stability 100% — with
-consolidation folding ~2/3 of all records mid-run, i.e. recall survives
-decay + consolidation.
+`npm run eval` runs three horizon bands (short ≈ 6mo, medium ≈ 24mo,
+long ≈ 48mo) with per-band thresholds calibrated to measured behavior, a
+paraphrase probe set per fact, and `npm run eval:sweep` re-checks 20 seeds.
+The medium/long bands deliberately measure the regime where decay bites
+(preferences fading between reassertions, identity retiring at 4 years) and
+the test suite asserts those erosions as correct behavior. See the README
+for the current per-band numbers and PLAN.md Phase 1/4 for the calibration
+rules.
 
 ## Integration sketch (ytsejam)
 
