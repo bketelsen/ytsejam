@@ -179,20 +179,60 @@ describe("estimateKeptSetTokens", () => {
     expect(r).toBe(200);
   });
 
-  it("ignores non-text content parts (tool_use/tool_result shapes)", () => {
+  it("ignores toolCall blocks (the .arguments JSON is dropped)", () => {
     const messages: any[] = [
       {
         role: "assistant",
         content: [
           { type: "text", text: "x".repeat(400) }, // 100
-          { type: "tool_use", id: "t1", name: "x", input: { huge: "y".repeat(10_000) } },
+          {
+            type: "toolCall",
+            id: "t1",
+            name: "bash",
+            arguments: { command: "y".repeat(10_000) },
+          },
         ],
       },
     ];
-    // We deliberately under-count tool_use payloads here — the heuristic is
-    // intentionally conservative-optimistic; the budget cushion absorbs slop.
+    // Deliberately under-counts: toolCall.arguments JSON is dropped because the
+    // current helper only sums {type:"text"} text parts. The reserveTokens
+    // cushion (~48k) absorbs this slop for the succeeded gate's purpose.
     const r = estimateKeptSetTokens(messages, 0);
     expect(r).toBe(100);
+  });
+
+  it("ignores thinking blocks (the .thinking text is dropped)", () => {
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "x".repeat(400) }, // 100
+          { type: "thinking", thinking: "y".repeat(10_000) },
+        ],
+      },
+    ];
+    // Same rationale as toolCall: under-counted by design, absorbed by cushion.
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(100);
+  });
+
+  it("silently treats malformed/missing content as 0 chars (defensive)", () => {
+    // The AgentMessage union has members without a .content field
+    // (compactionSummary, branchSummary, bashExecution). The cast
+    // (msg as any).content is undefined for those at runtime — the function
+    // MUST NOT throw. Same for messages where a future producer accidentally
+    // emits non-string/non-array content.
+    const messages: any[] = [
+      { role: "compactionSummary", summary: "x".repeat(4000) }, // no .content field
+      { role: "user", content: null },
+      { role: "user", content: undefined },
+      { role: "user", content: 42 },
+      { role: "user", content: {} }, // not an array, not a string
+      { role: "user", content: [null, undefined, { type: "text" }, { type: "text", text: 42 }] }, // malformed array parts
+      { role: "user", content: "x".repeat(40) }, // 10 — one valid signal so the result isn't 0
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(10);
   });
 
   it("sums summaryTokens + messages heuristic", () => {

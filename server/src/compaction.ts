@@ -88,11 +88,26 @@ export function decideCompaction(
  * snapshot from the very turn that triggered compaction. Reading it would
  * tautologically return `tokens_before`.
  *
- * Walks each message's content with a char/4 heuristic and adds the
- * summary's own token count. Conservative-optimistic: we under-count
- * tool_use payloads (just the text parts), trusting the budget cushion
- * (`reserveTokens` = ~48k) to absorb the slop. Good enough to gate the
- * `succeeded` post-condition.
+ * Walks each message and sums `Math.ceil(chars / 4)` over:
+ *   - string `.content` (user messages, our synthesized assistant text)
+ *   - `{type:"text"}` parts of array `.content` (assistant messages, and the
+ *     `content: (TextContent|ImageContent)[]` of `role:"toolResult"` messages —
+ *     tool RESULT text IS counted)
+ * plus `summaryTokens` (the compaction summary's own token count, passed in).
+ *
+ * Deliberately OMITS (counts as 0):
+ *   - `{type:"toolCall"}` blocks — their `.arguments` JSON (often multi-KB on
+ *     bash/delegate/write calls) is not summed
+ *   - `{type:"thinking"}` blocks — their `.thinking` text is not summed
+ *   - `{type:"image"}` blocks (no text anyway)
+ *   - messages whose `.content` is missing/null/non-string-non-array
+ *     (compactionSummary/branchSummary/bashExecution union members)
+ *
+ * Conservative-optimistic by design: the undercount on tool-call-heavy turns
+ * can reach ~15-20%, absorbed by the `reserveTokens` cushion (~48k for the
+ * production model) when the gate compares the estimate against `budget`.
+ * Good enough to gate the `succeeded` post-condition (Task 4); not intended
+ * as a billing-grade measurement.
  *
  * See docs/plans/2026-06-12-issue-72-design.md §D4 for the design rationale.
  */
