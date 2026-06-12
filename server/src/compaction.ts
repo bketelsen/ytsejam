@@ -253,7 +253,7 @@ export interface CompactionEvent {
   reserveTokens: number;
   keepRecentTokens: number;
   tokensBefore: number;
-  tokensAfter: number;
+  tokensAfterEstimated: number;
   summaryTokens: number;
   firstKeptEntryId: string;
   filesRead: string[];
@@ -285,7 +285,7 @@ export function formatDevLogLine(e: CompactionEvent): string {
   const failedMarker = e.succeeded ? "" : " FAILED";
   return (
     `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
-    `ctx ${e.tokensBefore}→${e.tokensAfter} tokens, ` +
+    `ctx ${e.tokensBefore}→~${e.tokensAfterEstimated} tokens, ` +
     `summary ${e.summaryTokens} tokens, files-read ${filesReadStr}, ` +
     `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker}`
   );
@@ -312,7 +312,7 @@ export function serializeJsonRecord(
     reserve_tokens: e.reserveTokens,
     keep_recent_tokens: e.keepRecentTokens,
     tokens_before: e.tokensBefore,
-    tokens_after: e.tokensAfter,
+    tokens_after_estimated: e.tokensAfterEstimated,
     summary_tokens: e.summaryTokens,
     first_kept_entry_id: e.firstKeptEntryId,
     files_read: e.filesRead,
@@ -371,7 +371,7 @@ export function buildCompactionEvent(
       pending && pending.tokensBefore > 0
         ? pending.tokensBefore
         : (compactionEntry?.tokensBefore ?? 0),
-    tokensAfter: compactionEntry?.tokensAfter ?? 0,
+    tokensAfterEstimated: compactionEntry?.tokensAfter ?? 0,
     summaryTokens:
       compactionEntry?.summaryTokens ??
       Math.ceil(String(summaryText).length / 4),

@@ -377,10 +377,10 @@ export class TaskManager {
     const model = active.harness.getModel();
     const sessionFilePath = active.metadata.path;
 
-    let tokensAfter = compactionEntry?.tokensAfter ?? 0;
+    let tokensAfterEstimated = compactionEntry?.tokensAfter ?? 0;
     try {
       const messages = (await active.session.buildContext()).messages;
-      tokensAfter = estimateContextTokens(messages).tokens;
+      tokensAfterEstimated = estimateContextTokens(messages).tokens;
     } catch {
       // Best-effort diagnostic only; buildCompactionEvent falls back to 0.
     }
@@ -389,7 +389,7 @@ export class TaskManager {
       ...(compactionEntry ?? {}),
       sessionId: active.parentSessionId,
       subagentTaskId: active.taskId,
-      tokensAfter,
+      tokensAfter: tokensAfterEstimated,
     };
     const devLogPath = `${memoryRoot()}/projects/ytsejam/dev-log.md`;
     const compactionEvent: CompactionEvent = buildCompactionEvent(

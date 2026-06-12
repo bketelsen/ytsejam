@@ -499,10 +499,10 @@ export class AgentManager {
     const model = opened.harness.getModel();
     const sessionFilePath = opened.metadata.path;
 
-    let tokensAfter = compactionEntry?.tokensAfter ?? 0;
+    let tokensAfterEstimated = compactionEntry?.tokensAfter ?? 0;
     try {
       const messages = (await opened.session.buildContext()).messages;
-      tokensAfter = estimateContextTokens(messages).tokens;
+      tokensAfterEstimated = estimateContextTokens(messages).tokens;
     } catch {
       // Best-effort diagnostic only; buildCompactionEvent falls back to 0.
     }
@@ -510,7 +510,7 @@ export class AgentManager {
     const enrichedEntry = {
       ...(compactionEntry ?? {}),
       sessionId: opened.metadata.id,
-      tokensAfter,
+      tokensAfter: tokensAfterEstimated,
     };
     const devLogPath = `${memoryRoot()}/projects/ytsejam/dev-log.md`;
     const compactionEvent = buildCompactionEvent(

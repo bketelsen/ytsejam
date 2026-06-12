@@ -356,7 +356,7 @@ describe("formatDevLogLine", () => {
     reserveTokens: 80_000,
     keepRecentTokens: 20_000,
     tokensBefore: 947_112,
-    tokensAfter: 184_309,
+    tokensAfterEstimated: 184_309,
     summaryTokens: 4_821,
     firstKeptEntryId: "evt_8f12",
     filesRead: ["server/src/manager.ts"],
@@ -373,7 +373,7 @@ describe("formatDevLogLine", () => {
       /^2026-06-12.*: compaction in session abc123 — proactive/,
     );
     expect(line).toMatch(/anthropic\/claude-sonnet-4-6/);
-    expect(line).toMatch(/ctx 947112→184309 tokens/);
+    expect(line).toMatch(/ctx 947112→~184309 tokens/);
     expect(line).toMatch(/summary 4821 tokens/);
     expect(line).toMatch(/Trigger: above 920000 budget/);
   });
@@ -535,7 +535,7 @@ describe("serializeJsonRecord", () => {
       reserveTokens: 100,
       keepRecentTokens: 50,
       tokensBefore: 950,
-      tokensAfter: 200,
+      tokensAfterEstimated: 200,
       summaryTokens: 10,
       firstKeptEntryId: "evt",
       filesRead: [],
@@ -553,7 +553,7 @@ describe("serializeJsonRecord", () => {
     expect(parsed.context_window).toBe(1000);
     expect(parsed.reserve_tokens).toBe(100);
     expect(parsed.tokens_before).toBe(950);
-    expect(parsed.tokens_after).toBe(200);
+    expect(parsed.tokens_after_estimated).toBe(200);
     expect(parsed.summary_tokens).toBe(10);
     expect(parsed.files_read).toEqual([]);
     expect(parsed.files_modified).toEqual([]);
