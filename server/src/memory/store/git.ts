@@ -17,8 +17,9 @@ export async function git(params: GitParams): Promise<GitResult> {
       await run(root, ["add", "-A"]);
       return { output: await run(root, ["commit", "-m", params.message]) };
     case "revert":
-      if (!params.ref) throw new Error("store: git revert requires ref");
-      return { output: await run(root, ["revert", "--no-edit", params.ref]) };
+      const target = params.commit ?? params.ref;
+      if (!target) throw new Error("store: git revert requires commit");
+      return { output: await run(root, ["revert", "--no-edit", target]) };
     default: throw new Error(`store: git: unknown op ${(op as string)}`);
   }
 }

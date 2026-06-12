@@ -97,14 +97,14 @@ function parseDomainPaths(yaml: string): DomainPath[] {
   let cur: Partial<DomainPath> | null = null;
   for (const raw of yaml.split(/\r?\n/)) {
     const line = raw.replace(/#.*$/, "");
-    const idStart = line.match(/^\s*-\s*id:\s*([^\s].*?)\s*$/);
+    const idStart = line.match(/^\s*-\s*id:\s*([^\s].*?)(?:\s+(?:#.*)?)?$/);
     if (idStart) {
       if (cur?.id && cur.path) out.push({ id: cur.id, path: cur.path });
       cur = { id: unquote(idStart[1]) };
       continue;
     }
     if (!cur) continue;
-    const p = line.match(/^\s*path:\s*([^\s].*?)\s*$/);
+    const p = line.match(/^\s*path:\s*([^\s].*?)(?:\s+(?:#.*)?)?$/);
     if (p) cur.path = unquote(p[1]);
   }
   if (cur?.id && cur.path) out.push({ id: cur.id, path: cur.path });

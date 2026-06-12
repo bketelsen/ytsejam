@@ -26,7 +26,9 @@ function extractSection(rel: string, content: string, section: string): string {
     if (lines[i].trim().toLowerCase() !== target) continue;
     let end = lines.length;
     for (let j = i + 1; j < lines.length; j++) if (lines[j].trim().startsWith("##")) { end = j; break; }
-    return lines.slice(i, end).join("\n") + (end > i ? "\n" : "");
+    let sectionText = lines.slice(i, end).join("\n");
+    while (sectionText.endsWith("\n\n")) sectionText = sectionText.slice(0, -1);
+    return sectionText.endsWith("\n") || sectionText === "" ? sectionText : sectionText + "\n";
   }
   throw new Error(`store: section not found in ${JSON.stringify(rel)}: ${section}`);
 }

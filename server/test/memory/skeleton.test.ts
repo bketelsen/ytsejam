@@ -32,8 +32,8 @@ const EXPORTS = [
 ] as const;
 
 describe("memory module skeleton", () => {
-  test("primitive stubs throw not implemented", async () => {
-    await expect(read("anything")).rejects.toThrow(/not implemented/);
+  test("primitive read is implemented", async () => {
+    await expect(read("anything")).resolves.toEqual({ content: "", found: false });
   });
 
   test("public surface exports every planned symbol", () => {
