@@ -18,7 +18,7 @@ subdirectories stay private implementation detail.
 This command must return zero lines:
 
 ```sh
-grep -rn "memory_root\|ytsejam/data/memory" server/src | grep -v "^server/src/memory/"
+grep -rn "memory_root\|ytsejam/data/memory\|chapterhouse/memory" server/src | grep -v "^server/src/memory/"
 ```
 
 That invariant preserves the "extract to npm package on day N+1" property.
