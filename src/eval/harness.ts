@@ -30,7 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { MemorySystem } from "../api/memory-system.ts";
-import type { ProfileSummary } from "../types.ts";
+import type { LtmConfigPatch, ProfileSummary } from "../types.ts";
 import { generateFixtures, type GenerateOptions, type GroundTruth } from "./synthetic.ts";
 import {
   contradictionsResolved,
@@ -73,6 +73,8 @@ export interface BandSpec {
   intervalDays: number;
   turnsPerSession: number;
   thresholds: EvalThresholds;
+  /** MemorySystem config for this band (e.g. profile floors, Task 2.1). */
+  config?: LtmConfigPatch;
 }
 
 /**
@@ -112,13 +114,20 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     sessions: 24,
     intervalDays: 30,
     turnsPerSession: 12,
+    // Identity at 24mo sits at effective strength ~0.24 — below the default
+    // 0.3 floor but real. The medium band accepts the Task 2.1 tradeoff
+    // (identityFloor 0.2: keep slot-like identity surfacing at the cost of
+    // staler positives), which is exactly the seam's intended use. The
+    // default floors are unchanged; the long band shows identity retiring
+    // even at the lowered floor.
+    config: { profile: { identityFloor: 0.2 } },
     thresholds: {
       recallAt5: 0.85,
       mrr: 0.6,
       paraphraseRecallAt5: 0,
       preferenceF1: 0.25,
       directiveRecall: 0,
-      identityExpected: false,
+      identityExpected: true,
       contradictionRequired: true,
       stability: 0.3,
     },
@@ -127,6 +136,10 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     sessions: 24,
     intervalDays: 60,
     turnsPerSession: 12,
+    // Same lowered identityFloor as medium: identity STILL retires at 48mo
+    // (0.9·2^(-1380/365) ≈ 0.065 < 0.2) — the decay-bites assertion holds
+    // against the seam, not just against the default.
+    config: { profile: { identityFloor: 0.2 } },
     thresholds: {
       recallAt5: 0.7,
       mrr: 0.4,
@@ -198,7 +211,7 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
     ).toISOString();
 
   let now = truth.sessionStarts[0];
-  const mem = MemorySystem.open({ storeDir, now: () => now });
+  const mem = MemorySystem.open({ storeDir, now: () => now, config: spec.config });
 
   const snapshots: ProfileSummary[] = [];
   let consolidation = { created: 0, folded: 0 };

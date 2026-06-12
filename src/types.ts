@@ -241,6 +241,18 @@ export interface ConsolidationConfig {
   maxSummaryChars: number;
 }
 
+/**
+ * Minimum effective strength (post disuse-decay) for a fact to surface in
+ * the profile, per fact family. Lowering identityFloor/directiveFloor keeps
+ * slot-like facts surfacing longer at the cost of more stale positives —
+ * a user-visible tradeoff, hence config rather than constant.
+ */
+export interface ProfileFloors {
+  floor: number;
+  identityFloor: number;
+  directiveFloor: number;
+}
+
 export interface RetrievalWeights {
   vector: number;
   lexical: number;
@@ -253,6 +265,7 @@ export interface LtmConfig {
   decay: DecayConfig;
   consolidation: ConsolidationConfig;
   weights: RetrievalWeights;
+  profile: ProfileFloors;
   /** MMR diversity/relevance trade-off in [0,1]; 1 = pure relevance. */
   mmrLambda: number;
   /** Chunk size ceiling in characters for episodic records. */
@@ -261,12 +274,36 @@ export interface LtmConfig {
   recencyHalfLifeDays: number;
 }
 
+/** Deep-partial patch shape accepted by MemorySystem.open. */
+export interface LtmConfigPatch {
+  decay?: Partial<DecayConfig>;
+  consolidation?: Partial<ConsolidationConfig>;
+  weights?: Partial<RetrievalWeights>;
+  profile?: Partial<ProfileFloors>;
+  mmrLambda?: number;
+  maxChunkChars?: number;
+  recencyHalfLifeDays?: number;
+}
+
+export function mergeConfig(patch: LtmConfigPatch = {}): LtmConfig {
+  return {
+    decay: { ...DEFAULT_CONFIG.decay, ...patch.decay },
+    consolidation: { ...DEFAULT_CONFIG.consolidation, ...patch.consolidation },
+    weights: { ...DEFAULT_CONFIG.weights, ...patch.weights },
+    profile: { ...DEFAULT_CONFIG.profile, ...patch.profile },
+    mmrLambda: patch.mmrLambda ?? DEFAULT_CONFIG.mmrLambda,
+    maxChunkChars: patch.maxChunkChars ?? DEFAULT_CONFIG.maxChunkChars,
+    recencyHalfLifeDays: patch.recencyHalfLifeDays ?? DEFAULT_CONFIG.recencyHalfLifeDays,
+  };
+}
+
 export const DEFAULT_CONFIG: LtmConfig = {
   decay: { halfLifeDays: 30, accessBonus: 0.5 },
   consolidation: { olderThanDays: 45, retentionFloor: 0.35, maxSummaryChars: 1200 },
   // Content match (lexical + vector) must dominate; recency and salience are
   // tie-breakers, not channels that can outvote an exact term match.
   weights: { vector: 0.3, lexical: 0.4, recency: 0.08, salience: 0.07, graph: 0.15 },
+  profile: { floor: 0.3, identityFloor: 0.3, directiveFloor: 0.3 },
   mmrLambda: 0.7,
   maxChunkChars: 1500,
   recencyHalfLifeDays: 21,

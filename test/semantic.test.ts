@@ -137,6 +137,22 @@ describe("semantic store belief dynamics", () => {
     expect(store.activeFacts()).toHaveLength(0);
   });
 
+  it("profile floors are per fact kind and configurable (PLAN 2.1)", () => {
+    const store = SemanticStore.open(tmpDir());
+    store.ingestTurn(turn("My name is Brian.", { entryId: "e1", timestamp: "2024-01-01T00:00:00.000Z" }));
+    // ~26 months later: effective strength ≈ 0.9·2^(-790/365) ≈ 0.20.
+    const now = "2026-03-01T00:00:00.000Z";
+    const defaultFloors = store.profile(now);
+    expect(defaultFloors.identity).toHaveLength(0);
+    const lowered = store.profile(now, { floor: 0.3, identityFloor: 0.15, directiveFloor: 0.3 });
+    expect(lowered.identity.some((f) => f.object === "Brian")).toBe(true);
+    // The generic floor did not move: a preference of the same age stays out.
+    store.ingestTurn(turn("I love rye bread.", { entryId: "e2", timestamp: "2024-01-01T00:00:00.000Z" }));
+    expect(
+      store.profile(now, { floor: 0.3, identityFloor: 0.15, directiveFloor: 0.3 }).preferences,
+    ).toHaveLength(0);
+  });
+
   it("redacts facts when all their evidence is redacted", () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);

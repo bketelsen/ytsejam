@@ -24,7 +24,7 @@ import type {
   SemanticFact,
   SourceRef,
 } from "../types.ts";
-import { DEFAULT_CONFIG } from "../types.ts";
+import { mergeConfig, type LtmConfigPatch } from "../types.ts";
 import { HashEmbedder, type Embedder } from "../embedding/embedder.ts";
 import { EpisodicStore } from "../episodic/store.ts";
 import { consolidate, extractiveSummary, type Summarizer } from "../episodic/consolidate.ts";
@@ -40,7 +40,7 @@ export interface MemorySystemOptions {
   /** Directory for the memory store's JSONL files. */
   storeDir: string;
   embedder?: Embedder;
-  config?: Partial<LtmConfig>;
+  config?: LtmConfigPatch;
   summarizer?: Summarizer;
   readOptions?: ReadSessionOptions;
   /** Clock override (ISO timestamp) for deterministic tests/evals. */
@@ -67,7 +67,7 @@ export class MemorySystem {
 
   private constructor(opts: MemorySystemOptions) {
     this.storeDir = opts.storeDir;
-    this.config = { ...DEFAULT_CONFIG, ...opts.config };
+    this.config = mergeConfig(opts.config);
     this.embedder = opts.embedder ?? new HashEmbedder();
     this.summarizer = opts.summarizer ?? extractiveSummary;
     this.clock = opts.now ?? (() => new Date().toISOString());
@@ -138,7 +138,7 @@ export class MemorySystem {
         this.episodic.bumpAccess(item.record.id, now);
       }
     }
-    return { items, profile: this.semantic.profile(now) };
+    return { items, profile: this.semantic.profile(now, this.config.profile) };
   }
 
   /**
@@ -178,7 +178,7 @@ export class MemorySystem {
   }
 
   profile(now?: string): ProfileSummary {
-    return this.semantic.profile(now ?? this.clock());
+    return this.semantic.profile(now ?? this.clock(), this.config.profile);
   }
 
   // -- maintenance ------------------------------------------------------------

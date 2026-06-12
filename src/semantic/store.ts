@@ -16,6 +16,7 @@ import path from "node:path";
 import type {
   EntityRecord,
   FactKind,
+  ProfileFloors,
   ProfileSummary,
   SemanticFact,
   SourceRef,
@@ -217,9 +218,14 @@ export class SemanticStore {
     return this.allEntities().filter((e) => e.state === "active");
   }
 
-  profile(now: string, minStrength = 0.3): ProfileSummary {
+  profile(
+    now: string,
+    floors: ProfileFloors = { floor: 0.3, identityFloor: 0.3, directiveFloor: 0.3 },
+  ): ProfileSummary {
+    const floorFor = (f: SemanticFact): number =>
+      f.kind === "identity" ? floors.identityFloor : f.kind === "directive" ? floors.directiveFloor : floors.floor;
     const facts = this.activeFacts()
-      .filter((f) => effectiveStrength(f, now) >= minStrength)
+      .filter((f) => effectiveStrength(f, now) >= floorFor(f))
       .sort((a, b) => effectiveStrength(b, now) - effectiveStrength(a, now));
     return {
       identity: facts.filter((f) => f.kind === "identity"),
