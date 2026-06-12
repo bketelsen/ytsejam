@@ -1,10 +1,12 @@
 # Fold cogmemory into ytsejam — Implementation Plan
 
-**Status:** PLAN (drafted 2026-06-12 for Brian's morning review)
-**Trigger:** Two friends gated on install complexity. cogmemory-as-separate-daemon is an abstraction with no surviving consumer (multi-harness sharing was the design goal; Hermes is uninstalled, omnius is retired, no future non-TS harness is in the plan).
-**Spans:** ytsejam (Node/TS) · cogmemory (Go) · live memory store · cog-skills · two friend installs · the cogmemory git repo itself.
+**Status:** APPROVED 2026-06-12 — D1–D12 accepted as drafted. Ready for PR-0 dispatch.
+**Trigger:** Two friends *waiting to install*, gated on simplicity. No existing friend install to migrate; only Brian's. cogmemory-as-separate-daemon is an abstraction with no surviving consumer (multi-harness sharing was the design goal; Hermes is uninstalled, omnius is retired, no future non-TS harness is in the plan).
+**Spans:** ytsejam (Node/TS) · cogmemory (Go) · Brian's live memory store · cog-skills · the cogmemory git repo itself.
 **Supersedes:** `~/projects/cogmemory/docs/plans/2026-06-12-tiered-patterns.md` in implementation column only — design content (split test, content map) ports unchanged and runs AFTER the fold lands.
 **Self-modification hazard:** every milestone that swaps `~/.ytsejam/current` kills the live ytsejam session. Same as today; Brian schedules.
+
+**Guiding principle (from Brian, post-draft):** Cog's DNA is bash + grep + LLM, not a service. cogmemory's 6k Go LOC was incidental complexity that could have been 500-1500. Port SEMANTICS, not line count — the test parity bar (D9) keeps behavior; TS LOC may land at ~1/3 of Go LOC and that's correct. If a Go helper takes 400 lines for one regex sweep, the TS is 40. Resist faithful-port reflex.
 
 ---
 
