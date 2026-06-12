@@ -519,7 +519,7 @@ describe("formatDevLogLine", () => {
     filesModified: ["server/src/compaction.ts"],
     compactionDurationMs: 8_412,
     succeeded: true,
-    backupPath: "/home/bjk/.ytsejam/data/sessions/--chat--/<timestamp>_<sessionId>.jsonl.pre-compact-1718193600000",
+    backupPath: "~/.ytsejam/data/sessions/--chat--/<timestamp>_<sessionId>.jsonl.pre-compact-1718193600000",
   };
 
   it("formats a single line for proactive main-session compaction", () => {

@@ -30,7 +30,12 @@ log()  { echo -e "${GREEN}▸${NC} $*"; }
 warn() { echo -e "${YELLOW}▸${NC} $*"; }
 die()  { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 
-[[ -d "$SRC" ]] || die "Source data dir not found: $SRC"
+if [[ ! -d "$SRC" ]]; then
+  log "Source data dir not found: $SRC"
+  log "(migrate-data.sh is only needed when upgrading from an older data dir."
+  log " First-time installs don't need it — skipping.)"
+  exit 0
+fi
 [[ "$SRC" != "$DST" ]] || die "SRC and DST are the same dir: $SRC"
 command -v rsync >/dev/null || die "rsync required"
 mkdir -p "$DST"

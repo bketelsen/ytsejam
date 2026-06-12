@@ -17,7 +17,7 @@ domains:
     path: personal
     files: [hot-memory, action-items, observations, entities]
   - id: work
-    path: work/microsoft
+    path: work/acme
     files: [hot-memory, action-items, observations, entities]
 `); }
 
@@ -86,39 +86,39 @@ describe("entity_audit", () => {
     await expect(entityAudit({ domain: "limited" })).rejects.toThrow(/does not declare file/);
   });
   test("TestEntityAuditCompactBlockClean", async () => {
-    await seed("work/microsoft/entities.md", "# Work — Entities\n\n### Microsoft (employer)\nRole: Principal Engineering Manager\nstatus: active | last: 2026-05-27\n");
+    await seed("work/acme/entities.md", "# Work — Entities\n\n### Acme (employer)\nRole: Staff Engineer\nstatus: active | last: 2026-05-27\n");
     const res = await entityAudit({ domain: "work" });
     expect(res.format_violations).toHaveLength(0); expect(res.missing_metadata).toHaveLength(0); expect(res.glacier_candidates).toHaveLength(0);
   });
   test("TestEntityAuditFormatViolation / RPC all domains", async () => {
-    await seed("work/microsoft/entities.md", "### Microsoft\nRole: employer\nstatus: active | last: 2026-05-27\n");
+    await seed("work/acme/entities.md", "### Acme\nRole: employer\nstatus: active | last: 2026-05-27\n");
     await seed("personal/entities.md", "### Friend\nLine one\nLine two\nLine three\nLine four → [[wiki:pages/people/friend]]\nstatus: active | last: 2026-05-27\n");
     const res = await entityAudit();
     expect(res.format_violations).toHaveLength(1);
     expect(res.format_violations[0]).toMatchObject({ name: "Friend", issue: "exceeds_3_line_compact", has_detail_file: true });
   });
   test("TestEntityAuditScopedToDomain / MissingMetadata", async () => {
-    await seed("work/microsoft/entities.md", "### X\nplain prose\n");
+    await seed("work/acme/entities.md", "### X\nplain prose\n");
     await seed("personal/entities.md", "### X\nplain prose\n");
     const res = await entityAudit({ domain: "work" });
     expect(res.missing_metadata).toHaveLength(1);
-    expect(res.missing_metadata[0]).toMatchObject({ path: "work/microsoft/entities.md", missing: ["status", "last"] });
+    expect(res.missing_metadata[0]).toMatchObject({ path: "work/acme/entities.md", missing: ["status", "last"] });
   });
   test("TestEntityAuditGlacierByInactive / ByAge", async () => {
     vi.setSystemTime(new Date("2026-05-30T00:00:00Z"));
-    await seed("work/microsoft/entities.md", "### Old Project\nstatus: inactive | last: 2026-05-01\n\n### Forgotten Colleague\nUsed to work on the data team.\nstatus: active | last: 2025-10-01\n");
+    await seed("work/acme/entities.md", "### Old Project\nstatus: inactive | last: 2026-05-01\n\n### Forgotten Colleague\nUsed to work on the data team.\nstatus: active | last: 2025-10-01\n");
     const res = await entityAudit({ domain: "work" });
     expect(res.glacier_candidates.map((g) => g.name)).toEqual(["Old Project", "Forgotten Colleague"]);
     expect(res.glacier_candidates[1].age_days).toBeGreaterThan(180);
   });
   test("TestEntityAuditTemporalViolation", async () => {
     vi.setSystemTime(new Date("2026-05-30T00:00:00Z"));
-    await seed("work/microsoft/entities.md", "### Dana Lead\nRole: (until 2026-04) VP\nstatus: active | last: 2026-05-01\n\n### Eli Recent\nRole: (until 2026-06) PM\nstatus: active | last: 2026-05-15\n\n### Frank Struck\nRole: ~~(until 2026-04)~~ retired\nstatus: active | last: 2026-05-20\n");
+    await seed("work/acme/entities.md", "### Dana Lead\nRole: (until 2026-04) VP\nstatus: active | last: 2026-05-01\n\n### Eli Recent\nRole: (until 2026-06) PM\nstatus: active | last: 2026-05-15\n\n### Frank Struck\nRole: ~~(until 2026-04)~~ retired\nstatus: active | last: 2026-05-20\n");
     const res = await entityAudit({ domain: "work" });
     expect(res.temporal_violations).toEqual([expect.objectContaining({ name: "Dana Lead", needs: "strikethrough" })]);
   });
   test("TestEntityAuditTotals / UnknownDomain / strict params", async () => {
-    await seed("work/microsoft/entities.md", "# Work\n\n<!-- comment -->\n\n### Microsoft (employer)\nRole: Principal\nstatus: active | last: 2026-05-27\n\n### Verbose Vendor\nFact one\nFact two\nFact three\nstatus: active | last: 2026-05-01\n");
+    await seed("work/acme/entities.md", "# Work\n\n<!-- comment -->\n\n### Acme (employer)\nRole: Staff\nstatus: active | last: 2026-05-27\n\n### Verbose Vendor\nFact one\nFact two\nFact three\nstatus: active | last: 2026-05-01\n");
     const res = await entityAudit({ domain: "work" });
     expect(res.total_entries).toBe(2); expect(res.total_lines).toBe(8);
     await expect(entityAudit({ domain: "nope" })).rejects.toThrow(/unknown id/);
@@ -128,11 +128,11 @@ describe("entity_audit", () => {
 
 describe("link audit/index", () => {
   test("TestLinkIndexCompute", async () => {
-    await seed("personal/observations.md", "see [[personal/entities#Jane]] and [[work/microsoft/hot-memory]]\nalso [[personal/entities#Jane]] again — should dedupe\n");
-    await seed("work/microsoft/observations.md", "meeting with [[personal/entities#Jane]] today\n");
+    await seed("personal/observations.md", "see [[personal/entities#Jane]] and [[work/acme/hot-memory]]\nalso [[personal/entities#Jane]] again — should dedupe\n");
+    await seed("work/acme/observations.md", "meeting with [[personal/entities#Jane]] today\n");
     const res = await linkIndexCompute(); const got = Object.fromEntries(res.links.map((l) => [l.target, l.sources]));
-    expect(got["personal/entities"]).toEqual(["personal/observations", "work/microsoft/observations"]);
-    expect(got["work/microsoft/hot-memory"]).toEqual(["personal/observations"]);
+    expect(got["personal/entities"]).toEqual(["personal/observations", "work/acme/observations"]);
+    expect(got["work/acme/hot-memory"]).toEqual(["personal/observations"]);
   });
   test("TestLinkIndexComputeRelatedFrontmatter and glacier skipped", async () => {
     await seed("wiki/research/honcho/index.md", "---\ntitle: Honcho\nrelated: [wiki/tools/swarmvault, wiki/research/wiki-redesign/synthesis.md]\n---\n# Honcho\n");
@@ -147,11 +147,11 @@ describe("link audit/index", () => {
   test("TestLinkAudit / WholeWordBoundary", async () => {
     await seed("personal/entities.md", "# Entities\n\n### Jane Smith (CTO)\nRole: CTO\n\n### Bob\nstatus: active\n");
     await seed("personal/observations.md", "- 2026-05-30 [meeting]: spoke with Jane Smith about onboarding\n- 2026-05-30 [meeting]: also met [[personal/entities#Bob]] (already linked)\n- 2026-05-30 [note]: Jane Smith follow-up tomorrow\nBobcat is not Bob\nBob's lunch\n");
-    await seed("work/microsoft/observations.md", "Bob is rolling out the new dashboard\n");
+    await seed("work/acme/observations.md", "Bob is rolling out the new dashboard\n");
     const cs = (await linkAudit()).candidates;
     expect(cs).toContainEqual(expect.objectContaining({ source_path: "personal/observations.md", line: 1, entity_name: "Jane Smith", target_link: "personal/entities#Jane Smith" }));
     expect(cs).toContainEqual(expect.objectContaining({ source_path: "personal/observations.md", line: 3, entity_name: "Jane Smith" }));
-    expect(cs).toContainEqual(expect.objectContaining({ source_path: "work/microsoft/observations.md", line: 1, entity_name: "Bob" }));
+    expect(cs).toContainEqual(expect.objectContaining({ source_path: "work/acme/observations.md", line: 1, entity_name: "Bob" }));
     expect(cs.some((c) => c.source_path === "personal/entities.md")).toBe(false);
     expect(cs.some((c) => c.line === 2 && c.entity_name === "Bob")).toBe(false);
     expect(cs.filter((c) => c.source_path === "personal/observations.md" && c.entity_name === "Bob")).toHaveLength(2);

@@ -3,7 +3,7 @@
 **Status:** APPROVED 2026-06-11 — Brian answered all 5 open questions + 3 corrections (below). Ready to build, one skill at a time, spine first. Nothing lands without per-skill review of each `SKILL.md`.
 **Type:** skill port (USER skills, NOT seeded). Output is markdown skill bundles in `~/.ytsejam/data/skills/<name>/` — no ytsejam server code.
 **Research:** `/tmp/norma-skills-port-findings.md` (subagent 019eb808) — substance sound; its storage-mapping (M2) and "no ytsejam cog domain" claims are SUPERSEDED here (it read a stale clone `~/projects/cog/memory`, since moved to `~/archive/cog`; the live store is `~/.chapterhouse/memory` and `projects/ytsejam` exists).
-**Source:** `/home/bjk/.chapterhouse/skills/norma-*` (Chapterhouse). Dispatch-target agents at `/home/bjk/.chapterhouse/agents/{coder,general-purpose,designer}.agent.md` — confirmed TINY generic-role prompts (no nesting, no real persona weight; `@coder` ≈ "be a careful engineer"). So the named-agent distinction is cosmetic: the substantive per-task instructions live in norma-develop's `implementer-prompt.md` + reviewer prompts, which fold into the `delegate` task body.
+**Source:** `~/.chapterhouse/skills/norma-*` (Chapterhouse). Dispatch-target agents at `~/.chapterhouse/agents/{coder,general-purpose,designer}.agent.md` — confirmed TINY generic-role prompts (no nesting, no real persona weight; `@coder` ≈ "be a careful engineer"). So the named-agent distinction is cosmetic: the substantive per-task instructions live in norma-develop's `implementer-prompt.md` + reviewer prompts, which fold into the `delegate` task body.
 
 ## Decisions (Brian, 2026-06-11)
 - **Q1 Naming: DROP `norma-` prefix** → `develop`, `ship`, `brainstorm`, `write-plan`, `review`, `lessons`, `find-weeds`, `pull-weeds`.

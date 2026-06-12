@@ -36,6 +36,7 @@ To keep the service running after you log out:
     loginctl enable-linger "$USER"
 
 Memory is in-process as of Phase 5 of the 2026-06-12 fold; no separate memory service is needed.
+The store lives at `$YTSEJAM_DATA_DIR/memory` by default; set `YTSEJAM_MEMORY_DIR` to an absolute path to override (see `ytsejam.env.example`).
 
 ## Deploying a new version
 
@@ -108,7 +109,14 @@ reverts to no-compaction behavior: sessions will 400 with "prompt is too long"
 on overflow, the pre-compaction behavior. This is known-bad-but-survivable
 while a fix ships.
 
-## Migrating an existing data dir
+## Migrating from an older install
+
+**First-time installers can skip this whole section.** Both `deploy/migrate-data.sh`
+and `deploy/migrate-to-folded.sh` are upgrade-only — they detect a fresh install
+and exit 0 with a brief explanation, so it's harmless to run them, but you don't
+need to.
+
+### Moving an existing data dir
 
 When you move from a dev/manual data dir to the production one (or to a new
 host), carry the **source-of-truth** state — sessions, tasks, schedules,
@@ -126,6 +134,17 @@ Defaults are `SRC=~/projects/ytsejam/server/data` and `DST=~/.ytsejam/data`.
 the source. Run it with the **source instance stopped** so nothing is
 mid-write. Skills are merged: files missing in the destination are copied,
 release-seeded ones are left untouched.
+
+### Folding from the cogmemory daemon (pre-2026-06-12 installs)
+
+If you're upgrading from a release that used the separate `cogmemory` daemon,
+run `deploy/migrate-to-folded.sh` once. It stops and removes the legacy
+`cogmemory.service` and `cogmemory-test.service` units, moves the legacy
+`~/.chapterhouse/memory` store to `~/.ytsejam/data/memory`, and cleans up
+the daemon's sockets and config. The daemon binary at `~/.local/bin/cogmemory` is intentionally left in place as a rollback safety net; the script prints when it's safe to delete. Idempotent — safe to re-run.
+
+    deploy/migrate-to-folded.sh
+    systemctl --user restart ytsejam
 
 ## Notes / portability
 

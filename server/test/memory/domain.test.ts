@@ -12,12 +12,12 @@ domains:
     triggers: [personal, home]
     files: [hot-memory, action-items, observations, entities]
   - id: work
-    path: work/microsoft
-    label: MSFT
+    path: work/acme
+    label: Acme
     files: [hot-memory, action-items]
     subdomains:
       - id: work-sub
-        path: work/microsoft/team
+        path: work/acme/team
         files: [observations]
   - id: cog-meta
     path: cog-meta
@@ -51,7 +51,7 @@ describe("memory domain controller", () => {
     const domains = loadManifest(tempRoot(goodManifest));
     expect(domains.map((d) => d.id)).toEqual(["personal", "work", "cog-meta"]);
     expect(domains[0]).toMatchObject({ path: "personal", label: "Personal", triggers: ["personal", "home"] });
-    expect(domains[1].subdomains?.[0]).toMatchObject({ id: "work-sub", path: "work/microsoft/team" });
+    expect(domains[1].subdomains?.[0]).toMatchObject({ id: "work-sub", path: "work/acme/team" });
   });
 
   test("loadManifest treats null domains as an empty registry", () => {
@@ -72,7 +72,7 @@ describe("memory domain controller", () => {
 
   test("ControllerGetIncludesSubdomains", () => {
     const c = new Controller(tempRoot(goodManifest));
-    expect(c.get("work-sub").path).toBe("work/microsoft/team");
+    expect(c.get("work-sub").path).toBe("work/acme/team");
     expect(() => c.get("nope")).toThrow(/unknown id/);
   });
 
@@ -80,7 +80,7 @@ describe("memory domain controller", () => {
     const c = new Controller(tempRoot(goodManifest));
     expect(c.observations().map((t) => `${t.domain}:${t.path}`)).toEqual([
       "personal:personal/observations.md",
-      "work-sub:work/microsoft/team/observations.md",
+      "work-sub:work/acme/team/observations.md",
     ]);
   });
 
@@ -88,13 +88,13 @@ describe("memory domain controller", () => {
     const c = new Controller(tempRoot(goodManifest));
     expect(c.actionItems().map((t) => `${t.domain}:${t.path}`)).toEqual([
       "personal:personal/action-items.md",
-      "work:work/microsoft/action-items.md",
+      "work:work/acme/action-items.md",
     ]);
   });
 
   test("ControllerActionItemsObservationsEntities domain filter", () => {
     const c = new Controller(tempRoot(goodManifest));
-    expect(c.actionItems("work")).toEqual([{ domain: "work", path: "work/microsoft/action-items.md", file: "action-items" }]);
+    expect(c.actionItems("work")).toEqual([{ domain: "work", path: "work/acme/action-items.md", file: "action-items" }]);
     expect(c.observations("personal")).toEqual([{ domain: "personal", path: "personal/observations.md", file: "observations" }]);
     expect(c.entities("personal")).toEqual([{ domain: "personal", path: "personal/entities.md", file: "entities" }]);
   });
@@ -108,8 +108,8 @@ describe("memory domain controller", () => {
 
   test("ControllerDomainForPath", () => {
     const c = new Controller(tempRoot(goodManifest));
-    expect(c.domainForPath("work/microsoft/team/observations.md")).toEqual({ domain: "work-sub", file: "observations", ok: true });
-    expect(c.domainForPath("work/microsoft/deeper/notes.md")).toEqual({ domain: "", file: "", ok: false });
+    expect(c.domainForPath("work/acme/team/observations.md")).toEqual({ domain: "work-sub", file: "observations", ok: true });
+    expect(c.domainForPath("work/acme/deeper/notes.md")).toEqual({ domain: "", file: "", ok: false });
     expect(c.domainForPath("scratch/foo.md")).toEqual({ domain: "", file: "", ok: false });
   });
 

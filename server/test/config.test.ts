@@ -18,6 +18,18 @@ describe("loadConfig", () => {
     expect(cfg.defaultModel).toContain("/");
   });
 
+  describe("host", () => {
+    test("defaults to 127.0.0.1 (loopback) when YTSEJAM_HOST is unset", () => {
+      const cfg = loadConfig({ YTSEJAM_AUTH_TOKEN: "test" });
+      expect(cfg.host).toBe("127.0.0.1");
+    });
+
+    test("honors an explicit YTSEJAM_HOST override (e.g. 0.0.0.0 behind a reverse proxy)", () => {
+      const cfg = loadConfig({ YTSEJAM_AUTH_TOKEN: "test", YTSEJAM_HOST: "0.0.0.0" });
+      expect(cfg.host).toBe("0.0.0.0");
+    });
+  });
+
   test("piAuthPath defaults to the pi CLI location and accepts override", () => {
     const def = loadConfig({ YTSEJAM_AUTH_TOKEN: "x" });
     expect(def.piAuthPath.endsWith("/.pi/agent/auth.json")).toBe(true);

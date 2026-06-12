@@ -22,6 +22,7 @@ beforeEach(async () => {
     persona: new PersonaStore(`${made.dataDir}/persona`),
     config: {
       port: 0,
+      host: "127.0.0.1",
       dataDir: made.dataDir,
       authToken: "test-token",
       defaultModel: "faux/faux",
