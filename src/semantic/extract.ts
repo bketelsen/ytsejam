@@ -36,7 +36,10 @@ export function normalizeObject(s: string): string {
     .replace(/[.,!?;:]+$/g, "")
     // Trailing adverbs don't change what the preference is about — and they
     // must not defeat contradiction matching ("...tabs" vs "...tabs now").
-    .replace(/\s+(?:now|these days|anymore|any more|again|lately|though|to be honest|honestly)$/g, "")
+    .replace(
+      /\s+(?:now|these days|anymore|any more|again|lately|though|to be honest|honestly|after all|anyway|instead|for me|tbh)$/g,
+      "",
+    )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -225,9 +228,13 @@ export function extractEntities(text: string): EntityCandidate[] {
   }
 
   for (const m of text.matchAll(/\b([A-Z][a-zA-Z0-9+#.]{1,30}(?:\s+[A-Z][a-zA-Z0-9+#.]{1,30}){0,2})\b/g)) {
-    const name = m[1];
-    const first = name.split(/\s+/)[0];
-    if (CAP_STOPLIST.has(first)) continue;
+    // Strip leading stoplisted words instead of rejecting the whole match —
+    // otherwise "The Grafana dashboard" swallows Grafana entirely, because
+    // the regex consumes "The Grafana" as one span and never revisits it.
+    const words = m[1].split(/\s+/);
+    while (words.length > 0 && CAP_STOPLIST.has(words[0])) words.shift();
+    if (words.length === 0) continue;
+    const name = words.join(" ");
     add(name, TECH_LEXICON.has(name.toLowerCase()) ? "tech" : "other");
   }
 
