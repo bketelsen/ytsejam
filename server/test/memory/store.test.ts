@@ -144,6 +144,17 @@ describe("memory primitive store", () => {
     await expect(move("../source.md", "x/INDEX.md")).rejects.toThrow(/traversal|absolute/);
   });
 
+  test("move destination allow-list is an intentional tightening from Go", async () => {
+    await write("personal/INDEX.md", "content\n");
+    await expect(move("personal/INDEX.md", "personal/scratch.md")).rejects.toThrow(/write path not allowed/);
+    expect(await slurp("personal/INDEX.md")).toBe("content\n");
+    expect(existsSync(join(root, "personal/scratch.md"))).toBe(false);
+
+    await expect(move("personal/INDEX.md", "work/INDEX.md")).resolves.toEqual({ ok: true });
+    expect(existsSync(join(root, "personal/INDEX.md"))).toBe(false);
+    expect(await slurp("work/INDEX.md")).toBe("content\n");
+  });
+
   test("search/list/stats skip git and sort/filter", async () => {
     await seed("notes.md", "hello world\nfoo bar\n");
     await seed("other.md", "no match here\nHELLO again\n");

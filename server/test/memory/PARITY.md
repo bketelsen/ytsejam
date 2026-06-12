@@ -36,7 +36,7 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestPatchAmbiguous | same |
 | TestOutlineReturnsMarkdownHeadingsInOrder | `outline includes L0 and markdown headings, missing errors` |
 | TestOutlineMissingFileReturnsError | same |
-| TestMoveFile | `move rename rejects existing/traversal and enforces destination allow-list` |
+| TestMoveFile | `move rename rejects existing/traversal and enforces destination allow-list`; intentional divergence from Go: destination is also allow-listed |
 | TestMoveExistingDestinationReturnsError | same |
 | TestMovePathTraversalRejected | same |
 | TestSearch | `search/list/stats skip git and sort/filter`; `search matches regex metacharacters literally` locks Go-faithful literal substring semantics |

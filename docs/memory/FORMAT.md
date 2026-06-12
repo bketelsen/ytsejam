@@ -149,6 +149,8 @@ Additionally, if `domains.yml` declares a domain id whose storage path is differ
 
 `move(from, to)` applies the same destination allow-list as `write` and rejects existing destinations.
 
+**`move(from, to)` — intentional divergence from Go:** the destination is also subject to the whole-file write allow-list (`*/INDEX.md`, `link-index.md`, `glacier/index.md`, `domains.yml`, select `cog-meta/*`). Go's `store.Move` allowed moves to arbitrary destinations; the TS port closes that gap. Canonical content (`observations.md`, `hot-memory.md`, `action-items.md`, `entities.md`) cannot be moved via this API — use `append`/`patch` or a specialized archival flow instead.
+
 ## Wiki frontmatter
 
 Wiki pages are long-form, durable reference pages. They live under `wiki/**/index.md` and use YAML frontmatter followed by markdown body. The canonical detailed rules are in `docs/memory/WIKI-TIER.md`.
