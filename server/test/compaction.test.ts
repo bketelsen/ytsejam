@@ -111,3 +111,85 @@ describe("decideCompaction", () => {
     expect(d.reason).toMatch(/above .* budget/);
   });
 });
+
+import { classifyOverflow, CUSTOM_INSTRUCTIONS, buildSurrenderMessage } from "../src/compaction.ts";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+
+describe("classifyOverflow", () => {
+  const overflowMsg: AssistantMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "" }],
+    stopReason: "error",
+    errorMessage: "prompt is too long: 1000596 tokens > 1000000 maximum",
+    api: "anthropic-messages",
+    provider: "anthropic",
+    model: "claude-sonnet-4-6",
+    usage: undefined as any,
+  } as unknown as AssistantMessage;
+
+  const model = {
+    id: "claude-sonnet-4-6",
+    contextWindow: 1_000_000,
+    maxTokens: 64_000,
+    api: "anthropic-messages",
+    provider: "anthropic",
+    baseUrl: "",
+    name: "Claude",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  } as Model<any>;
+
+  it("returns true on Anthropic 'prompt is too long' error", () => {
+    expect(classifyOverflow(overflowMsg, model)).toBe(true);
+  });
+
+  it("returns true on Anthropic 'request_too_large' error", () => {
+    const m = { ...overflowMsg, errorMessage: "request_too_large: tokens exceed" } as AssistantMessage;
+    expect(classifyOverflow(m, model)).toBe(true);
+  });
+
+  it("returns false on rate-limit error (stopReason=error but not overflow)", () => {
+    const m = { ...overflowMsg, errorMessage: "429 rate limit exceeded, retry after 30s" } as AssistantMessage;
+    expect(classifyOverflow(m, model)).toBe(false);
+  });
+
+  it("returns false on stopReason=stop (not an error at all)", () => {
+    const m = { ...overflowMsg, stopReason: "stop", errorMessage: undefined } as AssistantMessage;
+    expect(classifyOverflow(m, model)).toBe(false);
+  });
+});
+
+describe("CUSTOM_INSTRUCTIONS", () => {
+  it("includes the no-resummarize sentinel for hot-memory files", () => {
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/hot-memory/i);
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/\[loaded hot-memory:/);
+  });
+
+  it("includes preserve-list anchors", () => {
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/PRESERVE EXACTLY/);
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/git branch/);
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/reviewer verdict/);
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/subagent task/);
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/Scheduled task/);
+  });
+
+  it("includes condense-list anchors", () => {
+    expect(CUSTOM_INSTRUCTIONS).toMatch(/CONDENSE aggressively/);
+  });
+});
+
+describe("buildSurrenderMessage", () => {
+  it("includes both tokens and contextWindow in diagnostic", () => {
+    const msg = buildSurrenderMessage(1_050_000, 1_000_000);
+    expect(msg).toMatch(/1050000|1,050,000/);
+    expect(msg).toMatch(/1000000|1,000,000/);
+  });
+
+  it("mentions the three user options", () => {
+    const msg = buildSurrenderMessage(1_050_000, 1_000_000);
+    expect(msg).toMatch(/summarize/i);
+    expect(msg).toMatch(/fresh session/i);
+    expect(msg).toMatch(/larger.*model|switch.*model/i);
+  });
+});
