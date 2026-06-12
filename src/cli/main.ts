@@ -9,6 +9,7 @@
  *   ltm redact --entity <name> | --session <id> | --pattern <re> | --record <id>
  *   ltm stats                           store size + retention summary
  *   ltm export                          full JSON dump to stdout
+ *   ltm doctor [--fix]                  store health checks
  *
  * Store dir: --store-dir flag or LTM_STORE_DIR env (default ./memory).
  */
@@ -17,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { MemorySystem } from "../api/memory-system.ts";
+import { runDoctor } from "./doctor.ts";
 
 const USAGE = `usage: ltm <command> [args] [--store-dir <dir>]
 
@@ -29,6 +31,7 @@ commands:
   redact               --entity <name> | --session <id> | --pattern <re> | --record <id>
   stats                store statistics
   export               full JSON dump to stdout (embeddings stripped)
+  doctor [--fix]       store health checks; --fix compacts + rebuilds state
 
 store dir: --store-dir or LTM_STORE_DIR (default ./memory)`;
 
@@ -56,6 +59,12 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
   }
 
   const storeDir = path.resolve(values["store-dir"] ?? process.env.LTM_STORE_DIR ?? "./memory");
+
+  // Doctor must run WITHOUT the normal open path: a sick store is exactly
+  // the case where MemorySystem.open might misbehave.
+  if (command === "doctor") {
+    return runDoctor(storeDir, { fix: values.fix ?? false }, out);
+  }
 
   const mem = MemorySystem.open({ storeDir });
   try {
