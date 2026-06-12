@@ -3,6 +3,7 @@ import { defaultPiAuthPath } from "./pi-auth.ts";
 
 export interface Config {
   port: number;
+  host: string;
   dataDir: string;
   authToken: string;
   /** "provider/modelId", must exist in the pi-ai catalog */
@@ -32,6 +33,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const defaultModel = env.YTSEJAM_DEFAULT_MODEL ?? "anthropic/claude-sonnet-4-6";
   return {
     port: Number(env.YTSEJAM_PORT ?? 3000),
+    host: env.YTSEJAM_HOST ?? "127.0.0.1",
     dataDir: path.resolve(env.YTSEJAM_DATA_DIR ?? "./data"),
     authToken,
     defaultModel,
