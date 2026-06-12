@@ -68,6 +68,7 @@ npm run check      # tsc --noEmit
 npm run eval       # banded eval (short/medium/long horizons), report + exit code
 npm run eval:sweep # 20 seeds × 3 bands; fails below 95% per-band pass rate
 npm run eval:semantic  # eval with a local sentence-transformer (optional dep)
+npm run eval:ollama    # eval against a local Ollama embedding model (no extra install)
 npm run bench      # ingest/retrieval/consolidation perf with thresholds
 npm run fixtures   # generate a synthetic corpus without running the eval
 ```
@@ -103,18 +104,45 @@ horizon comes from slot-aware profile promotion (employer/allergy/
 residence/relationship questions are answered by semantic slots); the
 remaining misses are episodic-only facts that need a real embedder.
 
+### With Ollama (`nomic-embed-text`, default seed)
+
+| band   | recall@5 | paraphrase r@5     | paraphrase MRR |
+|--------|----------|--------------------|----------------|
+| short  | 100%     | **100%** (hash 75%) | 0.82           |
+| medium | 88%      | 0%                 | 0.00           |
+| long   | 88%      | 0%                 | 0.00           |
+
+The real embedder lifts exactly where embeddings can matter: the short
+band's episodic-only paraphrase misses (75% → 100% on the default seed,
+75–88% on other seeds vs hash's flat 75%). Medium/long paraphrase stays
+0% with `nomic-embed-text` and `mxbai-embed-large` alike — those probes
+target facts past their decay horizon at 24+ months, so the misses are
+decay-bound, not similarity-bound, and no embedder buys them back.
+Thresholds therefore stay at the band defaults (measured minus 5pp);
+the once-planned medium-band raise to 0.80 was aspirational and is not
+reachable by any embedder under the current decay design.
+
 ## Embedders
 
 | mode | embedder | properties |
 | --- | --- | --- |
 | default | `HashEmbedder` (hashed bag-of-words, 256-dim) | deterministic, offline, zero deps; lexical-strength retrieval, weak on paraphrase |
 | semantic (optional) | `LocalEmbedder` (`@huggingface/transformers`, e.g. all-MiniLM-L6-v2) | real paraphrase similarity; ~100MB of model + runtime |
+| ollama (optional) | `OllamaEmbedder` (`http://localhost:11434`, e.g. `nomic-embed-text`) | real paraphrase similarity via a local Ollama service; zero install if Ollama is already running; 768-dim default; plain `fetch`, no SDK |
+
+If you already run Ollama locally with an embedding model pulled (e.g.
+`ollama pull nomic-embed-text`), `npm run eval:ollama` swaps the default
+`HashEmbedder` for the live model and caches embeddings on disk so
+re-runs are free. No additional install. `--ollama-model` and
+`--ollama-url` (or `OLLAMA_BASE_URL`) override the defaults;
+`--semantic` and `--ollama` are mutually exclusive. A live smoke test
+runs with `LTM_OLLAMA_LIVE=1 npm test`; the default suite stays hermetic
+(mocked fetch).
 
 `@huggingface/transformers` is an **optional** peer dependency — skip it if
-you don't need semantic eval mode. `npm run eval:semantic` requires it plus
-`LOCAL_EMBEDDER_MODEL=<hub-id-or-path>`, raises the medium band's
-paraphrase threshold to 0.80, and caches embeddings on disk
-(`CachedEmbedder`, SHA-256-keyed) so re-runs are free. Any
+you don't need the in-process semantic mode. `npm run eval:semantic`
+requires it plus `LOCAL_EMBEDDER_MODEL=<hub-id-or-path>`, and caches
+embeddings the same way. Any
 `{dimension, embed(text)}` object works as a custom embedder (e.g. an API
 embedder at fold time); records carry their vectors, so swapping embedders
 means re-ingesting, not migrating.
@@ -143,10 +171,11 @@ consolidation ~7ms per 1k records. `npm run bench` fails below
 | session reader (pi v3, branch resolution, fork chains) | stable, fuzz-tested |
 | episodic store / decay / consolidation | stable; extractive summarizer is the PoC floor (LLM summarizer injectable) |
 | semantic extraction heuristics | PoC line: English regex patterns, precision-first; upgradeable to an LLM extractor behind the same candidate shapes |
-| retrieval (hybrid + MMR + promotion) | stable with HashEmbedder; paraphrase quality gated on real embedder |
+| retrieval (hybrid + MMR + promotion) | stable with HashEmbedder; Ollama delivers the real-embedder paraphrase lift (short band); medium/long paraphrase is decay-bound by design |
 | redaction / audit | stable, round-trip tested |
 | eval harness / sweep / bench | stable |
-| LocalEmbedder | seam only — shape-tested, model integration deferred to the ytsejam fold plan |
+| LocalEmbedder | shape-tested seam; the Ollama path is the working semantic mode |
+| OllamaEmbedder | stable — mocked-fetch tested, live smoke gated behind `LTM_OLLAMA_LIVE=1` |
 
 ## Store layout
 
