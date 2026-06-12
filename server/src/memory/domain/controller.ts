@@ -5,7 +5,19 @@ import { loadManifest } from "./manifest.ts";
 
 const cloneDomains = (domains: Domain[]): Domain[] => structuredClone(domains);
 const toPosix = (path: string) => path.replaceAll("\\", "/");
-const cleanRel = (path: string) => toPosix(path).split("/").filter((p) => p && p !== ".").join("/");
+function cleanRel(path: string): string {
+  const parts = toPosix(path).split("/").filter((seg) => seg && seg !== ".");
+  const out: string[] = [];
+  for (const seg of parts) {
+    if (seg === "..") {
+      if (out.length === 0) throw new Error(`invalid path: escapes root: ${path}`);
+      out.pop();
+    } else {
+      out.push(seg);
+    }
+  }
+  return out.join("/");
+}
 const joinPosix = (...parts: string[]) => parts.map(cleanRel).filter(Boolean).join("/");
 const walk = (domains: Domain[], fn: (domain: Domain) => void) => {
   for (const domain of domains) {
@@ -31,7 +43,7 @@ export class Controller {
   private flat = new Map<string, Domain>();
   private mtimeMs = 0;
 
-  constructor(root: string, _options: Record<string, never> = {}) {
+  constructor(root: string) {
     if (!isAbsolute(root)) throw new Error(`domain: memoryRoot must be absolute, got ${JSON.stringify(root)}`);
     this.root = root;
     this.manifestPath = join(root, "domains.yml");
@@ -110,7 +122,9 @@ export class Controller {
       if (onlyDomain && domain.id !== onlyDomain) return;
       if (declaresFile(domain, file)) out.push({ domain: domain.id, path: joinPosix(domain.path, `${file}.md`), file });
     });
-    return out.sort((a, b) => a.path.localeCompare(b.path));
+    // Byte comparison matches Go's `out[i].Path < out[j].Path` exactly.
+    // localeCompare diverges on mixed-case/punctuation paths.
+    return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   }
 
   private checkIDAsPath(relPath: string): void {
@@ -124,6 +138,8 @@ export class Controller {
   private maybeReload(): void {
     const stat = existsSync(this.manifestPath) ? statSync(this.manifestPath) : null;
     if (!stat && this.mtimeMs === 0 && this.domains.length === 0) return;
+    // mtime polling can miss sub-granularity rewrites on low-res FS;
+    // matches Go behavior. Callers needing certainty should `utimes` after edit.
     if (stat && stat.mtimeMs === this.mtimeMs) return;
     try {
       this.reload();

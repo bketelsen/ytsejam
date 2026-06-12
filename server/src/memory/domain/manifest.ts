@@ -59,6 +59,8 @@ export function loadManifest(rootDir: string): Domain[] {
 
   let raw: unknown;
   try {
+    // TOCTOU between stat and read: a mid-edit partial read parses to an
+    // error → caught → stale-but-served via the error path. Matches Go.
     raw = parse(readFileSync(manifestPath, "utf8"));
   } catch (err) {
     throw new Error(`domain: parse ${JSON.stringify(manifestPath)}: ${(err as Error).message}`);
@@ -67,7 +69,9 @@ export function loadManifest(rootDir: string): Domain[] {
   if (!isRecord(raw)) {
     throw new Error(`domain: validate ${JSON.stringify(manifestPath)}: manifest must be an object`);
   }
-  if (raw.domains === undefined) return [];
+  // Treat null/undefined identically — matches Go's nil-slice handling
+  // for `domains:` (key absent), `domains: null`, and `domains: ~`.
+  if (raw.domains == null) return [];
   if (!Array.isArray(raw.domains)) {
     throw new Error(`domain: validate ${JSON.stringify(manifestPath)}: domains must be an array`);
   }

@@ -1,5 +1,4 @@
 import type {
-  ActionTarget,
   Cluster,
   ClusterCheckParams,
   Domain,

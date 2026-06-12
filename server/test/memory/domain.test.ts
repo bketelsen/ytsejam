@@ -54,6 +54,15 @@ describe("memory domain controller", () => {
     expect(domains[1].subdomains?.[0]).toMatchObject({ id: "work-sub", path: "work/microsoft/team" });
   });
 
+  test("loadManifest treats null domains as an empty registry", () => {
+    for (const body of ["domains:\n", "domains: null\n", "domains: ~\n"]) {
+      expect(loadManifest(tempRoot(body))).toEqual([]);
+      const c = new Controller(tempRoot(body));
+      expect(c.list()).toEqual([]);
+      expect(c.lastError).toBeNull();
+    }
+  });
+
   test("ControllerLoadAndList", () => {
     const c = new Controller(tempRoot(goodManifest));
     const ds = c.list();
@@ -104,6 +113,22 @@ describe("memory domain controller", () => {
     expect(c.domainForPath("scratch/foo.md")).toEqual({ domain: "", file: "", ok: false });
   });
 
+  test("ControllerDomainForPath normalizes dot-dot segments", () => {
+    const c = new Controller(tempRoot("domains:\n  - id: work\n    path: work\n    files: [action-items]\n"));
+    expect(c.domainForPath("work/sub/../action-items.md")).toEqual({ domain: "work", file: "action-items", ok: true });
+  });
+
+  test("Controller rejects relative paths that escape root", () => {
+    const c = new Controller(tempRoot(goodManifest));
+    expect(() => c.domainForPath("../foo.md")).toThrow(/invalid path: escapes root: \.\.\/foo\.md/);
+    expect(() => c.validateWrite("work/../../escape.md")).toThrow(/invalid path: escapes root: work\/\.\.\/\.\.\/escape\.md/);
+  });
+
+  test("ControllerDomainForPath strips dot segments", () => {
+    const c = new Controller(tempRoot(goodManifest));
+    expect(c.domainForPath("./personal/./hot-memory.md")).toEqual({ domain: "personal", file: "hot-memory", ok: true });
+  });
+
   test("ControllerValidateWriteWarnsUnknown", () => {
     const c = new Controller(tempRoot(goodManifest));
     expect(() => c.validateWrite("personal/hot-memory.md")).not.toThrow();
@@ -126,6 +151,10 @@ describe("memory domain controller", () => {
     bumpManifest(dir, "domains: [: not yaml\n");
     expect(c.list().map((d) => d.id)).toEqual(["personal", "work", "work-sub", "cog-meta"]);
     expect(c.lastError?.message).toMatch(/parse/);
+
+    bumpManifest(dir, "version: 1\ndomains:\n  - id: recovery-domain\n    path: recovery\n    files: [hot-memory]\n");
+    expect(c.list().map((d) => d.id)).toEqual(["recovery-domain"]);
+    expect(c.lastError).toBeNull();
   });
 
   test("ControllerMalformedYAMLRejected", () => {

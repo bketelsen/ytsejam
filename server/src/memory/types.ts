@@ -25,8 +25,6 @@ export interface DomainFileRef {
   file: string;
 }
 
-/** Backward-compatible alias for action-item targets. */
-export type ActionTarget = DomainFileRef;
 
 /** Result of mapping a memory-root-relative path back to a declared domain file. */
 export interface DomainForPathResult {
