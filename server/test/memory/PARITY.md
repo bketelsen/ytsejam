@@ -108,3 +108,70 @@ Scope: in-process consolidated replacements for `glacier_index_compute`, `wiki_i
 | TestL0IndexMissingDomainReturnsEmpty | `l0index.test.ts` `TestL0IndexMissingDomainReturnsEmpty` | Ported |
 
 Additional PR-2c coverage: `l0index` strict-param rejection for unknown keys; wiki `category` alias accepted alongside Go's `entity_type` for the tightened TS type/spec wording.
+||||||| parent of ad25dd0 (Add PR-2a consolidated memory test parity)
+
+## Consolidated — Session + Housekeeping (PR-2a)
+
+Scope: `sessionBrief`, `housekeepingScan`, `openActions`, `domainSummary`, and `recentObservations`. RBAC/role-required Go cases are mapped as "N/A" because fold plan D6 drops RBAC and role params from the TypeScript public surface; deprecated `by_domain` alias cases are intentionally inverted per D12 (alias not ported; strict unknown-key rejection is tested).
+
+| Go test | Vitest mapping |
+|---|---|
+| rpc/session_brief_test.go TestSessionBriefReturnsEnvelope | consolidated.test.ts `sessionBrief returns hot memory...` |
+| TestSessionBriefRBACFiltersDomainsAndCounts | N/A — RBAC dropped per D6 |
+| TestSessionBriefDomainsIncludePath | `sessionBrief returns hot memory...` |
+| TestSessionBriefMissingRoleErrors | N/A — role param dropped per D6 |
+| store/session_brief_test.go TestSessionBriefReadsHotMemoryAndPatterns | `sessionBrief returns hot memory...` |
+| TestSessionBriefMissingFilesReturnEmpty | `sessionBrief missing canonical files...` |
+| TestSessionBriefCountsOpenActionsPerDomain | `sessionBrief counts ignore completed...` |
+| rpc/server_test.go TestOpenActionsMethodReturnsReadableUncheckedItems | `openActions returns unchecked items...` |
+| TestOpenActionsMethodEmptyResultIsArray | `openActions returns an empty array...` |
+| TestOpenActionsMethodBroadRoleSeesAllItems | `openActions returns unchecked items...` |
+| TestOpenActionsMethodInvalidParams | strict public validation coverage (`strict params reject...`) |
+| TestOpenActionsMethodMissingRole | N/A — role param dropped per D6 |
+| TestOpenActionsDomainFilter | `openActions returns an empty array... supports domain filter` |
+| TestOpenActionsDomainFilterUnknownErrors | same |
+| TestOpenActionsDomainComesFromController | `openActions domain comes from controller path...` |
+| store/store_test.go TestOpenActionsReturnsUncheckedItemsFromActionFiles | `openActions returns unchecked items...` |
+| TestOpenActionsEmptyResultIsNonNil | `openActions returns an empty array...` |
+| rpc/server_test.go TestRecentObservationsHappyPath | `recentObservations happy path...` |
+| TestRecentObservationsByTagFilter | `recentObservations filters by tag...` |
+| TestRecentObservationsDomainParamWorks | `recentObservations filters by tag and by canonical domain param` |
+| TestRecentObservationsByDomainAliasStillWorks | D12 inversion: alias not ported; `recentObservations rejects by_domain alias...` |
+| TestRecentObservationsBothDomainAndByDomainSameValueAllowed | D12 inversion: alias rejected by strict params |
+| TestRecentObservationsBothDomainAndByDomainDifferRejected | D12 inversion: alias rejected by strict params |
+| TestRecentObservationsByDomainUnknownErrors | canonical unknown-domain half in `recentObservations rejects...`; alias half rejected as unknown key |
+| TestRecentObservationsWrongParamNamesAreSilentlyIgnored | superseded by strict rejection; `strict params reject...` |
+| TestRecentObservationsInvalidSinceRejected | `recentObservations rejects by_domain alias, invalid since...` |
+| TestRecentObservationsMissingRole | N/A — role param dropped per D6 |
+| TestRecentObservationsRBACFiltersUnreadablePaths | N/A — RBAC dropped per D6 |
+| TestRecentObservationsEmptyResultShapesAreNotNull | `recentObservations default since... empty shapes...` |
+| TestRecentObservationsDefaultSinceIs7Days | same |
+| TestRecentObservationsSkipsFencedBlocks | `recentObservations rejects by_domain alias... skips fences` |
+| TestRecentObservationsDurationSince | `recentObservations accepts duration since forms` |
+| PR-2a intentional divergence from Go duration parsing | `resolveSince rejects composite Go durations (intentional divergence)` |
+| store/domain_summary_helpers_test.go TestRecentObservationsFiltersAndParses | `domainSummary happy path` and `recentObservations happy path...` |
+| TestCountActionsHandlesFencesAndDates | `domainSummary happy path` (dated completed count) and session/action skip tests |
+| rpc/domain_summary_test.go TestDomainSummaryHappyPath | `domainSummary happy path` |
+| TestDomainSummaryDefaultSinceIs7Days | `domainSummary default/duration since...` |
+| TestDomainSummarySinceDurationForms | same |
+| TestDomainSummaryRBACDenied | N/A — RBAC dropped per D6 |
+| TestDomainSummaryUnknownDomain | `domainSummary default/duration since...` |
+| TestDomainSummaryMissingFilesAreOmitted | same |
+| TestDomainSummaryRoleRequired | N/A — role param dropped per D6 |
+| TestDomainSummaryHotReloadsManifest | `domainSummary default/duration since... hot-reloaded manifest` |
+| TestDomainSummaryIncludesPath | `domainSummary happy path` |
+| rpc/housekeeping_test.go TestHousekeepingScanMissingRole | N/A — role param dropped per D6 |
+| TestHousekeepingScanEmptyEnvelope | `housekeepingScan empty envelope` |
+| TestHousekeepingScanObservationsOverCapAggregatesPrimaryTag | `housekeepingScan observations over cap...` |
+| TestHousekeepingScanActionItemsCompletedAndStale | `housekeepingScan action completed cap...` |
+| TestHousekeepingScanHotMemoryOverCap | same |
+| TestHousekeepingScanPatternsOverCapByBytes | same |
+| TestHousekeepingScanDormantDomain | `housekeepingScan observations over cap... detects dormancy` |
+| TestHousekeepingScanRBACFilters | N/A — RBAC dropped per D6 |
+| TestHousekeepingScanImprovementsOverCap | `housekeepingScan action completed cap...` |
+| TestHousekeepingScanChangedRecentlyHonorsMarker | `housekeepingScan changed_recently honors marker` |
+| rpc/strict_params_test.go TestStrictParamsRecentObservations | `strict params reject unknown keys...` plus `recentObservations rejects by_domain alias...` |
+| TestRecentObservationsWrongParamNamesAreRejected | same |
+| PR-2a added strict cases for session_brief/housekeeping_scan/open_actions/domain_summary | `strict params reject unknown keys for all PR-2a public functions` |
+
+**Intentional divergence from Go (PR-2a):** `resolveSince` accepts single-unit durations only (`Nd`/`Nh`/`Nm`/`Ns` ± decimal); Go's `time.ParseDuration` also accepts composites (`1h30m`, `100ms`). TS port rejects composites with `unrecognized since value`. Documented in `common.ts:resolveSince` JSDoc; locked by `resolveSince rejects composite Go durations (intentional divergence)`.
