@@ -30,6 +30,7 @@ import {
   compactionEnabled,
   computeReserveTokens,
   decideCompaction,
+  estimateKeptSetTokens,
   formatDevLogLine,
   REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
@@ -377,10 +378,19 @@ export class TaskManager {
     const model = active.harness.getModel();
     const sessionFilePath = active.metadata.path;
 
-    let tokensAfter = compactionEntry?.tokensAfter ?? 0;
+    // Compute tokensAfterEstimated via a structural char/4 walk over the
+    // post-compact kept-set, deliberately bypassing estimateContextTokens —
+    // see #72: that helper anchors on the last surviving assistant's
+    // usage.totalTokens, which is the stale pre-compact snapshot from the
+    // very turn that triggered compaction and would tautologically return
+    // tokens_before. Best-effort: any throw falls back to 0.
+    let tokensAfterEstimated = 0;
     try {
       const messages = (await active.session.buildContext()).messages;
-      tokensAfter = estimateContextTokens(messages).tokens;
+      const summaryTokens =
+        compactionEntry?.summaryTokens ??
+        Math.ceil(String(compactionEntry?.summary ?? "").length / 4);
+      tokensAfterEstimated = estimateKeptSetTokens(messages, summaryTokens);
     } catch {
       // Best-effort diagnostic only; buildCompactionEvent falls back to 0.
     }
@@ -389,7 +399,8 @@ export class TaskManager {
       ...(compactionEntry ?? {}),
       sessionId: active.parentSessionId,
       subagentTaskId: active.taskId,
-      tokensAfter,
+      // key stays pi-shape; buildCompactionEvent reads compactionEntry?.tokensAfter
+      tokensAfter: tokensAfterEstimated,
     };
     const devLogPath = `${memoryRoot()}/projects/ytsejam/dev-log.md`;
     const compactionEvent: CompactionEvent = buildCompactionEvent(

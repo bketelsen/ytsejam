@@ -21,6 +21,7 @@ import {
   computeReserveTokens,
   buildSettings,
   decideCompaction,
+  estimateKeptSetTokens,
   classifyOverflow,
   CUSTOM_INSTRUCTIONS,
   buildSurrenderMessage,
@@ -149,6 +150,119 @@ describe("decideCompaction", () => {
   });
 });
 
+describe("estimateKeptSetTokens", () => {
+  it("returns summaryTokens alone when messages array is empty", () => {
+    const r = estimateKeptSetTokens([], 1500);
+    expect(r).toBe(1500);
+  });
+
+  it("adds char/4 heuristic for string-content messages", () => {
+    const messages: any[] = [
+      { role: "user", content: "x".repeat(400) }, // 100 tokens
+      { role: "assistant", content: "y".repeat(800) }, // 200 tokens
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(300);
+  });
+
+  it("adds char/4 heuristic for array-content messages (text parts)", () => {
+    const messages: any[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "x".repeat(400) }, // 100
+          { type: "text", text: "y".repeat(400) }, // 100
+        ],
+      },
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(200);
+  });
+
+  it("ignores toolCall blocks (the .arguments JSON is dropped)", () => {
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "x".repeat(400) }, // 100
+          {
+            type: "toolCall",
+            id: "t1",
+            name: "bash",
+            arguments: { command: "y".repeat(10_000) },
+          },
+        ],
+      },
+    ];
+    // Deliberately under-counts: toolCall.arguments JSON is dropped because the
+    // current helper only sums {type:"text"} text parts. The reserveTokens
+    // cushion (~48k) absorbs this slop for the succeeded gate's purpose.
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(100);
+  });
+
+  it("ignores thinking blocks (the .thinking text is dropped)", () => {
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "x".repeat(400) }, // 100
+          { type: "thinking", thinking: "y".repeat(10_000) },
+        ],
+      },
+    ];
+    // Same rationale as toolCall: under-counted by design, absorbed by cushion.
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(100);
+  });
+
+  it("silently treats malformed/missing content as 0 chars (defensive)", () => {
+    // The AgentMessage union has members without a .content field
+    // (compactionSummary, branchSummary, bashExecution). The cast
+    // (msg as any).content is undefined for those at runtime — the function
+    // MUST NOT throw. Same for messages where a future producer accidentally
+    // emits non-string/non-array content.
+    const messages: any[] = [
+      { role: "compactionSummary", summary: "x".repeat(4000) }, // no .content field
+      { role: "user", content: null },
+      { role: "user", content: undefined },
+      { role: "user", content: 42 },
+      { role: "user", content: {} }, // not an array, not a string
+      {
+        role: "user",
+        content: [
+          null,
+          undefined,
+          { type: "text" },
+          { type: "text", text: 42 },
+        ],
+      }, // malformed array parts
+      { role: "user", content: "x".repeat(40) }, // 10 — one valid signal so the result isn't 0
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(10);
+  });
+
+  it("sums summaryTokens + messages heuristic", () => {
+    const messages: any[] = [{ role: "user", content: "x".repeat(400) }]; // 100
+    const r = estimateKeptSetTokens(messages, 2500);
+    expect(r).toBe(2600);
+  });
+
+  it("does NOT consult usage.totalTokens on any message", () => {
+    // The whole point of this helper: ignore stale provider-usage anchors.
+    const messages: any[] = [
+      {
+        role: "assistant",
+        content: "x".repeat(400), // 100 tokens by heuristic
+        usage: { totalTokens: 999_999, input: 0, output: 0 },
+      },
+    ];
+    const r = estimateKeptSetTokens(messages, 0);
+    expect(r).toBe(100);
+  });
+});
+
 describe("classifyOverflow", () => {
   const overflowMsg: AssistantMessage = {
     role: "assistant",
@@ -250,7 +364,7 @@ describe("formatDevLogLine", () => {
     reserveTokens: 80_000,
     keepRecentTokens: 20_000,
     tokensBefore: 947_112,
-    tokensAfter: 184_309,
+    tokensAfterEstimated: 184_309,
     summaryTokens: 4_821,
     firstKeptEntryId: "evt_8f12",
     filesRead: ["server/src/manager.ts"],
@@ -267,7 +381,7 @@ describe("formatDevLogLine", () => {
       /^2026-06-12.*: compaction in session abc123 — proactive/,
     );
     expect(line).toMatch(/anthropic\/claude-sonnet-4-6/);
-    expect(line).toMatch(/ctx 947112→184309 tokens/);
+    expect(line).toMatch(/ctx 947112→~184309 tokens/);
     expect(line).toMatch(/summary 4821 tokens/);
     expect(line).toMatch(/Trigger: above 920000 budget/);
   });
@@ -414,6 +528,90 @@ describe("buildCompactionEvent", () => {
       "subagent task task-abc (parent session parent-session-123)",
     );
   });
+
+  it("marks succeeded=false when kept-set estimate exceeds budget", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true, // harness path succeeded
+        durationMs: 1000,
+        backupPath: "/tmp/session.jsonl.pre-compact-x",
+        pending: {
+          trigger: "proactive",
+          reason: "test",
+          tokensBefore: 850_000,
+          budget: 100_000,
+        },
+      },
+      {
+        tokensBefore: 850_000,
+        tokensAfter: 250_000, // 2.5x over budget — should flip succeeded
+        summaryTokens: 2000,
+      },
+    );
+    expect(event.succeeded).toBe(false);
+    expect(event.reason).toMatch(/KEPT_SET_OVERSIZED/);
+    expect(event.reason).toContain("tokensAfterEstimated=250000");
+    expect(event.reason).toContain("budget=100000");
+  });
+
+  it("marks succeeded=true when kept-set estimate fits under budget", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true,
+        durationMs: 1000,
+        backupPath: "/tmp/session.jsonl.pre-compact-x",
+        pending: {
+          trigger: "proactive",
+          reason: "test",
+          tokensBefore: 850_000,
+          budget: 100_000,
+        },
+      },
+      {
+        tokensBefore: 850_000,
+        tokensAfter: 60_000, // under 100k budget
+        summaryTokens: 2000,
+      },
+    );
+    expect(event.succeeded).toBe(true);
+    expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);
+  });
+
+  it("does NOT add the post-condition when harness path already failed", () => {
+    // If harness.compact() threw, succeeded=false stands regardless of estimate.
+    // The reason should be the harness error, not KEPT_SET_OVERSIZED.
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: false,
+        durationMs: 1000,
+        backupPath: "/tmp/session.jsonl.pre-compact-x",
+        pending: {
+          trigger: "proactive",
+          reason: "test",
+          tokensBefore: 850_000,
+          budget: 100_000,
+        },
+        error: new Error("compact threw"),
+      },
+      {
+        tokensBefore: 850_000,
+        tokensAfter: 60_000, // would pass the post-condition if checked
+        summaryTokens: 2000,
+      },
+    );
+    expect(event.succeeded).toBe(false);
+    expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);
+    expect(event.reason).toContain("compact threw");
+  });
 });
 
 describe("serializeJsonRecord", () => {
@@ -429,7 +627,7 @@ describe("serializeJsonRecord", () => {
       reserveTokens: 100,
       keepRecentTokens: 50,
       tokensBefore: 950,
-      tokensAfter: 200,
+      tokensAfterEstimated: 200,
       summaryTokens: 10,
       firstKeptEntryId: "evt",
       filesRead: [],
@@ -447,7 +645,7 @@ describe("serializeJsonRecord", () => {
     expect(parsed.context_window).toBe(1000);
     expect(parsed.reserve_tokens).toBe(100);
     expect(parsed.tokens_before).toBe(950);
-    expect(parsed.tokens_after).toBe(200);
+    expect(parsed.tokens_after_estimated).toBe(200);
     expect(parsed.summary_tokens).toBe(10);
     expect(parsed.files_read).toEqual([]);
     expect(parsed.files_modified).toEqual([]);

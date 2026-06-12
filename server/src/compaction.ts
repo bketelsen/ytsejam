@@ -80,6 +80,58 @@ export function decideCompaction(
 }
 
 /**
+ * Structural token estimate for a post-compaction kept-set.
+ *
+ * Deliberately bypasses pi's `estimateContextTokens` because that function
+ * anchors on the last surviving assistant message's `usage.totalTokens` — a
+ * value that, immediately post-compaction, is the STALE pre-compaction
+ * snapshot from the very turn that triggered compaction. Reading it would
+ * tautologically return `tokens_before`.
+ *
+ * Walks each message and sums `Math.ceil(chars / 4)` over:
+ *   - string `.content` (user messages, our synthesized assistant text)
+ *   - `{type:"text"}` parts of array `.content` (assistant messages, and the
+ *     `content: (TextContent|ImageContent)[]` of `role:"toolResult"` messages —
+ *     tool RESULT text IS counted)
+ * plus `summaryTokens` (the compaction summary's own token count, passed in).
+ *
+ * Deliberately OMITS (counts as 0):
+ *   - `{type:"toolCall"}` blocks — their `.arguments` JSON (often multi-KB on
+ *     bash/delegate/write calls) is not summed
+ *   - `{type:"thinking"}` blocks — their `.thinking` text is not summed
+ *   - `{type:"image"}` blocks (no text anyway)
+ *   - messages whose `.content` is missing/null/non-string-non-array
+ *     (compactionSummary/branchSummary/bashExecution union members)
+ *
+ * Conservative-optimistic by design: the undercount on tool-call-heavy turns
+ * can reach ~15-20%, absorbed by the `reserveTokens` cushion (~48k for the
+ * production model) when the gate compares the estimate against `budget`.
+ * Good enough to gate the `succeeded` post-condition (Task 4); not intended
+ * as a billing-grade measurement.
+ *
+ * See docs/plans/2026-06-12-issue-72-design.md §D4 for the design rationale.
+ */
+export function estimateKeptSetTokens(
+  messages: AgentMessage[],
+  summaryTokens: number,
+): number {
+  let chars = 0;
+  for (const msg of messages) {
+    const content = (msg as any).content;
+    if (typeof content === "string") {
+      chars += content.length;
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (part && part.type === "text" && typeof part.text === "string") {
+          chars += part.text.length;
+        }
+      }
+    }
+  }
+  return summaryTokens + Math.ceil(chars / 4);
+}
+
+/**
  * Wrapper around pi-ai's isContextOverflow for the reactive-backstop path.
  *
  * Deliberately scoped to errors that pi-ai surfaces as `stopReason === "error"`
@@ -201,7 +253,7 @@ export interface CompactionEvent {
   reserveTokens: number;
   keepRecentTokens: number;
   tokensBefore: number;
-  tokensAfter: number;
+  tokensAfterEstimated: number;
   summaryTokens: number;
   firstKeptEntryId: string;
   filesRead: string[];
@@ -216,7 +268,7 @@ export interface CompactionEvent {
  *
  * Shape:
  *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
- *     <trigger>, <model>, ctx <before>→<after> tokens, summary <S> tokens,
+ *     <trigger>, <model>, ctx <before>→~<after> tokens, summary <S> tokens,
  *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
  */
 export function formatDevLogLine(e: CompactionEvent): string {
@@ -233,7 +285,7 @@ export function formatDevLogLine(e: CompactionEvent): string {
   const failedMarker = e.succeeded ? "" : " FAILED";
   return (
     `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
-    `ctx ${e.tokensBefore}→${e.tokensAfter} tokens, ` +
+    `ctx ${e.tokensBefore}→~${e.tokensAfterEstimated} tokens, ` +
     `summary ${e.summaryTokens} tokens, files-read ${filesReadStr}, ` +
     `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker}`
   );
@@ -260,7 +312,7 @@ export function serializeJsonRecord(
     reserve_tokens: e.reserveTokens,
     keep_recent_tokens: e.keepRecentTokens,
     tokens_before: e.tokensBefore,
-    tokens_after: e.tokensAfter,
+    tokens_after_estimated: e.tokensAfterEstimated,
     summary_tokens: e.summaryTokens,
     first_kept_entry_id: e.firstKeptEntryId,
     files_read: e.filesRead,
@@ -297,12 +349,35 @@ export function buildCompactionEvent(
   const pending = result.pending;
   const details = compactionEntry?.details ?? {};
   const summaryText = compactionEntry?.summary ?? "";
-  const succeeded = result.succeeded === true;
+  const summaryTokens =
+    compactionEntry?.summaryTokens ?? Math.ceil(String(summaryText).length / 4);
+  const tokensAfterEstimated = compactionEntry?.tokensAfter ?? 0;
+
+  // Post-condition: succeeded is true only if (a) the harness path succeeded
+  // AND (b) the kept-set structural estimate fits under budget. Per #72: a
+  // working trim that still leaves an oversized kept-set (one giant tool
+  // result dominating the keep_recent window) must NOT report succeeded=true
+  // — otherwise the caller has no signal to surrender (the trigger for #76).
+  // The (budget>0 && tokensAfterEstimated>0) guard means: only gate strictly
+  // when BOTH a budget AND a measurement exist; missing-measurement paths
+  // (e.g. estimate-throws, no-pending-compaction) pass through unchanged.
+  const harnessSucceeded = result.succeeded === true;
+  const budget = pending?.budget ?? 0;
+  const fitsBudget =
+    budget > 0 && tokensAfterEstimated > 0
+      ? tokensAfterEstimated < budget
+      : true;
+  const succeeded = harnessSucceeded && fitsBudget;
+
   const reason = result.surrendered
     ? `VERIFY CORRUPTED: ${result.error?.message ?? "unknown error"}`
-    : result.succeeded === false && !result.backupPath
+    : !harnessSucceeded && !result.backupPath
       ? `SKIPPED: ${result.error?.message ?? pending?.reason ?? "backup failed"}`
-      : (pending?.reason ?? result.error?.message ?? "compaction fired");
+      : !harnessSucceeded
+        ? (result.error?.message ?? pending?.reason ?? "compaction fired")
+        : !fitsBudget
+          ? `KEPT_SET_OVERSIZED:tokensAfterEstimated=${tokensAfterEstimated}>budget=${budget}`
+          : (pending?.reason ?? "compaction fired");
 
   return {
     timestamp: new Date(),
@@ -319,10 +394,8 @@ export function buildCompactionEvent(
       pending && pending.tokensBefore > 0
         ? pending.tokensBefore
         : (compactionEntry?.tokensBefore ?? 0),
-    tokensAfter: compactionEntry?.tokensAfter ?? 0,
-    summaryTokens:
-      compactionEntry?.summaryTokens ??
-      Math.ceil(String(summaryText).length / 4),
+    tokensAfterEstimated,
+    summaryTokens,
     firstKeptEntryId: compactionEntry?.firstKeptEntryId ?? "",
     filesRead: Array.isArray(details.readFiles) ? details.readFiles : [],
     filesModified: Array.isArray(details.modifiedFiles)
