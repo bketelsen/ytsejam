@@ -1,0 +1,10 @@
+{"type":"session","version":3,"id":"11111111-2222-7333-8444-555555555555","timestamp":"2026-03-01T10:00:00.000Z","cwd":"/home/user"}
+{"type":"session_info","id":"aaaa0000","parentId":null,"timestamp":"2026-03-01T10:00:01.000Z","name":"Planning a trip"}
+{"type":"message","id":"aaaa0001","parentId":null,"timestamp":"2026-03-01T10:00:05.000Z","message":{"role":"user","content":"My name is Brian and I prefer window seats on flights.","timestamp":1772359205000}}
+{"type":"message","id":"aaaa0002","parentId":"aaaa0001","timestamp":"2026-03-01T10:00:10.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"The user shared a preference."},{"type":"text","text":"Nice to meet you, Brian! I'll keep the window seat preference in mind."}],"model":"synthetic-1","stopReason":"stop","timestamp":1772359210000}}
+{"type":"message","id":"aaaa0003","parentId":"aaaa0002","timestamp":"2026-03-01T10:01:00.000Z","message":{"role":"user","content":"This message is on an abandoned branch and should not be ingested.","timestamp":1772359260000}}
+{"type":"message","id":"aaaa0004","parentId":"aaaa0002","timestamp":"2026-03-01T10:02:00.000Z","message":{"role":"user","content":"Let's plan the Lisbon trip for April. My sister Alice wants to join.","timestamp":1772359320000}}
+this line is corrupt and must be skipped
+{"type":"message","id":"aaaa0005","parentId":"aaaa0004","timestamp":"2026-03-01T10:02:30.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Great, Lisbon in April with Alice. I'll sketch an itinerary."}],"model":"synthetic-1","stopReason":"stop","timestamp":1772359350000}}
+{"type":"compaction","id":"aaaa0006","parentId":"aaaa0005","timestamp":"2026-03-01T10:03:00.000Z","summary":"Brian introduced himself, prefers window seats, planning a Lisbon trip in April with his sister Alice.","firstKeptEntryId":"aaaa0004","tokensBefore":900}
+{"type":"leaf","id":"aaaa0007","parentId":null,"timestamp":"2026-03-01T10:03:01.000Z","targetId":"aaaa0006"}
