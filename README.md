@@ -38,13 +38,20 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 
 ## Deployment
 
-Production runs as a systemd `--user` service on port **9873**, isolated from a
-dev instance on **3000** (different port and data dir — including in-process memory — so they
-coexist safely). See [`deploy/README.md`](deploy/README.md). Quick start:
+Production runs as a single systemd `--user` service on port **9873**, isolated
+from a dev instance on **3000** (different port and data dir — including
+in-process memory — so they coexist safely). See [`deploy/README.md`](deploy/README.md). Quick start:
 
+    git clone <repo-url> ytsejam
+    cd ytsejam
+    npm install
     deploy/install.sh                 # creates ~/.ytsejam, seeds env, installs the unit
     $EDITOR ~/.ytsejam/ytsejam.env    # set YTSEJAM_AUTH_TOKEN + provider keys
     deploy/deploy.sh                  # build + cut release + swap + restart + health-check
     systemctl --user enable --now ytsejam
+
+Upgrading from a previous daemon-era install? Run `deploy/migrate-to-folded.sh`
+before upgrading so the old cogmemory service is stopped and the store is moved
+under `~/.ytsejam/data/memory`.
 
     deploy/dev.sh                     # run a dev instance on :3000 with throwaway data/memory
