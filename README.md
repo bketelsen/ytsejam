@@ -83,11 +83,13 @@ in order to confirm the install is wired correctly:
         curl -fsS http://127.0.0.1:9873/ -o /dev/null -w '%{http_code}\n'
 
 2. **Auth + LLM provider configured.** Substitute your token; returns a JSON list of
-   models. If you get `unauthorized`, your `YTSEJAM_AUTH_TOKEN` is wrong; if the
-   list is empty, no provider credential is set in `~/.ytsejam/ytsejam.env`.
+   models. If the response is `{"error":"unauthorized"}` (HTTP 401), your
+   `YTSEJAM_AUTH_TOKEN` is wrong; if `models` is `[]`, no provider credential is
+   configured (set one in `~/.ytsejam/ytsejam.env`, or sign in via the pi CLI so
+   `~/.pi/agent/auth.json` exists).
 
-        curl -fsS -H "Authorization: Bearer $YTSEJAM_AUTH_TOKEN" \
-          http://127.0.0.1:9873/api/models | head
+        curl -sS -H "Authorization: Bearer $YTSEJAM_AUTH_TOKEN" \
+          http://127.0.0.1:9873/api/models
 
 3. **End-to-end.** Open `http://127.0.0.1:9873/` in a browser, sign in with the
    token, send a short message ("hello"), and verify a streamed response. This
@@ -101,17 +103,23 @@ To remove ytsejam from the host:
     systemctl --user disable --now ytsejam
     rm -f ~/.config/systemd/user/ytsejam.service
     systemctl --user daemon-reload
-    rm -rf ~/.ytsejam                              # irreversibly deletes all sessions, memory, schedules, and the env file
+    rm -rf ~/.ytsejam                              # irreversible — deletes the entire data dir
+
+The `~/.ytsejam` data dir holds sessions, memory, schedules, persona, skills,
+subagent task transcripts, archived sessions, and the env file. Back up anything
+you want to keep before the `rm -rf`.
 
 The git checkout under wherever you cloned the repo (e.g. `~/projects/ytsejam`)
 is yours to delete or keep.
 
 ## Troubleshooting
 
+Logs: `journalctl --user -u ytsejam -f`. Status: `systemctl --user status ytsejam`.
+
 | Symptom | Cause | Remedy |
 | --- | --- | --- |
-| `journalctl --user -u ytsejam` shows `Unable to locate executable: node` | `node` not on the unit's `PATH=` | Edit `~/.config/systemd/user/ytsejam.service`, add your node install dir (e.g. `%h/.nvm/versions/node/v22.x/bin`) to the `Environment="PATH=…"` line, then `systemctl --user daemon-reload && systemctl --user restart ytsejam`. |
+| `journalctl --user -u ytsejam` shows `Unable to locate executable: node` | `node` not on the unit's `PATH=` | Edit `~/.config/systemd/user/ytsejam.service`, add your node install dir (e.g. `%h/.nvm/versions/node/v22.x/bin`) to the `Environment="PATH=…"` line, then `systemctl --user daemon-reload && systemctl --user restart ytsejam`. For a durable fix that survives install.sh re-runs, make the same edit in `deploy/ytsejam.service` in your repo checkout and re-run `deploy/install.sh`. |
 | Service starts then immediately exits with `YTSEJAM_AUTH_TOKEN is required` | `YTSEJAM_AUTH_TOKEN` unset in env file | `$EDITOR ~/.ytsejam/ytsejam.env`, add `YTSEJAM_AUTH_TOKEN=<your-token>`, then `systemctl --user restart ytsejam`. |
-| `deploy/deploy.sh` health-check passes but the model picker is empty | Default model's provider credential not configured | Add the matching API key (e.g. `ANTHROPIC_API_KEY=…` if the default model is `anthropic/*`) to `~/.ytsejam/ytsejam.env`, then `systemctl --user restart ytsejam`. |
+| `deploy/deploy.sh` health-check passes but the model picker is empty | Default model's provider credential not configured | Add the matching API key (e.g. `ANTHROPIC_API_KEY=…` if the default model is `anthropic/*`) to `~/.ytsejam/ytsejam.env` — or, for GitHub Copilot/Codex, sign in via the pi CLI so `~/.pi/agent/auth.json` exists. Then `systemctl --user restart ytsejam`. |
 | `Address already in use` on startup, or `deploy.sh` health-check fails on the port | Port `9873` already taken (another instance, or a port-forward) | Change `YTSEJAM_PORT` in `~/.ytsejam/ytsejam.env` to a free port, then `systemctl --user restart ytsejam`. |
 | `journalctl --user` says `No journal files were found` or `Failed to add match` | User is not running under a `systemd --user` login session | `loginctl enable-linger "$USER"`, then log out and log back in. The Prerequisites section covers the headless case. |
