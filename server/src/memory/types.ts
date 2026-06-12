@@ -410,6 +410,9 @@ export interface LinkIndexResult {
 /** Active scenario check row. */
 export interface ScenarioEntry {
   path: string;
+  /** PR-2b task shape; mirrors check_by for compatibility. */
+  due: string;
+  /** Go JSON field retained for parity with cogmemory RPC. */
   check_by: string;
   status: string;
   days_until_check: number;

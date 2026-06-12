@@ -38,6 +38,11 @@ import * as consolidated from "./consolidated/index.ts";
 import { glacierIndexCompute as computeGlacierIndex } from "./consolidated/glacier-index-compute.ts";
 import { l0index as computeL0Index } from "./consolidated/l0index.ts";
 import { wikiIndexCompute as computeWikiIndex } from "./consolidated/wiki-index-compute.ts";
+import { clusterCheck as consolidatedClusterCheck } from "./consolidated/cluster-check.ts";
+import { entityAudit as consolidatedEntityAudit } from "./consolidated/entity-audit.ts";
+import { linkAudit as consolidatedLinkAudit } from "./consolidated/link-audit.ts";
+import { linkIndexCompute as consolidatedLinkIndexCompute } from "./consolidated/link-index-compute.ts";
+import { scenarioCheck as consolidatedScenarioCheck } from "./consolidated/scenario-check.ts";
 
 export type * from "./types.ts";
 export { Controller, loadManifest } from "./domain/index.ts";
@@ -134,28 +139,28 @@ export async function recentObservations(
 }
 
 /** Detect observation clusters by tag, keyword, and thread candidate; filled in PR-2b. */
-export async function clusterCheck(_params: ClusterCheckParams = {}): Promise<Cluster> {
-  return notImplemented("PR-2b");
+export async function clusterCheck(params: ClusterCheckParams = {}): Promise<Cluster> {
+  return consolidatedClusterCheck(params);
 }
 
 /** Audit entity registries for format, age, and temporal issues; filled in PR-2b. */
-export async function entityAudit(_params: EntityAuditParams = {}): Promise<EntityAuditResult> {
-  return notImplemented("PR-2b");
+export async function entityAudit(params: EntityAuditParams = {}): Promise<EntityAuditResult> {
+  return consolidatedEntityAudit(params);
 }
 
 /** Find unlinked entity mentions that should become wiki-links; filled in PR-2b. */
-export async function linkAudit(): Promise<LinkAuditResult> {
-  return notImplemented("PR-2b");
+export async function linkAudit(params: Record<string, unknown> = {}): Promise<LinkAuditResult> {
+  return consolidatedLinkAudit(params);
 }
 
 /** Compute the reverse wiki-link index; filled in PR-2b. */
-export async function linkIndexCompute(): Promise<LinkIndexResult> {
-  return notImplemented("PR-2b");
+export async function linkIndexCompute(params: Record<string, unknown> = {}): Promise<LinkIndexResult> {
+  return consolidatedLinkIndexCompute(params);
 }
 
 /** Check active scenario files for due and overdue reviews; filled in PR-2b. */
-export async function scenarioCheck(): Promise<ScenarioCheckResult> {
-  return notImplemented("PR-2b");
+export async function scenarioCheck(params: Record<string, unknown> = {}): Promise<ScenarioCheckResult> {
+  return consolidatedScenarioCheck(params);
 }
 
 /** Compute the glacier archive index envelope; filled in PR-2c. */
