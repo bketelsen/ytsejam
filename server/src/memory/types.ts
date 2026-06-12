@@ -114,6 +114,7 @@ export interface HealthResult {
   ok: boolean;
   files?: number;
   last_commit?: string;
+  memory_root?: string;
 }
 
 /** Supported git operation names. */
@@ -123,6 +124,7 @@ export type GitOperation = "status" | "diff" | "log" | "commit" | "revert";
 export interface GitParams {
   op: GitOperation;
   ref?: string;
+  commit?: string;
   message?: string;
   paths?: string[];
   limit?: number;

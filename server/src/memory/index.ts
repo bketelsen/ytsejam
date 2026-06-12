@@ -35,6 +35,7 @@ import type {
   WikiIndexResult,
   WriteResult,
 } from "./types.ts";
+import * as store from "./store/index.ts";
 
 export type * from "./types.ts";
 
@@ -43,62 +44,62 @@ const notImplemented = (pr: string): never => {
 };
 
 /** Read a memory file or section from the store; filled in PR-1a. */
-export async function read(_path: string, _options: ReadOptions = {}): Promise<ReadResult> {
-  return notImplemented("PR-1a");
+export async function read(path: string, options: ReadOptions = {}): Promise<ReadResult> {
+  return store.read(path, options);
 }
 
 /** Write a complete memory file atomically; filled in PR-1a. */
-export async function write(_path: string, _content: string): Promise<WriteResult> {
-  return notImplemented("PR-1a");
+export async function write(path: string, content: string): Promise<WriteResult> {
+  return store.write(path, content);
 }
 
 /** Append text to a memory file or section; filled in PR-1a. */
 export async function append(
-  _path: string,
-  _text: string,
-  _options: { section?: string } = {},
+  path: string,
+  text: string,
+  options: { section?: string } = {},
 ): Promise<OkResult> {
-  return notImplemented("PR-1a");
+  return store.append(path, text, options);
 }
 
 /** Replace an exact text occurrence in a memory file; filled in PR-1a. */
-export async function patch(_path: string, _oldText: string, _newText: string): Promise<OkResult> {
-  return notImplemented("PR-1a");
+export async function patch(path: string, oldText: string, newText: string): Promise<OkResult> {
+  return store.patch(path, oldText, newText);
 }
 
 /** Return a markdown heading outline plus L0 summary; filled in PR-1a. */
-export async function outline(_path: string): Promise<OutlineResult> {
-  return notImplemented("PR-1a");
+export async function outline(path: string): Promise<OutlineResult> {
+  return store.outline(path);
 }
 
 /** Move or rename a memory file; filled in PR-1a. */
-export async function move(_from: string, _to: string): Promise<OkResult> {
-  return notImplemented("PR-1a");
+export async function move(from: string, to: string): Promise<OkResult> {
+  return store.move(from, to);
 }
 
 /** List memory markdown files in the store; filled in PR-1a. */
 export async function list(): Promise<ListResult> {
-  return notImplemented("PR-1a");
+  return store.list();
 }
 
 /** Search memory files with full-text matching; filled in PR-1a. */
-export async function search(_query: string): Promise<SearchResults> {
-  return notImplemented("PR-1a");
+export async function search(query: string): Promise<SearchResults> {
+  return store.search(query);
 }
 
 /** Compute filesystem statistics for the memory store; filled in PR-1a. */
-export async function stats(_prefix?: string): Promise<StatsResult> {
-  return notImplemented("PR-1a");
+export async function stats(prefix?: string): Promise<StatsResult> {
+  return store.stats(prefix);
 }
 
 /** Report memory store health and last commit metadata; filled in PR-1a. */
 export async function health(): Promise<HealthResult> {
-  return notImplemented("PR-1a");
+  return store.health();
 }
 
 /** Run a supported git operation against the memory store; filled in PR-1a. */
-export async function git(_params: GitParams): Promise<GitResult> {
-  return notImplemented("PR-1a");
+export async function git(params: GitParams): Promise<GitResult> {
+  return store.git(params);
 }
 
 /** Load and parse domains.yml from a memory root; filled in PR-1b. */
