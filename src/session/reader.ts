@@ -189,9 +189,44 @@ export function readSessionFile(
     title,
     cwd: header.cwd,
     createdAt: header.timestamp,
+    parentSessionPath: header.parentSession,
     turns,
     warnings,
   };
+}
+
+/**
+ * Resolve the root of a fork chain by walking parentSession headers.
+ * Relative parent paths resolve against the child file's directory.
+ * Tolerant: any unreadable link ends the walk at the last good session.
+ */
+export function resolveRootSession(
+  filePath: string,
+  parentSessionPath: string | undefined,
+): { rootSessionId: string | undefined; hops: number } {
+  let hops = 0;
+  let currentDir = path.dirname(filePath);
+  let next = parentSessionPath;
+  let rootId: string | undefined;
+  const visited = new Set<string>([path.resolve(filePath)]);
+  while (next && hops < 16) {
+    const parentPath = path.resolve(currentDir, next);
+    if (visited.has(parentPath)) break; // cycle guard
+    visited.add(parentPath);
+    let header: SessionHeader | undefined;
+    try {
+      const firstLine = fs.readFileSync(parentPath, "utf8").split("\n", 1)[0];
+      header = parseHeader(firstLine);
+    } catch {
+      break;
+    }
+    if (!header) break;
+    rootId = header.id;
+    currentDir = path.dirname(parentPath);
+    next = header.parentSession;
+    hops++;
+  }
+  return { rootSessionId: rootId, hops };
 }
 
 /** All .jsonl session files directly inside a directory, sorted by name. */

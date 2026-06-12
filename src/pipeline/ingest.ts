@@ -13,7 +13,12 @@ import { chunkText } from "../episodic/chunk.ts";
 import { scoreSalience } from "../episodic/salience.ts";
 import type { EpisodicStore } from "../episodic/store.ts";
 import type { SemanticStore } from "../semantic/store.ts";
-import { listSessionFiles, readSessionFile, type ReadSessionOptions } from "../session/reader.ts";
+import {
+  listSessionFiles,
+  readSessionFile,
+  resolveRootSession,
+  type ReadSessionOptions,
+} from "../session/reader.ts";
 
 interface IngestState {
   sessions: Record<string, { path: string; entryIds: string[] }>;
@@ -63,6 +68,13 @@ export class IngestPipeline {
 
   async ingestFile(filePath: string): Promise<IngestReport> {
     const session = readSessionFile(filePath, this.deps.readOptions);
+    // Subagent sessions fork off a parent; knowledge learned there belongs
+    // to the root session's user, so every turn carries the fork root
+    // (PLAN.md Task 2.7).
+    const { rootSessionId } = resolveRootSession(filePath, session.parentSessionPath);
+    if (rootSessionId && rootSessionId !== session.sessionId) {
+      for (const turn of session.turns) turn.rootSessionId = rootSessionId;
+    }
     const seen = new Set(this.state.sessions[session.sessionId]?.entryIds ?? []);
     const report: IngestReport = {
       sessionsSeen: 1,

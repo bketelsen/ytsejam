@@ -80,6 +80,9 @@ export class SemanticStore {
   /** Learn facts and entities from one turn. Facts come from user turns only. */
   ingestTurn(turn: Turn): void {
     const source: SourceRef = { sessionId: turn.sessionId, entryId: turn.entryId };
+    if (turn.rootSessionId && turn.rootSessionId !== turn.sessionId) {
+      source.rootSessionId = turn.rootSessionId;
+    }
 
     if (turn.role === "user") {
       for (const candidate of extractFacts(turn.text)) {
@@ -176,9 +179,9 @@ export class SemanticStore {
         name: existing.name === existing.norm && name !== norm ? name : existing.name,
         mentionCount: existing.mentionCount + 1,
         lastSeenAt: at,
-        sessionIds: existing.sessionIds.includes(source.sessionId)
+        sessionIds: existing.sessionIds.includes(source.rootSessionId ?? source.sessionId)
           ? existing.sessionIds
-          : [...existing.sessionIds, source.sessionId],
+          : [...existing.sessionIds, source.rootSessionId ?? source.sessionId],
         sources: dedupeSources([...existing.sources, source]),
       };
       this.entities.set(id, updated);
@@ -194,7 +197,9 @@ export class SemanticStore {
       mentionCount: 1,
       firstSeenAt: at,
       lastSeenAt: at,
-      sessionIds: [source.sessionId],
+      // Entities associate with the fork ROOT's session — the user the
+      // knowledge belongs to — while sources keep the literal location.
+      sessionIds: [source.rootSessionId ?? source.sessionId],
       sources: [source],
       state: "active",
     };
@@ -290,7 +295,7 @@ export class SemanticStore {
           ...entity,
           sources: remaining,
           mentionCount: remaining.length,
-          sessionIds: [...new Set(remaining.map((s) => s.sessionId))],
+          sessionIds: [...new Set(remaining.map((s) => s.rootSessionId ?? s.sessionId))],
         });
       }
     }

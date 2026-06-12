@@ -15,6 +15,12 @@ export interface SourceRef {
   sessionId: string;
   /** Session-tree entry id within the session JSONL (8-char uuidv7 prefix). */
   entryId: string;
+  /**
+   * Root of the fork chain when sessionId is a forked (subagent) session —
+   * the session whose user this knowledge belongs to. Absent when the
+   * session is itself the root.
+   */
+  rootSessionId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,6 +36,8 @@ export interface Turn {
   text: string;
   /** ISO-8601 timestamp of the underlying session entry. */
   timestamp: string;
+  /** Root of the fork chain (subagent sessions); equals sessionId otherwise. */
+  rootSessionId?: string;
 }
 
 /** A parsed session: metadata plus the turns on its active branch. */
@@ -39,6 +47,8 @@ export interface ParsedSession {
   title?: string;
   cwd: string;
   createdAt: string;
+  /** Path of the session this one was forked from (subagent sessions). */
+  parentSessionPath?: string;
   turns: Turn[];
   /** Non-fatal parse problems (skipped lines, unknown entry types). */
   warnings: string[];
