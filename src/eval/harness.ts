@@ -271,6 +271,8 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   const contradictions = contradictionsResolved(finalProfile, truth);
   const stability = stabilityScore(snapshots, truth);
 
+  mem.close();
+
   const thresholds = { ...spec.thresholds, ...opts.thresholds };
   const failures: string[] = [];
   if (recall.at5 < thresholds.recallAt5) {

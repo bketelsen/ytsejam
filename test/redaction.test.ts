@@ -101,6 +101,7 @@ describe("redaction API", () => {
     expect(before.items.some((i) => i.record.text.includes("Biscuit"))).toBe(true);
 
     await mem.redact({ entity: "Biscuit" });
+    mem.close();
 
     // Reopen from disk and re-ingest the SAME session files. The
     // ingest-state already-processed gate must hold: nothing re-enters.

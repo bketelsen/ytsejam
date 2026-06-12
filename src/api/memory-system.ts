@@ -9,6 +9,7 @@
  */
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import type {
   EntityRecord,
@@ -51,9 +52,21 @@ interface AuditRecord extends RedactionEvent {
   id: string;
 }
 
+/**
+ * The store is single-writer: JSONL appends from two processes interleave
+ * unpredictably and the in-memory fold would diverge from disk. open()
+ * takes an advisory lock (lock.pid in the store dir) with stale-pid
+ * takeover; close() releases it. A second open() of the same store while
+ * one is live throws (PLAN.md Task 3.4).
+ */
 export class MemorySystem {
+  /** Store dirs held open by THIS process (a pid file can't distinguish two handles in one process). */
+  private static openDirs = new Set<string>();
+
   readonly config: LtmConfig;
   private readonly storeDir: string;
+  private readonly lockPath: string;
+  private closed = false;
   private readonly embedder: Embedder;
   private readonly summarizer: Summarizer;
   private readonly episodic: EpisodicStore;
@@ -67,6 +80,8 @@ export class MemorySystem {
 
   private constructor(opts: MemorySystemOptions) {
     this.storeDir = opts.storeDir;
+    this.lockPath = path.join(this.storeDir, "lock.pid");
+    this.acquireLock();
     this.config = mergeConfig(opts.config);
     this.embedder = opts.embedder ?? new HashEmbedder();
     this.summarizer = opts.summarizer ?? extractiveSummary;
@@ -94,6 +109,45 @@ export class MemorySystem {
 
   static open(opts: MemorySystemOptions): MemorySystem {
     return new MemorySystem(opts);
+  }
+
+  private acquireLock(): void {
+    const key = path.resolve(this.storeDir);
+    if (MemorySystem.openDirs.has(key)) {
+      throw new Error(
+        `Memory store ${this.storeDir} is already open in this process — close() the other MemorySystem first (single-writer store).`,
+      );
+    }
+    fs.mkdirSync(this.storeDir, { recursive: true });
+    let holder: number | undefined;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as { pid?: number };
+      if (typeof parsed.pid === "number") holder = parsed.pid;
+    } catch {
+      // no lock or unreadable lock — treat as stale
+    }
+    if (holder !== undefined && holder !== process.pid && pidAlive(holder)) {
+      throw new Error(
+        `Memory store ${this.storeDir} is locked by live pid ${holder} (lock.pid) — the store is single-writer. ` +
+          `If that process is gone, delete the lock file.`,
+      );
+    }
+    // Free, stale (dead pid), or a leaked same-pid lock: take over.
+    fs.writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+    MemorySystem.openDirs.add(key);
+  }
+
+  /** Release the single-writer lock. Idempotent; the handle stays readable. */
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    MemorySystem.openDirs.delete(path.resolve(this.storeDir));
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as { pid?: number };
+      if (parsed.pid === process.pid) fs.rmSync(this.lockPath);
+    } catch {
+      // lock already gone
+    }
   }
 
   private rebuildGraph(): PreferenceGraph {
@@ -354,6 +408,16 @@ export class MemorySystem {
   /** Redaction audit trail (ids and counts only — no content). */
   auditTrail(): RedactionEvent[] {
     return [...this.auditLog.load().values()].sort((a, b) => a.id.localeCompare(b.id));
+  }
+}
+
+/** Whether a pid refers to a live process (EPERM = alive but not ours). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 

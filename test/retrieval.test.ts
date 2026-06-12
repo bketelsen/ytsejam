@@ -136,6 +136,7 @@ describe("end-to-end retrieval over synthetic sessions", () => {
       i.record.text.includes("Biscuit"),
     )!;
     expect(hit.record.accessCount).toBe(queries);
+    mem.close();
     const reopened = MemorySystem.open({ storeDir, now: () => truth.horizonEnd });
     const persisted = reopened.getRecord(hit.record.id)!;
     expect(persisted.accessCount).toBeGreaterThanOrEqual(512); // last power of two ≤ 1000
