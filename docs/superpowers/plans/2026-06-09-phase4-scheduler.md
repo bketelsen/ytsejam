@@ -28,7 +28,7 @@
 - [ ] **Step 1: Branch + dependency**
 
 ```bash
-cd /home/bjk/projects/ytsejam && git switch -c feat/phase4-scheduler
+cd ~/projects/ytsejam && git switch -c feat/phase4-scheduler
 cd server && npm install cron-parser@^5
 ```
 
@@ -1299,7 +1299,7 @@ git add -A && git commit -m "feat: schedules REST endpoints and settings UI"
 
 - [ ] **Step 1: README** — feature line under the intro: `It can also schedule reminders and recurring jobs that wake it up (cron times are server-local).` No new env vars (tick interval is fixed at 30s).
 
-- [ ] **Step 2: Gates** — `cd /home/bjk/projects/ytsejam && npm test && npm run check && npm run build && git status --short` (82 tests).
+- [ ] **Step 2: Gates** — `cd ~/projects/ytsejam && npm test && npm run check && npm run build && git status --short` (82 tests).
 
 - [ ] **Step 3: Live e2e (real model)**
 

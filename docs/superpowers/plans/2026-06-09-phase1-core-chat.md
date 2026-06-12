@@ -2198,7 +2198,7 @@ Expected: `{"ok":true}` and `{"sessions":[]}`.
 - [ ] **Step 1: Scaffold**
 
 ```bash
-cd /home/bjk/projects/ytsejam
+cd ~/projects/ytsejam
 npm create vite@latest web -- --template react-ts
 cd web && npm install
 npm install react-markdown remark-gfm

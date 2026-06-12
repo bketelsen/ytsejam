@@ -29,7 +29,7 @@ domains:
     path: projects/dakota
     files: [hot-memory, observations, action-items]
   - id: work
-    path: work/microsoft
+    path: work/acme
     files: [hot-memory]
 `);
 }

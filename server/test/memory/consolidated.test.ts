@@ -21,7 +21,7 @@ domains:
     triggers: [personal]
     files: [hot-memory, action-items, observations, entities]
   - id: work
-    path: work/microsoft
+    path: work/acme
     label: Work
     files: [hot-memory, action-items, observations]
 `);
@@ -47,7 +47,7 @@ describe("memory consolidated PR-2a", () => {
     await seed("cog-meta/patterns.md", "# Patterns\nrule one\n");
     await seed("projects/dakota/action-items.md", "- [ ] dakota task | pri:high\n- [ ] another | pri:medium\n");
     await seed("personal/action-items.md", "- [ ] private | pri:low\n");
-    await seed("work/microsoft/action-items.md", "- [ ] msft task | priority:high\n");
+    await seed("work/acme/action-items.md", "- [ ] msft task | priority:high\n");
 
     const r = await sessionBrief();
     expect(r.hot_memory).toContain("strategic state");
@@ -96,13 +96,13 @@ describe("memory consolidated PR-2a", () => {
   });
 
   test("openActions domain comes from controller path, not leaf basename", async () => {
-    await seed("work/microsoft/action-items.md", "- [ ] work task\n");
+    await seed("work/acme/action-items.md", "- [ ] work task\n");
     expect((await openActions({ domain: "work" })).items[0].domain).toBe("work");
   });
 
   test("recentObservations happy path sorts newest-first and aggregates", async () => {
     await seed("personal/observations.md", ["# Observations", "", "- 2026-05-28 [health, milestone]: walked 10k", "- 2026-05-29 [health]: slept 8h", "- 2026-05-20 [old]: pre-window entry", ""].join("\n"));
-    await seed("work/microsoft/observations.md", "- 2026-05-29 [milestone]: shipped pr\n");
+    await seed("work/acme/observations.md", "- 2026-05-29 [milestone]: shipped pr\n");
     const r = await recentObservations({ since: "2026-05-27" });
     expect(r.since).toBe("2026-05-27");
     expect(r.entries).toHaveLength(3);
@@ -114,7 +114,7 @@ describe("memory consolidated PR-2a", () => {
 
   test("recentObservations filters by tag and by canonical domain param", async () => {
     await seed("personal/observations.md", "- 2026-05-28 [health]: a\n- 2026-05-29 [milestone]: b\n");
-    await seed("work/microsoft/observations.md", "- 2026-05-29 [health]: w\n");
+    await seed("work/acme/observations.md", "- 2026-05-29 [health]: w\n");
     const byTag = await recentObservations({ since: "2026-05-01", by_tag: "health" });
     expect(byTag.entries.map((e) => e.text)).toEqual(["w", "a"]);
     expect(byTag.by_tag).toEqual({ health: 2 });
@@ -222,7 +222,7 @@ describe("memory consolidated PR-2a", () => {
 
   test("housekeepingScan observations over cap aggregates primary tag and detects dormancy", async () => {
     await seed("personal/observations.md", Array.from({ length: 30 }, () => "- 2026-05-01 [health, body]: line").concat(Array.from({ length: 25 }, () => "- 2026-05-02 [milestone]: line")).join("\n") + "\n");
-    await seed("work/microsoft/observations.md", `- ${ymdDaysAgo(60)} [milestone]: ancient win\n`);
+    await seed("work/acme/observations.md", `- ${ymdDaysAgo(60)} [milestone]: ancient win\n`);
     const r = await housekeepingScan();
     expect(r.thresholds.observations_over_cap[0]).toMatchObject({ path: "personal/observations.md", entries: 55, cap: 50, by_primary_tag: { health: 30, milestone: 25 } });
     expect(r.dormant_domains.find((d) => d.id === "work")?.last_observation).toBe(ymdDaysAgo(60));

@@ -517,27 +517,23 @@ git commit -m "docs: document KEEP_RELEASES, add enable-linger, fix stale links"
 ## Task 8: Username + Microsoft scrub (R7 + audit #2 M2 + audit #1 N1)
 
 **Why:** Three small, mechanical content-polish items rolled together:
-- 8 tracked docs contain `/home/bjk` absolute paths.
+- Tracked docs contain absolute paths under the maintainer's home directory.
 - 15 tracked docs use "Brian" first-name in plan/audit/lesson narrative — most fine, but a sweep ensures user-facing docs read neutrally.
 - `server/test/memory/*.test.ts` fixtures seed `work/microsoft/entities.md` with the maintainer's real employer/role.
-- `server/test/compaction.test.ts:261` hardcodes `/home/bjk/.ytsejam/data/sessions/…` as a fixture string.
+- `server/test/compaction.test.ts:261` hardcodes a maintainer-home `.ytsejam/data/sessions/…` fixture string.
 
 **Files:**
-- Modify: the 8 tracked docs containing `/home/bjk` (list below)
+- Modify: the tracked docs containing maintainer-home absolute paths (list below)
 - Modify: `server/test/memory/analysis.test.ts`, `server/test/memory/consolidated.test.ts`, `server/test/memory/domain.test.ts` (Microsoft → Acme)
 - Modify: `server/test/compaction.test.ts` (line ~261)
 
-### Step 1: Replace `/home/bjk` in tracked docs
+### Step 1: Replace maintainer-home absolute paths in tracked docs
 
-Run the sweep:
+Run the sweep for the maintainer-home path pattern.
 
-```bash
-git ls-files | xargs grep -l '/home/bjk' 2>/dev/null
-```
+Expected: the known tracked docs. For each, replace the path with one of `~`, `$HOME`, or `<repo>` as context demands. Plan/lesson/audit docs in `docs/superpowers/plans/` and `docs/audit/` historically captured shell snippets verbatim — preserving the shape with `~` is fine. For prose mentions, prefer `<repo>` or `your repo`.
 
-Expected: 8 files. For each, replace `/home/bjk` with one of `~`, `$HOME`, or `<repo>` as context demands. Plan/lesson/audit docs in `docs/superpowers/plans/` and `docs/audit/` historically captured shell snippets verbatim — preserving the shape with `~` is fine. For prose mentions, prefer `<repo>` or `your repo`.
-
-Verify zero remain: `git ls-files | xargs grep -l '/home/bjk' 2>/dev/null | wc -l` should print `0`.
+Verify zero maintainer-home absolute paths remain in tracked files.
 
 ### Step 2: Generic-ify the test fixtures
 
@@ -551,7 +547,7 @@ Verify with: `grep -nE 'microsoft|Principal Engineering Manager' server/test/mem
 
 ### Step 3: De-personalise the compaction test fixture
 
-In `server/test/compaction.test.ts` around line 261, the hardcoded `"/home/bjk/.ytsejam/data/sessions/--chat--/…"` string is used in an equality assertion. Replace with a function call that builds the expected path from the test's own `tmpdir` setup (the test should already have a `tmpDir` variable for the session root — use `path.join(tmpDir, ...)` instead). If that refactor is non-trivial, the minimum fix is `${process.env.HOME}/.ytsejam/data/sessions/...` so no username leaks into committed code.
+In `server/test/compaction.test.ts` around line 261, the hardcoded maintainer-home `.ytsejam/data/sessions/--chat--/…` string is a fixture input. Replace it with a synthetic test-only path so no username leaks into committed code.
 
 ### Step 4: Run only the touched test suites first
 
@@ -570,14 +566,14 @@ Expected: PASSED.
 
 ```bash
 git add docs/ server/test/
-git commit -m "chore: scrub /home/bjk paths + generic-ify test fixtures
+git commit -m "chore: scrub maintainer-home paths + generic-ify test fixtures
 
-Replaces 8 tracked docs' /home/bjk shell snippets with ~/\$HOME/<repo> as
-context allows; renames the work/microsoft test fixture + 'Principal
+Replaces tracked docs' maintainer-home shell snippets with ~/\$HOME/<repo>
+as context allows; renames the work/microsoft test fixture + 'Principal
 Engineering Manager' role to work/acme + 'Staff Engineer' (the real
 values matched the maintainer's public employer/role — fine but a smell);
-replaces a hardcoded /home/bjk session path in compaction.test.ts with
-a tmpdir-derived path."
+replaces a hardcoded maintainer-home session path in compaction.test.ts
+with a synthetic test-only path."
 ```
 
 ---

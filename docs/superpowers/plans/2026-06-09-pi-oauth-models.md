@@ -141,7 +141,7 @@ describe("resolveApiKey", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/bjk/projects/ytsejam/server && npx vitest --run test/pi-auth.test.ts`
+Run: `cd ~/projects/ytsejam/server && npx vitest --run test/pi-auth.test.ts`
 Expected: FAIL — cannot find module `../src/pi-auth.ts`.
 
 - [ ] **Step 3: Implement**
@@ -533,7 +533,7 @@ and inside `makeManager`, add to the `AgentManager` options:
 - [ ] **Step 7: Full suite + boot smoke against the REAL pi auth file**
 
 ```bash
-cd /home/bjk/projects/ytsejam/server && npm test && npm run check
+cd ~/projects/ytsejam/server && npm test && npm run check
 ```
 
 Expected: ~51 tests pass (50 from Tasks 1–2 plus the config test), check clean.
@@ -541,7 +541,7 @@ Expected: ~51 tests pass (50 from Tasks 1–2 plus the config test), check clean
 Boot smoke (uses the real `~/.pi/agent/auth.json` — read-only unless a token is expired):
 
 ```bash
-cd /home/bjk/projects/ytsejam/server
+cd ~/projects/ytsejam/server
 YTSEJAM_AUTH_TOKEN=dev YTSEJAM_DATA_DIR=/tmp/ytsejam-oauth-check YTSEJAM_PORT=3224 node src/index.ts &
 sleep 2
 curl -s localhost:3224/api/models -H 'Authorization: Bearer dev' | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const b=JSON.parse(d);const p=new Set(b.models.map(m=>m.provider));console.log([...p].sort().join("\n"))})'
@@ -572,7 +572,7 @@ git commit -m "feat: Copilot and Codex subscription models via pi OAuth credenti
 - [ ] **Step 1: Manual chat check**
 
 ```bash
-cd /home/bjk/projects/ytsejam
+cd ~/projects/ytsejam
 npm run build
 cd server
 YTSEJAM_AUTH_TOKEN=dev YTSEJAM_DATA_DIR=/tmp/ytsejam-oauth-e2e YTSEJAM_PORT=3225 node src/index.ts
@@ -589,7 +589,7 @@ If any token was refreshed during Step 1 (server log shows a write, or auth.json
 - [ ] **Step 3: Final gates + commit anything outstanding**
 
 ```bash
-cd /home/bjk/projects/ytsejam && npm test && npm run check && npm run build && git status --short
+cd ~/projects/ytsejam && npm test && npm run check && npm run build && git status --short
 ```
 
 All green, tree clean (commit any stragglers with an appropriate message).

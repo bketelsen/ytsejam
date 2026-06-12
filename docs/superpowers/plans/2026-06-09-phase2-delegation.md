@@ -26,7 +26,7 @@
 - [ ] **Step 1: Branch**
 
 ```bash
-cd /home/bjk/projects/ytsejam && git switch -c feat/phase2-delegation
+cd ~/projects/ytsejam && git switch -c feat/phase2-delegation
 ```
 
 - [ ] **Step 2: Failing tests for the store**
@@ -1881,7 +1881,7 @@ and a feature line under the intro: `The assistant can delegate work to backgrou
 - [ ] **Step 2: Full gates**
 
 ```bash
-cd /home/bjk/projects/ytsejam && npm test && npm run check && npm run build && git status --short
+cd ~/projects/ytsejam && npm test && npm run check && npm run build && git status --short
 ```
 
 All green (67 server tests), tree clean except README.

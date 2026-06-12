@@ -372,7 +372,7 @@ describe("formatDevLogLine", () => {
     compactionDurationMs: 8_412,
     succeeded: true,
     backupPath:
-      "/home/bjk/.ytsejam/data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000",
+      "/tmp/ytsejam-test-data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000",
   };
 
   it("formats a single line for proactive main-session compaction", () => {
