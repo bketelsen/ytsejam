@@ -76,6 +76,18 @@ describe("memory primitive store", () => {
     expect((await read("LIST")).content.split("\n")).toEqual(["hot-memory.md", "sub/other.md"]);
   });
 
+  test("l0Index includes indented L0 comments (Go parity)", async () => {
+    await seed("indented.md", "  <!-- L0: indented summary -->\n# Title\n");
+
+    expect((await read("L0_INDEX")).content).toContain("indented.md: indented summary");
+  });
+
+  test("l0Index includes L0 comments with trailing content (Go parity)", async () => {
+    await seed("trailing.md", "<!-- L0: real summary --> trailing notes\n# Title\n");
+
+    expect((await read("L0_INDEX")).content).toContain("trailing.md: real summary");
+  });
+
   test("write allow-list, overwrite, subdir, id-as-path rejection", async () => {
     await seedManifest();
     await expect(write("dakota/INDEX.md", "# stray\n")).rejects.toThrow(/projects\/dakota/);

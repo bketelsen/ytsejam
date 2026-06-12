@@ -36,7 +36,7 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestPatch | `patch exact occurrence` |
 | TestPatchNotFound | same |
 | TestPatchAmbiguous | same |
-| TestOutlineReturnsMarkdownHeadingsInOrder | `outline includes L0 and markdown headings, missing errors`; plus spec-tightening regression that mid-file L0-shaped comments are ignored (intentional divergence from Go naive regex) |
+| TestOutlineReturnsMarkdownHeadingsInOrder | Covered; `outline()` includes a TS-only L0 row (Go's Outline never emits L0); FORMAT.md restricts L0 to line 1 via positional check (not regex anchor). The shared l0RE stays unanchored so `l0Index()` ports Go's `l0RE.FindStringSubmatch(firstLine)` faithfully (accepts indented + trailing-content L0 comments). |
 | TestOutlineMissingFileReturnsError | same |
 | TestMoveFile | `move rename rejects existing/traversal and enforces destination allow-list`; intentional divergence from Go: destination is also allow-listed |
 | TestMoveExistingDestinationReturnsError | same |
@@ -50,6 +50,7 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestList | same; includes Go byte-wise path ordering regression (`Zeta.md` before `alpha.md`) |
 | TestFileScansSkipGitDirectory | same |
 | TestL0Index | PR-1a smoke in `TestReadL0INDEX and TestReadLIST`; full public parity in PR-2c `l0index.test.ts` |
+| TestL0IndexIndentedLine1 / TestL0IndexTrailingContent (new) | Locks Go parity: unanchored l0RE matches indented (`  <!-- L0: ... -->`) and trailing-content (`<!-- L0: ... --> notes`) L0 comments on line 1, matching Go's `l0RE.FindStringSubmatch`. |
 | TestL0IndexFiltersByDomain | PR-2c `l0index.test.ts` |
 | TestL0IndexMissingDomainReturnsEmpty | PR-2c `l0index.test.ts` |
 | TestNewRelativePathRejected | env root resolution uses absolute resolved roots; path traversal cases cover relative user paths |
@@ -108,7 +109,6 @@ Scope: in-process consolidated replacements for `glacier_index_compute`, `wiki_i
 | TestL0IndexMissingDomainReturnsEmpty | `l0index.test.ts` `TestL0IndexMissingDomainReturnsEmpty` | Ported |
 
 Additional PR-2c coverage: `l0index` strict-param rejection for unknown keys; wiki `category` alias accepted alongside Go's `entity_type` for the tightened TS type/spec wording. Pre-PR-3 cleanup adds omitempty parity for glacier `entries: 0` and wiki `related: []`, Go-int truncation for fractional glacier `entries`, and an empty-frontmatter regression ensuring only defined keys are present on in-process entry objects.
-||||||| parent of ad25dd0 (Add PR-2a consolidated memory test parity)
 
 ## Consolidated — Session + Housekeeping (PR-2a)
 
@@ -175,7 +175,6 @@ Scope: `sessionBrief`, `housekeepingScan`, `openActions`, `domainSummary`, and `
 | PR-2a added strict cases for session_brief/housekeeping_scan/open_actions/domain_summary | `strict params reject unknown keys for all PR-2a public functions` |
 
 **Intentional divergence from Go (PR-2a):** `resolveSince` accepts single-unit durations only (`Nd`/`Nh`/`Nm`/`Ns` ± decimal); Go's `time.ParseDuration` also accepts composites (`1h30m`, `100ms`). TS port rejects composites with `unrecognized since value`. Documented in `common.ts:resolveSince` JSDoc; locked by `resolveSince rejects composite Go durations (intentional divergence)`.
-||||||| parent of 53da72b (Implement memory analysis consolidated RPCs)
 
 ## Consolidated — Analysis (PR-2b)
 
