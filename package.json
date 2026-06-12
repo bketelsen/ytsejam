@@ -11,8 +11,17 @@
     "test": "vitest --run",
     "check": "tsc --noEmit",
     "eval": "node src/eval/run.ts",
+    "eval:semantic": "node src/eval/run.ts --semantic",
     "eval:sweep": "node src/eval/sweep.ts",
     "fixtures": "node src/eval/generate-fixtures.ts"
+  },
+  "peerDependencies": {
+    "@huggingface/transformers": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -30,6 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { MemorySystem } from "../api/memory-system.ts";
+import type { Embedder } from "../embedding/embedder.ts";
 import type { LtmConfigPatch, ProfileSummary } from "../types.ts";
 import { generateFixtures, type GenerateOptions, type GroundTruth } from "./synthetic.ts";
 import {
@@ -194,6 +195,8 @@ export interface RunEvalOptions {
   workDir: string;
   band?: EvalBand;
   seed?: number;
+  /** Override the embedder (semantic eval mode); default HashEmbedder. */
+  embedder?: Embedder;
   /** Override the band's corpus shape (tests use small corpora). */
   sessions?: number;
   turnsPerSession?: number;
@@ -232,7 +235,12 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
     ).toISOString();
 
   let now = truth.sessionStarts[0];
-  const mem = MemorySystem.open({ storeDir, now: () => now, config: spec.config });
+  const mem = MemorySystem.open({
+    storeDir,
+    now: () => now,
+    config: spec.config,
+    embedder: opts.embedder,
+  });
 
   const snapshots: ProfileSummary[] = [];
   let consolidation = { created: 0, folded: 0 };
