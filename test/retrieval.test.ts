@@ -46,6 +46,27 @@ describe("bm25", () => {
   });
 });
 
+describe("score-channel normalization (PLAN 2.2)", () => {
+  it("when vector and lexical agree on the top doc, both channels read 1.0", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 3, turnsPerSession: 8, seed: 7 });
+    const mem = MemorySystem.open({ storeDir: path.join(work, "store"), now: () => truth.horizonEnd });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+
+    // Query a verbatim planted phrase: the same record must top both channels.
+    const ranked = await mem.explain("my sister Alice is visiting next month", 5);
+    const top = ranked[0];
+    expect(top.record.text).toContain("Alice");
+    expect(top.breakdown.vector).toBeCloseTo(1, 6);
+    expect(top.breakdown.lexical).toBeCloseTo(1, 6);
+    // No channel may exceed its normalized range.
+    for (const item of ranked) {
+      expect(item.breakdown.vector).toBeLessThanOrEqual(1);
+      expect(item.breakdown.lexical).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
 describe("end-to-end retrieval over synthetic sessions", () => {
   it("surfaces planted facts and the user profile for a probe", async () => {
     const work = tmpDir();

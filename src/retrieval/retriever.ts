@@ -72,9 +72,17 @@ export class Retriever {
     const lexicalHits = this.lexical.search(query, CANDIDATE_POOL);
     const graphBoosts = graph.activate(query);
 
+    // Both content channels are normalized to their own pool max so the
+    // configured weights compare like with like. Raw cosine tops out around
+    // 0.1–0.7 for the hash embedder while BM25 was already max-normalized —
+    // unnormalized, vector's effective weight was a fraction of its
+    // documented share.
     const maxLexical = lexicalHits[0]?.score || 1;
+    const maxVector = Math.max(vectorHits[0]?.score ?? 0, 1e-9);
     const lexicalById = new Map(lexicalHits.map((h) => [h.id, h.score / maxLexical]));
-    const vectorById = new Map(vectorHits.map((h) => [h.id, h.score]));
+    const vectorById = new Map(
+      vectorHits.map((h) => [h.id, Math.max(0, h.score) / maxVector]),
+    );
 
     const candidateIds = new Set<string>([
       ...vectorById.keys(),
@@ -92,7 +100,11 @@ export class Retriever {
       const w = config.weights;
       const ret = retention(record, now, config.decay);
       const breakdown: ScoreBreakdown = {
-        vector: vectorById.get(id) ?? (record.embedding ? cosine(queryVector, record.embedding) : 0),
+        vector:
+          vectorById.get(id) ??
+          (record.embedding
+            ? Math.min(1, Math.max(0, cosine(queryVector, record.embedding)) / maxVector)
+            : 0),
         lexical: lexicalById.get(id) ?? 0,
         recency: Math.pow(2, -ageDays(record.timestamp, now) / config.recencyHalfLifeDays),
         salience: record.salience,
