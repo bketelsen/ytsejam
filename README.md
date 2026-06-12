@@ -1,7 +1,7 @@
 # ytsejam
 
 Web-based personal AI assistant built on the [pi agent harness](https://github.com/earendil-works/pi).
-JSONL files are the source of truth; sqlite is a derived index. Spec and plans in `docs/superpowers/`.
+JSONL files are the source of truth; sqlite is a derived index. See [`docs/agents/OVERVIEW.md`](docs/agents/OVERVIEW.md) for architecture and design notes.
 The assistant can delegate long-running research or multi-step work to background subagents via the `delegate` tool; subagents run concurrently, and the assistant is notified and takes a turn when each completes or fails.
 It can also schedule reminders and recurring jobs that wake it up (cron times are server-local).
 
@@ -19,6 +19,11 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
     npm install
     YTSEJAM_AUTH_TOKEN=<secret> ANTHROPIC_API_KEY=<key> npm start
     # open http://localhost:3000 and sign in with the token
+
+If `NODE_ENV=production` is set in your shell (a common foot-gun when
+running these commands after sourcing a deploy shell), `npm install`
+silently skips devDependencies and the build fails. Unset it first
+(`env -u NODE_ENV npm install`) or set `NODE_ENV=` explicitly.
 
 ## Configuration (env)
 
@@ -64,6 +69,7 @@ in-process memory — so they coexist safely). See [`deploy/README.md`](deploy/R
     npm install
     deploy/install.sh                 # creates ~/.ytsejam, seeds env, installs the unit
     $EDITOR ~/.ytsejam/ytsejam.env    # set YTSEJAM_AUTH_TOKEN + provider keys
+    loginctl enable-linger "$USER"    # keeps the user service alive after logout (headless servers)
     deploy/deploy.sh                  # build + cut release + swap + restart + health-check
     systemctl --user enable --now ytsejam
 
@@ -112,6 +118,18 @@ you want to keep before the `rm -rf`.
 The git checkout under wherever you cloned the repo (e.g. `~/projects/ytsejam`)
 is yours to delete or keep.
 
+## Backup
+
+The entire data dir is portable — copy `~/.ytsejam/data` somewhere safe and you
+can restore it on another host (Linux, same major release of ytsejam):
+
+    tar -czf ytsejam-backup-$(date +%F).tar.gz ~/.ytsejam/data
+
+You can restore by stopping the service, replacing `~/.ytsejam/data`, and
+starting again. The sqlite index (`~/.ytsejam/data/index.db*`) is a derived
+cache the server rebuilds from the JSONL on boot — backing it up is harmless
+but excluding it is fine too.
+
 ## Troubleshooting
 
 Logs: `journalctl --user -u ytsejam -f`. Status: `systemctl --user status ytsejam`.
@@ -123,3 +141,10 @@ Logs: `journalctl --user -u ytsejam -f`. Status: `systemctl --user status ytseja
 | `deploy/deploy.sh` health-check passes but the model picker is empty | Default model's provider credential not configured | Add the matching API key (e.g. `ANTHROPIC_API_KEY=…` if the default model is `anthropic/*`) to `~/.ytsejam/ytsejam.env` — or, for GitHub Copilot/Codex, sign in via the pi CLI so `~/.pi/agent/auth.json` exists. Then `systemctl --user restart ytsejam`. |
 | `Address already in use` on startup, or `deploy.sh` health-check fails on the port | Port `9873` already taken (another instance, or a port-forward) | Change `YTSEJAM_PORT` in `~/.ytsejam/ytsejam.env` to a free port, then `systemctl --user restart ytsejam`. |
 | `journalctl --user` says `No journal files were found` or `Failed to add match` | User is not running under a `systemd --user` login session | `loginctl enable-linger "$USER"`, then log out and log back in. The Prerequisites section covers the headless case. |
+
+## A note on committers
+
+Some commits in this repo's history are authored by automated agents
+(`Pi Agent`, `agent`, `ytsejam-agent`, `ytsejam-bot`, `ytsejam-worker`) running
+under this very assistant — ytsejam was used to develop ytsejam from the
+midpoint onward. Treat them as Brian's commits with attribution preserved.
