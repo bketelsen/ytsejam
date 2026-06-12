@@ -11,6 +11,7 @@
     "test": "vitest --run",
     "check": "tsc --noEmit",
     "eval": "node src/eval/run.ts",
+    "eval:sweep": "node src/eval/sweep.ts",
     "fixtures": "node src/eval/generate-fixtures.ts"
   },
   "devDependencies": {
