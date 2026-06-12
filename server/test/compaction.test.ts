@@ -5,7 +5,7 @@ import {
   computeReserveTokens,
   buildSettings,
   decideCompaction,
-} from "./compaction.js";
+} from "../src/compaction.js";
 
 const fauxModel = (cw: number, mt: number): Model<any> =>
   ({
