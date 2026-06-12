@@ -160,6 +160,27 @@ describe("memory primitive store", () => {
     expect((await stats("projects/a.md")).files).toBe(1);
   });
 
+  test("search is case-insensitive literal substring", async () => {
+    await seed("notes.md", "Hello World\n");
+    const result = await search("hello");
+    expect(result.results).toEqual([{ path: "notes.md", line: 1, text: "Hello World" }]);
+    expect(result.count).toBe(1);
+  });
+
+  test("search matches regex metacharacters literally", async () => {
+    await seed("literal.md", "a+b=c\n");
+    await seed("regex-match.md", "aaab=c\n");
+    const result = await search("a+b");
+    expect(result.results.map((r) => r.path)).toEqual(["literal.md"]);
+    expect(result.count).toBe(1);
+  });
+
+  test("search bracket and paren queries do not throw", async () => {
+    await seed("notes.md", "plain text\n");
+    await expect(search("[oops")).resolves.toEqual({ results: [], count: 0 });
+    await expect(search("(unclosed")).resolves.toEqual({ results: [], count: 0 });
+  });
+
   test("health and git operations", async () => {
     try { execFileSync("git", ["--version"]); } catch { return; }
     execFileSync("git", ["init"], { cwd: root });

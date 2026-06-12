@@ -234,7 +234,7 @@ Rules:
 - `patch` replaces an exact text occurrence only when it appears exactly once.
 - `outline` returns all `##` and deeper ATX headings plus any L0 header.
 - `list` returns sorted `.md` paths relative to root.
-- `search` runs a JavaScript regular expression with global, case-insensitive, multiline flags against each line.
+- `search(query)` performs case-insensitive literal substring search across all `.md` files. It matches the Go reference `strings.Contains(strings.ToLower(line), strings.ToLower(query))`: regex metacharacters are matched literally and never throw, so `search("(a|b)")` looks for the literal string `(a|b)`, not regex alternation.
 - `stats` returns counts and RFC3339 modified timestamps.
 - `git` runs inside the memory root and returns trimmed command output.
 

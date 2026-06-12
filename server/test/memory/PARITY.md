@@ -39,8 +39,8 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestMoveFile | `move rename rejects existing/traversal and enforces destination allow-list` |
 | TestMoveExistingDestinationReturnsError | same |
 | TestMovePathTraversalRejected | same |
-| TestSearch | `search/list/stats skip git and sort/filter` |
-| TestSearchCaseInsensitive | same |
+| TestSearch | `search/list/stats skip git and sort/filter`; `search matches regex metacharacters literally` locks Go-faithful literal substring semantics |
+| TestSearchCaseInsensitive | `search/list/stats skip git and sort/filter` and `search is case-insensitive literal substring`, matching Go's `strings.Contains(strings.ToLower(line), strings.ToLower(query))` |
 | TestPathTraversal | `write allow-list...` and move traversal case |
 | TestPathTraversalWrite | `write allow-list...` |
 | TestStats | `search/list/stats skip git and sort/filter` |
