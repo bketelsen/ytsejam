@@ -228,7 +228,7 @@ describe("formatDevLogLine", () => {
     filesModified: ["server/src/compaction.ts"],
     compactionDurationMs: 8_412,
     succeeded: true,
-    backupPath: "/home/bjk/.ytsejam/data/sessions/abc123/session.jsonl.pre-compact-1718193600",
+    backupPath: "/home/bjk/.ytsejam/data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000",
   };
 
   it("formats a single line for proactive main-session compaction", () => {
@@ -335,8 +335,13 @@ describe("compactionEnabled", () => {
 
 describe("appendDevLogLine + appendSessionCompactionJsonl", () => {
   let tmp: string;
+  let sessionFilePath: string;
   beforeEach(async () => {
     tmp = await mkdtemp(join(tmpdir(), "compaction-test-"));
+    const sessionDir = join(tmp, "sessions", "--chat--");
+    await mkdir(sessionDir, { recursive: true });
+    sessionFilePath = join(sessionDir, "2026-06-12T00-00-00-000Z_test-uuid.jsonl");
+    await writeFile(sessionFilePath, "line1\nline2\n");
   });
   afterEach(async () => {
     await rm(tmp, { recursive: true, force: true });
@@ -350,12 +355,10 @@ describe("appendDevLogLine + appendSessionCompactionJsonl", () => {
     expect(content).toBe("- 2026-06-12: hello\n- 2026-06-12: world\n");
   });
 
-  it("appends a JSON line to <dataDir>/sessions/<id>/compactions.jsonl", async () => {
-    const dataDir = tmp;
-    await mkdir(join(dataDir, "sessions", "abc"), { recursive: true });
-    await appendSessionCompactionJsonl("abc", { foo: 1, bar: "x" }, dataDir);
-    await appendSessionCompactionJsonl("abc", { foo: 2 }, dataDir);
-    const path = join(dataDir, "sessions", "abc", "compactions.jsonl");
+  it("appends a JSON line to <sessionFilePath>.compactions.jsonl", async () => {
+    await appendSessionCompactionJsonl(sessionFilePath, { foo: 1, bar: "x" });
+    await appendSessionCompactionJsonl(sessionFilePath, { foo: 2 });
+    const path = `${sessionFilePath}.compactions.jsonl`;
     const content = await readFile(path, "utf8");
     const lines = content.trim().split("\n").map((l) => JSON.parse(l));
     expect(lines).toEqual([{ foo: 1, bar: "x" }, { foo: 2 }]);
@@ -364,50 +367,70 @@ describe("appendDevLogLine + appendSessionCompactionJsonl", () => {
 
 describe("snapshotSessionJsonl + pruneOldBackups", () => {
   let tmp: string;
+  let sessionDir: string;
+  let sessionFilePath: string;
   beforeEach(async () => {
     tmp = await mkdtemp(join(tmpdir(), "compaction-test-"));
-    await mkdir(join(tmp, "sessions", "sid"), { recursive: true });
-    await writeFile(join(tmp, "sessions", "sid", "session.jsonl"), "line1\nline2\n");
+    sessionDir = join(tmp, "sessions", "--chat--");
+    await mkdir(sessionDir, { recursive: true });
+    sessionFilePath = join(sessionDir, "2026-06-12T00-00-00-000Z_test-uuid.jsonl");
+    await writeFile(sessionFilePath, "line1\nline2\n");
   });
   afterEach(async () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
   it("creates a backup file with pre-compact-<timestamp> suffix", async () => {
-    const backupPath = await snapshotSessionJsonl("sid", tmp);
-    expect(backupPath).toMatch(/session\.jsonl\.pre-compact-\d+$/);
+    const backupPath = await snapshotSessionJsonl(sessionFilePath);
+    expect(backupPath).toMatch(/\.pre-compact-\d+$/);
+    expect(backupPath.startsWith(`${sessionFilePath}.pre-compact-`)).toBe(true);
     const content = await readFile(backupPath, "utf8");
     expect(content).toBe("line1\nline2\n");
+  });
+
+  it("rejects when source file is missing", async () => {
+    const missing = join(tmp, "sessions", "--chat--", "nonexistent.jsonl");
+    await expect(snapshotSessionJsonl(missing)).rejects.toThrow();
   });
 
   it("pruneOldBackups keeps the N most recent", async () => {
     // create 5 backups with increasing timestamps in the filename
     for (let i = 1; i <= 5; i++) {
-      await writeFile(
-        join(tmp, "sessions", "sid", `session.jsonl.pre-compact-${1000 + i}`),
-        `backup ${i}`,
-      );
+      await writeFile(`${sessionFilePath}.pre-compact-${1000 + i}`, `backup ${i}`);
     }
-    await pruneOldBackups("sid", tmp, 3);
-    const files = (await readdir(join(tmp, "sessions", "sid")))
+    await pruneOldBackups(sessionFilePath, 3);
+    const files = (await readdir(sessionDir))
       .filter((f) => f.includes("pre-compact"))
       .sort();
     expect(files).toEqual([
-      "session.jsonl.pre-compact-1003",
-      "session.jsonl.pre-compact-1004",
-      "session.jsonl.pre-compact-1005",
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl.pre-compact-1003",
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl.pre-compact-1004",
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl.pre-compact-1005",
     ]);
   });
 
   it("pruneOldBackups is a no-op when fewer backups than keepLast", async () => {
-    await writeFile(
-      join(tmp, "sessions", "sid", "session.jsonl.pre-compact-1001"),
-      "only one",
-    );
-    await pruneOldBackups("sid", tmp, 3);
-    const files = (await readdir(join(tmp, "sessions", "sid")))
+    await writeFile(`${sessionFilePath}.pre-compact-1001`, "only one");
+    await pruneOldBackups(sessionFilePath, 3);
+    const files = (await readdir(sessionDir))
       .filter((f) => f.includes("pre-compact"));
-    expect(files).toEqual(["session.jsonl.pre-compact-1001"]);
+    expect(files).toEqual([
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl.pre-compact-1001",
+    ]);
+  });
+
+  it("pruneOldBackups handles realistic 13-digit ms timestamps correctly", async () => {
+    for (const ts of ["1718193600000", "1718193600001", "1718193600999", "1718280000000"]) {
+      await writeFile(`${sessionFilePath}.pre-compact-${ts}`, `backup ${ts}`);
+    }
+    await pruneOldBackups(sessionFilePath, 2);
+    const files = (await readdir(sessionDir))
+      .filter((f) => f.includes("pre-compact"))
+      .sort();
+    expect(files).toEqual([
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl.pre-compact-1718193600999",
+      "2026-06-12T00-00-00-000Z_test-uuid.jsonl.pre-compact-1718280000000",
+    ]);
   });
 });
 

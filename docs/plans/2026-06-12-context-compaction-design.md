@@ -68,7 +68,7 @@ turn_end event fired
 
 next turn about to dispatch (phase becomes "idle")
   → if pendingCompaction flag set
-    → snapshot session JSONL → <id>.jsonl.pre-compact-<timestamp>
+    → snapshot session JSONL → <timestamp>_<id>.jsonl.pre-compact-<epoch-ms>
     → prune older backups (keep last 3)
     → await harness.compact(CUSTOM_INSTRUCTIONS)
     → reload session via JsonlSessionRepo.load(id) in try/catch
@@ -295,13 +295,15 @@ if (msg.stopReason === "error" && classifyOverflow(msg, harness.getModel())) {
 ### Backup chain
 
 ```
-~/.ytsejam/data/sessions/<session-id>/
-  session.jsonl                              # the live file (pi-managed)
-  session.jsonl.pre-compact-1718193600       # backup at compaction N
-  session.jsonl.pre-compact-1718193902       # backup at compaction N-1
-  session.jsonl.pre-compact-1718194350       # backup at compaction N-2
-  compactions.jsonl                          # observability log (our writes)
+~/.ytsejam/data/sessions/--<cwd>--/                  # pi's actual layout (cwd-encoded, e.g. --chat--, --subagent--)
+  <timestamp>_<session-id>.jsonl                     # the live file (pi-managed)
+  <timestamp>_<session-id>.jsonl.pre-compact-1718193600000   # backup at compaction N
+  <timestamp>_<session-id>.jsonl.pre-compact-1718193902000   # backup at compaction N-1
+  <timestamp>_<session-id>.jsonl.pre-compact-1718194350000   # backup at compaction N-2
+  <timestamp>_<session-id>.jsonl.compactions.jsonl   # observability log (our writes, co-located)
 ```
+
+Backups and the compactions JSONL log live next to the source session file, not in a per-session-id directory. The canonical path is `JsonlSessionMetadata.path` (already used in manager.ts) — pi's `JsonlSessionRepo` cwd-encodes via ``encodeCwd(cwd) = `--${cwd}--` `` and appends `<timestamp>_<id>.jsonl`; do not reconstruct paths from `(sessionId, dataDir)`.
 
 Backup is a literal `fs.copyFile`. Pruning is `fs.readdir + sort + unlink` (keep N most recent by timestamp suffix). N=3.
 
@@ -337,7 +339,7 @@ Per-session JSONL record:
   "files_modified": ["server/src/compaction.ts"],
   "compaction_duration_ms": 8412,
   "succeeded": true,
-  "backup_path": "~/.ytsejam/data/sessions/abc123/session.jsonl.pre-compact-1718193600"
+  "backup_path": "~/.ytsejam/data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000"
 }
 ```
 

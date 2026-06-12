@@ -213,8 +213,8 @@ export function formatDevLogLine(e: CompactionEvent): string {
 }
 
 /**
- * Serialize a CompactionEvent to the JSON shape persisted in
- * `~/.ytsejam/data/sessions/<id>/compactions.jsonl`.
+ * Serialize a CompactionEvent to the JSON shape persisted in the per-session
+ * compactions JSONL log next to pi's canonical session file path.
  *
  * Keys use snake_case to match conventional JSONL ergonomics; values are
  * primitives + arrays only (round-trips through JSON.stringify cleanly).
@@ -278,58 +278,70 @@ export async function appendDevLogLine(
 }
 
 /**
- * Append a JSON record (one line per record) to the per-session compactions log.
+ * Append a JSON record (one line per record) to the per-session compactions log,
+ * co-located with the session JSONL file.
  *
- * Path: `<dataDir>/sessions/<sessionId>/compactions.jsonl`.
- * Best-effort like appendDevLogLine.
+ * Path: `<sessionFilePath>.compactions.jsonl` (e.g. if the session is at
+ * `~/.ytsejam/data/sessions/--chat--/2026-06-12T...Z_<uuid>.jsonl`, the
+ * log is at `...<uuid>.jsonl.compactions.jsonl` next to it). Best-effort like
+ * appendDevLogLine.
  */
 export async function appendSessionCompactionJsonl(
-  sessionId: string,
+  sessionFilePath: string,
   record: Record<string, unknown>,
-  dataDir: string,
 ): Promise<void> {
-  const path = join(dataDir, "sessions", sessionId, "compactions.jsonl");
+  const path = `${sessionFilePath}.compactions.jsonl`;
   await appendDevLogLine(JSON.stringify(record), path);
 }
 
 /**
- * Copy the session JSONL file to a backup with a `pre-compact-<unix-ts>` suffix.
- * Returns the backup path.
+ * Copy the session JSONL file to a backup with a `.pre-compact-<epoch-ms>` suffix
+ * in the same directory.
  *
- * NB: timestamp is millisecond-precision integer for sortability.
+ * The caller passes the canonical session file path (typically
+ * `opened.session.metadata.path` — pi-agent-core's JsonlSessionRepo writes
+ * sessions at `<sessionsRoot>/--<cwd>--/<timestamp>_<id>.jsonl`, not the
+ * fictional `<dataDir>/sessions/<id>/session.jsonl`; the metadata.path is
+ * the source of truth).
+ *
+ * Returns the absolute backup path.
+ *
+ * **Errors are propagated, not swallowed** — unlike the best-effort observability
+ * writers. Per design §5, backup failure must ABORT the compaction; the caller
+ * (Task 5 orchestrator) treats a throw here as a hard stop and skips
+ * `harness.compact()` entirely. Do NOT add a try/catch here.
  */
 export async function snapshotSessionJsonl(
-  sessionId: string,
-  dataDir: string,
+  sessionFilePath: string,
 ): Promise<string> {
-  const sessionDir = join(dataDir, "sessions", sessionId);
-  const src = join(sessionDir, "session.jsonl");
   const ts = Date.now();
-  const dst = join(sessionDir, `session.jsonl.pre-compact-${ts}`);
-  await copyFile(src, dst);
+  const dst = `${sessionFilePath}.pre-compact-${ts}`;
+  await copyFile(sessionFilePath, dst);
   return dst;
 }
 
 /**
- * Keep only the N most recent pre-compact backups for a session.
+ * Keep only the N most recent `.pre-compact-*` backups for a session file.
  *
- * Sorts by timestamp embedded in the filename (lexicographic == numeric here
- * because timestamps are fixed-width-enough that string sort matches numeric
- * sort for any realistic span). Deletes the older ones.
+ * Scans the directory containing the session file for siblings matching
+ * `<basename>.pre-compact-*`, sorts by the embedded epoch-ms timestamp
+ * (string sort matches numeric sort for 13-digit ms timestamps through year
+ * 2286), and deletes the older ones.
  *
- * Best-effort: errors during prune are logged and swallowed (we'd rather
- * have extra backups than skip the compaction itself).
+ * Best-effort: scan + per-file unlink errors are logged and swallowed (we'd
+ * rather have extra backups than skip the compaction itself).
  */
 export async function pruneOldBackups(
-  sessionId: string,
-  dataDir: string,
+  sessionFilePath: string,
   keepLast: number,
 ): Promise<void> {
-  const sessionDir = join(dataDir, "sessions", sessionId);
+  const sessionDir = dirname(sessionFilePath);
+  const basename = sessionFilePath.slice(sessionDir.length + 1); // path basename
+  const prefix = `${basename}.pre-compact-`;
   try {
     const all = await readdir(sessionDir);
     const backups = all
-      .filter((f) => f.startsWith("session.jsonl.pre-compact-"))
+      .filter((f) => f.startsWith(prefix))
       .sort(); // string sort matches numeric sort for ms timestamps
     if (backups.length <= keepLast) return;
     const toDelete = backups.slice(0, backups.length - keepLast);
