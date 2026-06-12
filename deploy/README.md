@@ -36,6 +36,7 @@ To keep the service running after you log out:
     loginctl enable-linger "$USER"
 
 Memory is in-process as of Phase 5 of the 2026-06-12 fold; no separate memory service is needed.
+The store lives at `$YTSEJAM_DATA_DIR/memory` by default; set `YTSEJAM_MEMORY_DIR` to an absolute path to override (see `ytsejam.env.example`).
 
 ## Deploying a new version
 
