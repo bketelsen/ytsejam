@@ -226,7 +226,15 @@ const CAP_STOPLIST = new Set(
     "Can Could Would Should Do Does Did Is Are Was Were Let Maybe Sure Today Tomorrow " +
     "Yesterday Here There Now Then First Second Next Last Monday Tuesday Wednesday " +
     "Thursday Friday Saturday Sunday January February March April May June July " +
-    "August September October November December"
+    "August September October November December " +
+    // Sentence-opening conversational fillers ("Happy to help", "Good
+    // question", "Got it", …). Safe to stoplist because the list is only
+    // consulted positionally — leading words of a capitalized span and
+    // relationship-name captures — so mid-span uses still extract ("Pretty
+    // Good Privacy" keeps "Good"). "Let's" needs no entry: the entity regex
+    // has no apostrophe in its char class, so it already tokenizes as the
+    // stoplisted "Let".
+    "Happy Good Great Absolutely Definitely Got Sounds Looks Glad Cool Right Awesome Welcome"
   ).split(" "),
 );
 
