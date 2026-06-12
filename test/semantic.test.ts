@@ -45,10 +45,16 @@ describe("fact extraction heuristics", () => {
     expect(dislike).toContainEqual(expect.objectContaining({ kind: "preference", polarity: -1 }));
   });
 
-  it("keeps only the preferred side of 'X over Y'", () => {
+  it("'I prefer X over Y' learns +X and deliberately NOT -Y (PLAN 2.5 Option A)", () => {
     const facts = extractFacts("I prefer TypeScript over plain JavaScript for services.");
-    const pref = facts.find((f) => f.kind === "preference");
-    expect(pref?.object).toBe("TypeScript");
+    const prefs = facts.filter((f) => f.kind === "preference");
+    expect(prefs).toHaveLength(1);
+    expect(prefs[0].object).toBe("TypeScript");
+    expect(prefs[0].polarity).toBe(1);
+    // No negative fact about the compared-against side: comparisons are
+    // context-bound and must not fabricate general dislikes.
+    expect(facts.some((f) => f.polarity === -1)).toBe(false);
+    expect(facts.some((f) => /javascript/i.test(f.object))).toBe(false);
   });
 
   it("extracts directives with polarity", () => {

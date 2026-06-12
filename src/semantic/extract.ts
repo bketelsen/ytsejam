@@ -91,7 +91,11 @@ const PATTERNS: PatternSpec[] = [
       "gi",
     ),
     make: (m) => {
-      // "I prefer X over Y" → keep only X as the preference object.
+      // "I prefer X over Y" learns only +X, deliberately NOT -Y (PLAN.md
+      // Task 2.5, Option A): comparisons are context-bound — "TypeScript
+      // over plain JavaScript for new services" ranks the two for one
+      // purpose, it does not assert a general dislike of Y. A dislike must
+      // be stated independently ("I hate Y") to be learned.
       const object = clean(m[1].split(/\s+(?:over|rather than|instead of)\s+/i)[0]);
       if (!object) return undefined;
       return { kind: "preference", predicate: "prefers", object, polarity: 1, initialStrength: 0.6 };
