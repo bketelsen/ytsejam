@@ -1,6 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { CogBriefProvider } from "../src/cog/brief.ts";
-import type { CogClient, SessionBrief } from "../src/cog/client.ts";
+import type { SessionBrief } from "../src/memory/index.ts";
+import * as memory from "../src/memory/index.ts";
 
 const BRIEF: SessionBrief = {
   hot_memory: "# Hot\ncurrent strategic state HOTMARK",
@@ -13,22 +14,14 @@ const BRIEF: SessionBrief = {
   controller_last_error: null,
 };
 
-function fakeClient(impl: () => Promise<SessionBrief>): { client: CogClient; calls: () => number } {
-  let n = 0;
-  const client = {
-    socketPath: "/tmp/fake-cog.sock",
-    sessionBrief: async () => {
-      n++;
-      return impl();
-    },
-  } as unknown as CogClient;
-  return { client, calls: () => n };
+function mockSessionBrief(impl: () => Promise<SessionBrief>) {
+  return vi.spyOn(memory, "sessionBrief").mockImplementation(impl);
 }
 
 describe("CogBriefProvider", () => {
   test("renders conventions, brief content, domain table with paths, and action counts", async () => {
-    const { client } = fakeClient(async () => BRIEF);
-    const section = await new CogBriefProvider(client, "agent").promptSection();
+    mockSessionBrief(async () => BRIEF);
+    const section = await new CogBriefProvider().promptSection();
     expect(section).toContain("## Memory (cog)");
     // full CLAUDE.md-equivalent conventions, not just formats
     expect(section).toContain("SSOT");
@@ -47,36 +40,35 @@ describe("CogBriefProvider", () => {
   });
 
   test("caches within the TTL", async () => {
-    const { client, calls } = fakeClient(async () => BRIEF);
-    const provider = new CogBriefProvider(client, "agent", { ttlMs: 60_000 });
+    const spy = mockSessionBrief(async () => BRIEF);
+    const provider = new CogBriefProvider({ ttlMs: 60_000 });
     await provider.promptSection();
     await provider.promptSection();
-    expect(calls()).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   test("surfaces controller_last_error as a warning", async () => {
-    const { client } = fakeClient(async () => ({ ...BRIEF, controller_last_error: "bad yaml" }));
-    const section = await new CogBriefProvider(client, "agent").promptSection();
+    mockSessionBrief(async () => ({ ...BRIEF, controller_last_error: "bad yaml" }));
+    const section = await new CogBriefProvider().promptSection();
     expect(section).toContain("bad yaml");
   });
 
-  test("daemon unreachable with no prior brief renders the fallback", async () => {
-    const { client } = fakeClient(async () => {
-      throw new Error("cog memory daemon not reachable at /tmp/fake-cog.sock");
+  test("memory unavailable with no prior brief renders the fallback", async () => {
+    mockSessionBrief(async () => {
+      throw new Error("memory unavailable");
     });
-    const section = await new CogBriefProvider(client, "agent").promptSection();
+    const section = await new CogBriefProvider().promptSection();
     expect(section).toContain("## Memory (cog)");
-    expect(section).toContain("/tmp/fake-cog.sock");
-    expect(section.toLowerCase()).toContain("unreachable");
+    expect(section.toLowerCase()).toContain("temporarily unavailable");
   });
 
-  test("daemon failure after a good brief serves the stale brief with a note", async () => {
+  test("memory failure after a good brief serves the stale brief with a note", async () => {
     let fail = false;
-    const { client } = fakeClient(async () => {
+    mockSessionBrief(async () => {
       if (fail) throw new Error("down");
       return BRIEF;
     });
-    const provider = new CogBriefProvider(client, "agent", { ttlMs: 1 });
+    const provider = new CogBriefProvider({ ttlMs: 1 });
     await provider.promptSection();
     fail = true;
     await new Promise((r) => setTimeout(r, 5));
@@ -85,24 +77,24 @@ describe("CogBriefProvider", () => {
     expect(section.toLowerCase()).toContain("stale");
   });
 
-  test("a hung daemon is cut off by the fetch cap", async () => {
-    const { client } = fakeClient(() => new Promise(() => {}));
-    const provider = new CogBriefProvider(client, "agent", { timeoutMs: 50 });
+  test("a hung memory call is cut off by the fetch cap", async () => {
+    mockSessionBrief(() => new Promise(() => {}));
+    const provider = new CogBriefProvider({ timeoutMs: 50 });
     const section = await provider.promptSection();
-    expect(section.toLowerCase()).toContain("unreachable");
+    expect(section.toLowerCase()).toContain("temporarily unavailable");
   });
 });
 
 describe("audit regressions", () => {
   test("a transient failure does not poison the cache for the full TTL", async () => {
     let fail = true;
-    const { client } = fakeClient(async () => {
+    mockSessionBrief(async () => {
       if (fail) throw new Error("momentarily busy");
       return BRIEF;
     });
-    const provider = new CogBriefProvider(client, "agent", { ttlMs: 60_000, failureTtlMs: 10 });
+    const provider = new CogBriefProvider({ ttlMs: 60_000, failureTtlMs: 10 });
     const first = await provider.promptSection();
-    expect(first.toLowerCase()).toContain("unreachable");
+    expect(first.toLowerCase()).toContain("temporarily unavailable");
     fail = false;
     await new Promise((r) => setTimeout(r, 30));
     const second = await provider.promptSection();
@@ -110,10 +102,10 @@ describe("audit regressions", () => {
   });
 
   test("concurrent cold-cache calls share one fetch", async () => {
-    const { client, calls } = fakeClient(
+    const spy = mockSessionBrief(
       () => new Promise((r) => setTimeout(() => r(BRIEF), 20)),
     );
-    const provider = new CogBriefProvider(client, "agent");
+    const provider = new CogBriefProvider();
     const [a, b, c] = await Promise.all([
       provider.promptSection(),
       provider.promptSection(),
@@ -121,6 +113,6 @@ describe("audit regressions", () => {
     ]);
     expect(a).toBe(b);
     expect(b).toBe(c);
-    expect(calls()).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

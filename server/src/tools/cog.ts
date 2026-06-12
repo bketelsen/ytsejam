@@ -1,16 +1,16 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { CogClient } from "../cog/client.ts";
+import * as memory from "../memory/index.ts";
 import { truncate } from "./shell.ts";
 
 /**
- * Agent tools over the cogmemory daemon. Names and shapes follow the cog
- * skill vocabulary (cogmemory docs/SKILL-REWRITES.md) so skill playbooks
- * port verbatim. The role is injected here — the model never supplies it.
+ * Agent tools over the in-process memory module. Names and shapes follow the
+ * cog skill vocabulary (cogmemory docs/SKILL-REWRITES.md) so skill playbooks
+ * port verbatim.
  */
 
 const PATH_RULE =
-  "The path is the domain's directory *path* from the Domains table (e.g. projects/chapterhouse/notes.md), never the domain id — the daemon rejects id-as-path writes.";
+  "The path is the domain's directory *path* from the Domains table (e.g. projects/chapterhouse/notes.md), never the domain id — the memory store rejects id-as-path writes.";
 
 // Consolidated envelope RPCs reachable through cog_rpc. File operations are
 // deliberately excluded — they go through their dedicated tools.
@@ -35,6 +35,56 @@ const RPC_METHODS = [
   "health",
 ] as const;
 
+type RpcMethod = (typeof RPC_METHODS)[number];
+type RpcParams = Record<string, unknown>;
+
+const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = {
+  "session_brief": (params) => memory.sessionBrief(params),
+  "domain_summary": (params) => memory.domainSummary(params as any),
+  "housekeeping_scan": (params) => memory.housekeepingScan(params),
+  "open_actions": (params) => memory.openActions(params),
+  "recent_observations": (params) => memory.recentObservations(params),
+  "glacier_index_compute": () => memory.glacierIndexCompute(),
+  "wiki_index_compute": () => memory.wikiIndexCompute(),
+  "link_index_compute": (params) => memory.linkIndexCompute(params),
+  "link_audit": (params) => memory.linkAudit(params),
+  "entity_audit": (params) => memory.entityAudit(params),
+  "cluster_check": (params) => memory.clusterCheck(params),
+  "scenario_check": (params) => memory.scenarioCheck(params),
+  "domains.list": async (params) => {
+    rejectParams("domains.list", params, []);
+    const root = (await memory.health()).memory_root;
+    if (!root) throw new Error("domains.list: memory root unavailable");
+    return { domains: new memory.Controller(root).list() };
+  },
+  "domains.get": async (params) => {
+    rejectParams("domains.get", params, ["id"]);
+    const id = params.id;
+    if (typeof id !== "string" || id === "") throw new Error("domains.get: id is required");
+    const root = (await memory.health()).memory_root;
+    if (!root) throw new Error("domains.get: memory root unavailable");
+    return { domain: new memory.Controller(root).get(id) };
+  },
+  "l0index": (params) => memory.l0index(params),
+  "stats": (params) => {
+    rejectParams("stats", params, ["prefix"]);
+    const prefix = params.prefix;
+    if (prefix !== undefined && typeof prefix !== "string") throw new Error("stats: prefix must be a string");
+    return memory.stats(prefix);
+  },
+  "git": (params) => memory.git(params as any),
+  "health": (params) => {
+    rejectParams("health", params, []);
+    return memory.health();
+  },
+};
+
+function rejectParams(method: string, params: RpcParams, allowed: string[]): void {
+  const allowedSet = new Set(allowed);
+  const key = Object.keys(params).find((k) => !allowedSet.has(k));
+  if (key) throw new Error(`${method}: invalid params: unknown param key: ${key}`);
+}
+
 function textResult(text: string) {
   return { content: [{ type: "text" as const, text: truncate(text) }], details: {} };
 }
@@ -43,11 +93,7 @@ function jsonResult(value: unknown) {
   return textResult(JSON.stringify(value, null, 2));
 }
 
-export function createCogTools(client: CogClient, role: string): AgentTool<any>[] {
-  // role is spread LAST so a model-supplied "role" param can never override it
-  const call = (method: string, params: Record<string, unknown>) =>
-    client.call<Record<string, unknown>>(method, { ...params, role });
-
+export function createCogTools(): AgentTool<any>[] {
   const readParams = Type.Object({
     path: Type.String({ description: "memory-root-relative path, e.g. personal/observations.md" }),
     section: Type.Optional(Type.String({ description: "markdown heading to read just that section" })),
@@ -81,7 +127,7 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
     method: Type.Union(RPC_METHODS.map((m) => Type.Literal(m))),
     params: Type.Optional(
       Type.Record(Type.String(), Type.Any(), {
-        description: "method-specific parameters (role is injected automatically)",
+        description: "method-specific parameters",
       }),
     ),
   });
@@ -94,7 +140,8 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
         "Read a file from cog memory. Optionally a single section or line range — prefer sections over whole files.",
       parameters: readParams,
       execute: async (_id, p) => {
-        const r = await call("read", p as Record<string, unknown>);
+        const { path, section, start, end } = p as { path: string; section?: string; start?: number; end?: number };
+        const r = await memory.read(path, { section, start, end });
         return textResult(String(r?.content ?? ""));
       },
     },
@@ -104,7 +151,8 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       description: `Create or overwrite a cog memory file. ${PATH_RULE}`,
       parameters: writeParams,
       execute: async (_id, p) => {
-        const r = await call("write", p as Record<string, unknown>);
+        const { path, content } = p as { path: string; content: string };
+        const r = await memory.write(path, content);
         return jsonResult(r);
       },
     },
@@ -114,7 +162,8 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       description: `Append text to a cog memory file (observations, action items). ${PATH_RULE}`,
       parameters: appendParams,
       execute: async (_id, p) => {
-        const r = await call("append", p as Record<string, unknown>);
+        const { path, text, section } = p as { path: string; text: string; section?: string };
+        const r = await memory.append(path, text, { section });
         return jsonResult(r);
       },
     },
@@ -124,7 +173,8 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       description: `Replace an exact text occurrence in a cog memory file. ${PATH_RULE}`,
       parameters: patchParams,
       execute: async (_id, p) => {
-        const r = await call("patch", p as Record<string, unknown>);
+        const { path, old_text, new_text } = p as { path: string; old_text: string; new_text: string };
+        const r = await memory.patch(path, old_text, new_text);
         return jsonResult(r);
       },
     },
@@ -134,7 +184,8 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       description: "Get a memory file's heading outline + L0 header without reading the body.",
       parameters: outlineParams,
       execute: async (_id, p) => {
-        const r = await call("outline", p as Record<string, unknown>);
+        const { path } = p as { path: string };
+        const r = await memory.outline(path);
         return jsonResult(r);
       },
     },
@@ -144,7 +195,8 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       description: "Full-text search across all cog memory files.",
       parameters: searchParams,
       execute: async (_id, p) => {
-        const r = await call("search", p as Record<string, unknown>);
+        const { query } = p as { query: string };
+        const r = await memory.search(query);
         return jsonResult(r);
       },
     },
@@ -154,7 +206,7 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       description: "List all files in cog memory.",
       parameters: listParams,
       execute: async () => {
-        const r = await call("list", {});
+        const r = await memory.list();
         return jsonResult(r);
       },
     },
@@ -164,7 +216,8 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
       description: "Move/rename a cog memory file (e.g. archiving into glacier/).",
       parameters: moveParams,
       execute: async (_id, p) => {
-        const r = await call("move", p as Record<string, unknown>);
+        const { from, to } = p as { from: string; to: string };
+        const r = await memory.move(from, to);
         return jsonResult(r);
       },
     },
@@ -175,10 +228,15 @@ export function createCogTools(client: CogClient, role: string): AgentTool<any>[
         "Call a consolidated cogmemory RPC (session_brief, domain_summary, housekeeping_scan, audits, index computations...). Returns the JSON envelope. Used mainly by skill playbooks.",
       parameters: rpcParams,
       execute: async (_id, p) => {
-        const { method, params } = p as { method: string; params?: Record<string, unknown> };
-        const r = await call(method, params ?? {});
+        const { method, params } = p as { method: string; params?: RpcParams };
+        if (!isRpcMethod(method)) throw new Error(`unknown cog_rpc method: ${method}`);
+        const r = await rpcDispatch[method](params ?? {});
         return jsonResult(r);
       },
     },
   ];
+}
+
+function isRpcMethod(method: string): method is RpcMethod {
+  return (RPC_METHODS as readonly string[]).includes(method);
 }
