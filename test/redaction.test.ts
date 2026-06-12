@@ -95,12 +95,30 @@ describe("redaction API", () => {
     void truth;
   });
 
-  it("redacted memories stay gone after reopen", async () => {
-    const { mem, storeDir, truth } = await freshSystem();
+  it("ingest → redact → reopen → re-ingest same sessions → still gone (PLAN 3.3)", async () => {
+    const { mem, storeDir, sessionsDir, truth } = await freshSystem();
+    const before = await mem.retrieve("What's my dog called?", { k: 5, dryRun: true });
+    expect(before.items.some((i) => i.record.text.includes("Biscuit"))).toBe(true);
+
     await mem.redact({ entity: "Biscuit" });
 
+    // Reopen from disk and re-ingest the SAME session files. The
+    // ingest-state already-processed gate must hold: nothing re-enters.
     const reopened = MemorySystem.open({ storeDir, now: () => truth.horizonEnd });
+    const report = await reopened.ingestSessionDir(sessionsDir);
+    expect(report.turnsIngested).toBe(0);
+    expect(report.recordsCreated).toBe(0);
+
     const { items } = await reopened.retrieve("What's my dog called?", { k: 5, dryRun: true });
     expect(items.some((i) => i.record.text.includes("Biscuit"))).toBe(false);
+    expect(reopened.listEntities().some((e) => e.norm === "biscuit" && e.state === "active")).toBe(false);
+    // The episodic tombstones survived the round trip too.
+    expect(
+      reopened.listEpisodic().some((r) => r.state !== "redacted" && r.text.includes("Biscuit")),
+    ).toBe(false);
+    // And the on-disk logs never re-acquired the content.
+    for (const file of ["episodic.jsonl", "facts.jsonl", "entities.jsonl"]) {
+      expect(fs.readFileSync(path.join(storeDir, file), "utf8")).not.toContain("Biscuit");
+    }
   });
 });
