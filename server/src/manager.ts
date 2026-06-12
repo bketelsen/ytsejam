@@ -510,6 +510,7 @@ export class AgentManager {
     const enrichedEntry = {
       ...(compactionEntry ?? {}),
       sessionId: opened.metadata.id,
+      // key stays pi-shape; buildCompactionEvent reads compactionEntry?.tokensAfter
       tokensAfter: tokensAfterEstimated,
     };
     const devLogPath = `${memoryRoot()}/projects/ytsejam/dev-log.md`;

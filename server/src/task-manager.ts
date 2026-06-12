@@ -389,6 +389,7 @@ export class TaskManager {
       ...(compactionEntry ?? {}),
       sessionId: active.parentSessionId,
       subagentTaskId: active.taskId,
+      // key stays pi-shape; buildCompactionEvent reads compactionEntry?.tokensAfter
       tokensAfter: tokensAfterEstimated,
     };
     const devLogPath = `${memoryRoot()}/projects/ytsejam/dev-log.md`;

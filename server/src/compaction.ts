@@ -268,7 +268,7 @@ export interface CompactionEvent {
  *
  * Shape:
  *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
- *     <trigger>, <model>, ctx <before>→<after> tokens, summary <S> tokens,
+ *     <trigger>, <model>, ctx <before>→~<after> tokens, summary <S> tokens,
  *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
  */
 export function formatDevLogLine(e: CompactionEvent): string {

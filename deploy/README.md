@@ -84,9 +84,11 @@ file, not in a per-session-id directory; pi's actual layout is
 **Per-session observability log:** each compaction event writes a JSON record to
 `<session.jsonl>.compactions.jsonl`. Fields include timestamp, trigger
 (proactive/reactive), reason, model, contextWindow, reserveTokens,
-tokensBefore, tokensAfter, summaryTokens, droppedTurns, filesRead,
+tokensBefore, tokensAfterEstimated, summaryTokens, droppedTurns, filesRead,
 filesModified, compactionDurationMs, succeeded, and backupPath. Run
-`tail -f <path>` or `jq` over it for diagnostics.
+`tail -f <path>` or `jq` over it for diagnostics. Note: `tokensAfterEstimated`
+is a structural estimate of the kept-set token count, not a provider-reported
+measurement; the JSONL key is `tokens_after_estimated`.
 
 **Cog dev-log entry:** each compaction also writes a single line to the cog
 dev-log (`~/.ytsejam/data/memory/projects/ytsejam/dev-log.md`, or whatever
