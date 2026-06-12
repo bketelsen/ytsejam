@@ -49,6 +49,12 @@ export type EvalBand = "short" | "medium" | "long";
 export interface EvalThresholds {
   recallAt5: number;
   mrr: number;
+  /**
+   * Recall@5 over the paraphrase probe set (probes sharing no content words
+   * with their plants). Low by design with the lexical HashEmbedder — this
+   * number is the honest baseline that Phase 4 must move.
+   */
+  paraphraseRecallAt5: number;
   preferenceF1: number;
   directiveRecall: number;
   /**
@@ -94,6 +100,7 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     thresholds: {
       recallAt5: 0.85,
       mrr: 0.6,
+      paraphraseRecallAt5: 0.2,
       preferenceF1: 0.75,
       directiveRecall: 1,
       identityExpected: true,
@@ -108,6 +115,7 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     thresholds: {
       recallAt5: 0.85,
       mrr: 0.6,
+      paraphraseRecallAt5: 0,
       preferenceF1: 0.25,
       directiveRecall: 0,
       identityExpected: false,
@@ -122,6 +130,7 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     thresholds: {
       recallAt5: 0.7,
       mrr: 0.4,
+      paraphraseRecallAt5: 0,
       preferenceF1: 0.2,
       directiveRecall: 0,
       identityExpected: false,
@@ -135,6 +144,7 @@ export interface EvalReport {
   band: EvalBand;
   corpus: { sessions: number; intervalDays: number; turns: number; seed: number; horizonEnd: string };
   recall: RecallMetrics;
+  paraphrase: RecallMetrics;
   preferences: PreferenceMetrics;
   directiveRecall: number;
   identityCorrect: boolean;
@@ -210,10 +220,9 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   // would hand the assistant: episodic items at their rank, or — for facts
   // the semantic layer distilled (employer, name, …) — profile facts, which
   // composeContext places above the episodic section, i.e. rank 1.
-  const outcomes: RecallOutcome[] = [];
-  for (const fact of truth.facts) {
-    const { items, profile } = await mem.retrieve(fact.probe, { k: 5, now, dryRun: true });
-    const needle = fact.answer.toLowerCase();
+  const probeFact = async (probe: string, answer: string): Promise<number | null> => {
+    const { items, profile } = await mem.retrieve(probe, { k: 5, now, dryRun: true });
+    const needle = answer.toLowerCase();
     let rank: number | null = null;
     for (let i = 0; i < items.length; i++) {
       if (items[i].record.text.toLowerCase().includes(needle)) {
@@ -227,11 +236,22 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
       ...profile.preferences,
     ].some((f) => f.object.toLowerCase().includes(needle));
     if (inProfile) rank = 1;
-    outcomes.push({ key: fact.key, rank });
+    return rank;
+  };
+
+  const outcomes: RecallOutcome[] = [];
+  const paraphraseOutcomes: RecallOutcome[] = [];
+  for (const fact of truth.facts) {
+    outcomes.push({ key: fact.key, rank: await probeFact(fact.probe, fact.answer) });
+    paraphraseOutcomes.push({
+      key: fact.key,
+      rank: await probeFact(fact.paraphraseProbe, fact.answer),
+    });
   }
 
   const finalProfile = mem.profile(horizonEnd);
   const recall = recallMetrics(outcomes);
+  const paraphrase = recallMetrics(paraphraseOutcomes);
   const preferences = preferenceMetrics(finalProfile, truth);
   const directives = directiveRecall(finalProfile, truth);
   const identity = identityCorrect(finalProfile, truth);
@@ -244,6 +264,11 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
     failures.push(`recall@5 ${recall.at5.toFixed(2)} < ${thresholds.recallAt5} (missed: ${recall.misses.join(", ")})`);
   }
   if (recall.mrr < thresholds.mrr) failures.push(`MRR ${recall.mrr.toFixed(2)} < ${thresholds.mrr}`);
+  if (paraphrase.at5 < thresholds.paraphraseRecallAt5) {
+    failures.push(
+      `paraphrase recall@5 ${paraphrase.at5.toFixed(2)} < ${thresholds.paraphraseRecallAt5} (missed: ${paraphrase.misses.join(", ")})`,
+    );
+  }
   if (preferences.f1 < thresholds.preferenceF1) {
     failures.push(
       `preference F1 ${preferences.f1.toFixed(2)} < ${thresholds.preferenceF1}` +
@@ -276,6 +301,7 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
       horizonEnd,
     },
     recall,
+    paraphrase,
     preferences,
     directiveRecall: directives,
     identityCorrect: identity,
@@ -311,6 +337,7 @@ export function formatReport(report: EvalReport): string {
     `  recall@1  ${pct(report.recall.at1)}`,
     `  recall@5  ${pct(report.recall.at5)}   (threshold ${pct(t.recallAt5)})`,
     `  MRR       ${report.recall.mrr.toFixed(2)}   (threshold ${t.mrr})`,
+    `  paraphrase recall@5 ${pct(report.paraphrase.at5)}  MRR ${report.paraphrase.mrr.toFixed(2)}   (threshold ${pct(t.paraphraseRecallAt5)})`,
     ``,
     `Personality mirroring`,
     `  preference precision ${pct(report.preferences.precision)}  recall ${pct(report.preferences.recall)}  F1 ${report.preferences.f1.toFixed(2)} (threshold ${t.preferenceF1})`,
@@ -335,6 +362,7 @@ export function formatBandedResult(result: BandedEvalResult): string {
     [
       b.band.padEnd(7),
       `r@5 ${pct(b.recall.at5).padStart(4)}`,
+      `para ${pct(b.paraphrase.at5).padStart(4)}`,
       `MRR ${b.recall.mrr.toFixed(2)}`,
       `prefF1 ${b.preferences.f1.toFixed(2)}`,
       `dir ${pct(b.directiveRecall).padStart(4)}`,

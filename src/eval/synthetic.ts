@@ -30,6 +30,11 @@ export interface PlantedFact {
   key: string;
   statement: string;
   probe: string;
+  /**
+   * A second probe that intentionally shares NO content words with the
+   * statement — measures retrieval beyond lexical overlap (PLAN.md Task 1.2).
+   */
+  paraphraseProbe: string;
   /** Substring whose presence in retrieved text counts as a hit. */
   answer: string;
 }
@@ -70,48 +75,56 @@ export const DEFAULT_PERSONA: Persona = {
       key: "sister-name",
       statement: "My sister Alice is visiting next month, so I want to plan something.",
       probe: "What is my sister's name?",
+      paraphraseProbe: "Tell me about my sibling.",
       answer: "Alice",
     },
     {
       key: "dog-name",
       statement: "I had to take my dog Biscuit to the vet this morning.",
       probe: "What's my dog called?",
+      paraphraseProbe: "What is my canine companion's name?",
       answer: "Biscuit",
     },
     {
       key: "employer",
       statement: "I work at Initech on the platform team.",
       probe: "Where do I work?",
+      paraphraseProbe: "Where am I currently employed?",
       answer: "Initech",
     },
     {
       key: "home-city",
       statement: "Here in Boulder where I live, the weather has been wild lately.",
       probe: "Which city do I live in?",
+      paraphraseProbe: "Which town am I based in?",
       answer: "Boulder",
     },
     {
       key: "project-name",
       statement: "I am working on Chapterhouse, my side project for archiving newsletters.",
       probe: "What is the name of my side project about newsletters?",
+      paraphraseProbe: "What's the hobby codebase I keep tinkering with?",
       answer: "Chapterhouse",
     },
     {
       key: "allergy",
       statement: "Remember that I am allergic to peanuts when suggesting recipes.",
       probe: "What food am I allergic to?",
+      paraphraseProbe: "Which food can't I safely eat?",
       answer: "peanut",
     },
     {
       key: "guitar",
       statement: "I picked up my old Telecaster again and started practicing guitar.",
       probe: "Which guitar do I play?",
+      paraphraseProbe: "Which instrument do I noodle on in the evenings?",
       answer: "Telecaster",
     },
     {
       key: "marathon",
       statement: "Training for the Denver marathon is going slowly but steadily.",
       probe: "Which marathon am I training for?",
+      paraphraseProbe: "What big race am I preparing for?",
       answer: "Denver",
     },
   ],

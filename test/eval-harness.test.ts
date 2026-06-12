@@ -47,6 +47,10 @@ describe("evaluation bands (PLAN.md Task 1.1)", () => {
     expect(report.contradictions.correct).toBe(report.contradictions.total);
     // Consolidation actually ran mid-horizon — recall survived it.
     expect(report.consolidation.created).toBeGreaterThan(0);
+    // Paraphrase probes run and are honestly bad with the lexical embedder:
+    // well below plain-probe recall. Phase 4 owns moving this number.
+    expect(report.paraphrase.n).toBe(report.recall.n);
+    expect(report.paraphrase.at5).toBeLessThan(report.recall.at5);
   });
 
   it("medium band: decay erodes preferences but episodic recall holds", { timeout: 120_000 }, async () => {
