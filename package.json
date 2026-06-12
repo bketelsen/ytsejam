@@ -15,6 +15,7 @@
     "check": "tsc --noEmit",
     "eval": "node src/eval/run.ts",
     "eval:semantic": "node src/eval/run.ts --semantic",
+    "eval:ollama": "node src/eval/run.ts --ollama",
     "eval:sweep": "node src/eval/sweep.ts",
     "bench": "node src/bench/run.ts",
     "fixtures": "node src/eval/generate-fixtures.ts"
