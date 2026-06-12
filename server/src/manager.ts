@@ -283,7 +283,7 @@ export class AgentManager {
     }
 
     if (event.type === "session_compact" && opened.compaction) {
-      opened.compaction.lastCompactionDetails = (event as any).compactionEntry;
+      opened.compaction.lastCompactionDetails = event.compactionEntry;
     }
 
     if (event.type === "agent_end") {

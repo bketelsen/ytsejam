@@ -250,7 +250,7 @@ export class TaskManager {
     }
 
     if (event.type === "session_compact") {
-      active.compaction.lastCompactionDetails = (event as any).compactionEntry;
+      active.compaction.lastCompactionDetails = event.compactionEntry;
     }
 
     if (
@@ -258,45 +258,54 @@ export class TaskManager {
       active.compaction.pendingCompaction &&
       !active.compactionRunning
     ) {
+      // Reactive recovery waits for agent_end because pi's phase is idle here;
+      // compacting from turn_end would still be mid-loop and can throw "busy".
+      // The retry is scheduled with setTimeout(0) to escape the awaited listener
+      // settlement before prompt(), avoiding pi's reentrancy guard. Unlike
+      // manager.ts, subagents store that retry promise because the retry's
+      // assistant message becomes the task's final outcome. compactionRunning
+      // blocks re-entry if another event arrives while this orchestration awaits.
       active.compactionRunning = true;
-      const pendingSnapshot = { ...active.compaction.pendingCompaction };
-      active.compaction.lastCompactionDetails = undefined;
-      const result = await runCompactionIfPending(
-        toOpenedForCompaction({
-          session: active.session,
-          metadata: active.metadata,
-          harness: active.harness,
-          compaction: active.compaction,
-        }),
-        this.repo,
-      );
-      if (result.fired) {
-        await this.recordCompactionEvent(
-          active,
-          result,
-          active.compaction.lastCompactionDetails,
-        );
+      try {
+        const pendingSnapshot = { ...active.compaction.pendingCompaction };
         active.compaction.lastCompactionDetails = undefined;
-      }
+        const result = await runCompactionIfPending(
+          toOpenedForCompaction({
+            session: active.session,
+            metadata: active.metadata,
+            harness: active.harness,
+            compaction: active.compaction,
+          }),
+          this.repo,
+        );
+        if (result.fired) {
+          await this.recordCompactionEvent(
+            active,
+            result,
+            active.compaction.lastCompactionDetails,
+          );
+          active.compaction.lastCompactionDetails = undefined;
+        }
 
-      if (result.surrendered || (pendingSnapshot.trigger === "reactive" && !result.succeeded)) {
-        await this.emitCompactionSurrender(active);
+        if (result.surrendered || (pendingSnapshot.trigger === "reactive" && !result.succeeded)) {
+          await this.emitCompactionSurrender(active);
+          return;
+        }
+
+        if (pendingSnapshot.trigger === "reactive" && result.succeeded) {
+          active.reactiveRetryPromise = new Promise<AgentMessage>((resolve, reject) => {
+            setTimeout(() => {
+              if (this.active.get(taskId) !== active) {
+                reject(new Error(`reactive retry skipped for inactive task ${taskId}`));
+                return;
+              }
+              active.harness.prompt(REACTIVE_RETRY_PROMPT).then(resolve, reject);
+            }, 0);
+          });
+        }
+      } finally {
         active.compactionRunning = false;
-        return;
       }
-
-      if (pendingSnapshot.trigger === "reactive" && result.succeeded) {
-        active.reactiveRetryPromise = new Promise<AgentMessage>((resolve, reject) => {
-          setTimeout(() => {
-            if (this.active.get(taskId) !== active) {
-              reject(new Error(`reactive retry skipped for inactive task ${taskId}`));
-              return;
-            }
-            active.harness.prompt(REACTIVE_RETRY_PROMPT).then(resolve, reject);
-          }, 0);
-        });
-      }
-      active.compactionRunning = false;
     }
   }
 

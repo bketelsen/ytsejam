@@ -1,7 +1,8 @@
-import { mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { registerFauxProvider } from "@earendil-works/pi-ai";
 import { EventBus, type ServerEvent } from "../src/events.ts";
 import { Indexer } from "../src/indexer.ts";
 import { PersonaStore } from "../src/persona.ts";
@@ -56,6 +57,35 @@ async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
     if (Date.now() - start > ms) throw new Error("waitFor timed out");
     await new Promise((r) => setTimeout(r, 25));
   }
+}
+
+function makeReactiveCompactionFaux() {
+  return registerFauxProvider({
+    provider: "openai",
+    models: [{ id: "faux", contextWindow: 40_000, maxTokens: 256 }],
+  });
+}
+
+function withReactiveCompactionEnv(dataDir: string): () => void {
+  const prevDataDir = process.env.YTSEJAM_DATA_DIR;
+  const prevMemoryDir = process.env.YTSEJAM_MEMORY_DIR;
+  const prevOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.YTSEJAM_DATA_DIR = dataDir;
+  process.env.OPENAI_API_KEY = "test-key-for-faux-compaction";
+  delete process.env.YTSEJAM_MEMORY_DIR;
+  return () => {
+    if (prevDataDir === undefined) delete process.env.YTSEJAM_DATA_DIR;
+    else process.env.YTSEJAM_DATA_DIR = prevDataDir;
+    if (prevMemoryDir === undefined) delete process.env.YTSEJAM_MEMORY_DIR;
+    else process.env.YTSEJAM_MEMORY_DIR = prevMemoryDir;
+    if (prevOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = prevOpenAiKey;
+  };
+}
+
+function readDevLog(dataDir: string): string {
+  const path = join(dataDir, "memory", "projects", "ytsejam", "dev-log.md");
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
 describe("TaskManager", () => {
@@ -208,6 +238,64 @@ describe("TaskManager", () => {
     expect(indexer.getTask(row.id)!.resultSummary).toContain("boom two");
     expect(notified).toHaveLength(1);
     expect(notified[0]!.text).toContain('[Task "research" failed]');
+  });
+
+
+  test("runs reactive compaction + retry on subagent context overflow", async () => {
+    faux.unregister();
+    faux = makeReactiveCompactionFaux() as any;
+    const { tm, indexer, dataDir, notified } = makeTaskManager();
+    const restoreEnv = withReactiveCompactionEnv(dataDir);
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long: 50000 tokens > 40000 maximum" }),
+        fauxAssistantMessage("Summary of compacted overflow attempt."),
+        fauxAssistantMessage("REPORT: recovered after reactive compaction"),
+      ]);
+
+      const row = await tm.delegate({ parentSessionId: "p", task: "overflow", label: "overflow" });
+      await waitFor(() => indexer.getTask(row.id)?.status === "completed");
+      const final = indexer.getTask(row.id)!;
+      expect(final.resultSummary).toContain("recovered after reactive compaction");
+      expect(notified).toHaveLength(1);
+      expect(notified[0]!.text).toContain('[Task "overflow" completed]');
+      expect(notified[0]!.text).toContain("recovered after reactive compaction");
+
+      const devLog = readDevLog(dataDir);
+      expect(devLog).toContain("subagent task " + row.id);
+      expect(devLog).toContain("— reactive,");
+      expect(devLog).toContain("Trigger: isContextOverflow.");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  test("surrenders subagent task when reactive retry also overflows", async () => {
+    faux.unregister();
+    faux = makeReactiveCompactionFaux() as any;
+    const { tm, indexer, dataDir, notified } = makeTaskManager();
+    const restoreEnv = withReactiveCompactionEnv(dataDir);
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long: 50000 tokens > 40000 maximum" }),
+        fauxAssistantMessage("Summary of compacted overflow attempt."),
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long: 50001 tokens > 40000 maximum" }),
+      ]);
+
+      const row = await tm.delegate({ parentSessionId: "p", task: "overflow twice", label: "overflow twice" });
+      await waitFor(() => indexer.getTask(row.id)?.status === "failed");
+      const final = indexer.getTask(row.id)!;
+      expect(final.resultSummary).toContain("Diagnostic: prompt was ~");
+      expect(final.resultSummary).toContain("tokens against contextWindow 40,000");
+      expect(notified).toHaveLength(1);
+      expect(notified[0]!.text).toContain('[Task "overflow twice" failed]');
+
+      const devLog = readDevLog(dataDir);
+      expect(devLog).toContain("subagent task " + row.id);
+      expect(devLog).toContain("— reactive,");
+    } finally {
+      restoreEnv();
+    }
   });
 
   test("recoverInterrupted marks stale running tasks and notifies parents", async () => {
