@@ -30,6 +30,7 @@ import {
   compactionEnabled,
   computeReserveTokens,
   decideCompaction,
+  estimateKeptSetTokens,
   formatDevLogLine,
   REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
@@ -377,10 +378,11 @@ export class TaskManager {
     const model = active.harness.getModel();
     const sessionFilePath = active.metadata.path;
 
-    let tokensAfterEstimated = compactionEntry?.tokensAfter ?? 0;
+    let tokensAfterEstimated = 0;
     try {
       const messages = (await active.session.buildContext()).messages;
-      tokensAfterEstimated = estimateContextTokens(messages).tokens;
+      const summaryTokens = compactionEntry?.summaryTokens ?? 0;
+      tokensAfterEstimated = estimateKeptSetTokens(messages, summaryTokens);
     } catch {
       // Best-effort diagnostic only; buildCompactionEvent falls back to 0.
     }

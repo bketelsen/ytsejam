@@ -33,6 +33,7 @@ import {
   compactionEnabled,
   computeReserveTokens,
   decideCompaction,
+  estimateKeptSetTokens,
   formatDevLogLine,
   REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
@@ -499,10 +500,11 @@ export class AgentManager {
     const model = opened.harness.getModel();
     const sessionFilePath = opened.metadata.path;
 
-    let tokensAfterEstimated = compactionEntry?.tokensAfter ?? 0;
+    let tokensAfterEstimated = 0;
     try {
       const messages = (await opened.session.buildContext()).messages;
-      tokensAfterEstimated = estimateContextTokens(messages).tokens;
+      const summaryTokens = compactionEntry?.summaryTokens ?? 0;
+      tokensAfterEstimated = estimateKeptSetTokens(messages, summaryTokens);
     } catch {
       // Best-effort diagnostic only; buildCompactionEvent falls back to 0.
     }
