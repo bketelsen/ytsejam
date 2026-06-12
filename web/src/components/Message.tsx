@@ -7,10 +7,48 @@ import { absoluteTime, relativeTime } from "@/lib/time";
 import { Button } from "./ui/button";
 import { TaskCard } from "./TaskCard";
 
+/** Normalize a ChatMessage into a renderable ContentBlock[].
+ *
+ *  Handles three shapes the wire emits beyond `string | ContentBlock[]`:
+ *    • `compactionSummary` / `branchSummary` — pi-agent-core synthesizes these
+ *      in buildContext() after a successful compaction. They carry a `summary`
+ *      string instead of `content`; render them as a "[compacted]" divider
+ *      followed by the summary text.
+ *    • `bashExecution` — pi's bash tool result shape: { command, output,
+ *      exitCode, … }. Render as a fenced code block.
+ *    • Anything else with missing/null/non-array-non-string `content` — degrade
+ *      gracefully to `[]` rather than crashing the whole conversation render.
+ *      Without this guard a single malformed message blanks the screen with
+ *      "fh(...) is undefined" because every downstream call (.filter, .map)
+ *      explodes on undefined. */
 function blocks(message: ChatMessage): ContentBlock[] {
-  return typeof message.content === "string"
-    ? [{ type: "text", text: message.content }]
-    : message.content;
+  // Special roles from pi-agent-core that have no `content` field.
+  const role = message.role;
+  if (role === "compactionSummary" || role === "branchSummary") {
+    const summary = (message as unknown as { summary?: string }).summary ?? "";
+    const label = role === "compactionSummary" ? "compacted" : "branch summary";
+    return [{ type: "text", text: `_[${label}]_\n\n${summary}` }];
+  }
+  if (role === "bashExecution") {
+    const m = message as unknown as {
+      command?: string;
+      output?: string;
+      exitCode?: number | null;
+      cancelled?: boolean;
+      truncated?: boolean;
+      fullOutputPath?: string;
+    };
+    let text = `Ran \`${m.command ?? ""}\`\n\n`;
+    text += m.output ? "```\n" + m.output + "\n```" : "_(no output)_";
+    if (m.cancelled) text += "\n\n_(command cancelled)_";
+    else if (m.exitCode != null && m.exitCode !== 0) text += `\n\nExit code: ${m.exitCode}`;
+    if (m.truncated && m.fullOutputPath) text += `\n\n_[truncated. full output: ${m.fullOutputPath}]_`;
+    return [{ type: "text", text }];
+  }
+  const c = message.content;
+  if (typeof c === "string") return [{ type: "text", text: c }];
+  if (Array.isArray(c)) return c;
+  return [];
 }
 
 /** The human-facing text of a message: just text blocks, joined with newlines.
