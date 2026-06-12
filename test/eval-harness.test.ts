@@ -76,3 +76,26 @@ describe("evaluation bands (PLAN.md Task 1.1)", () => {
     }
   });
 });
+
+describe("decay bites (PLAN.md Task 1.3)", () => {
+  // These tests INVERT the usual make-it-pass pressure: the decay model is
+  // correct as designed, and the eval must acknowledge the regime. If a
+  // future change makes these fail, the right response is profile-floor
+  // calibration (Task 2.1) or a real embedder (Phase 4) — NOT weakening
+  // decay so an old fact pretends to be fresh.
+  it("identity name decays below profile floor at 4yr horizon", { timeout: 120_000 }, async () => {
+    const report = await runEval({ workDir: tmpDir(), seed: 42, band: "long" });
+    expect(report.identityCorrect).toBe(false); // decay IS doing its job
+  });
+
+  it("a directive asserted once at month ~1 is gone by month 24", { timeout: 120_000 }, async () => {
+    const report = await runEval({ workDir: tmpDir(), seed: 42, band: "medium" });
+    expect(report.directiveRecall).toBe(0);
+  });
+
+  it("preferences flicker out between reassertions at 30d cadence", { timeout: 120_000 }, async () => {
+    const report = await runEval({ workDir: tmpDir(), seed: 42, band: "medium" });
+    expect(report.stability).toBeLessThan(0.7);
+    expect(report.stability).toBeGreaterThan(0); // learned at least once, though
+  });
+});
