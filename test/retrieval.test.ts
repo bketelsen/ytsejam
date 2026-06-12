@@ -123,9 +123,11 @@ describe("end-to-end retrieval over synthetic sessions", () => {
     expect(promoted!.record.text).toContain("Initech");
     expect(items[0].record.kind).toBe("fact"); // slot answers lead
 
-    // Synthetic records are never persisted.
+    // Synthetic records are never persisted. (kind: "fact" can no longer be
+    // checked here — EpisodicKind excludes it at the type level — so assert
+    // on the namespaced id instead.)
     expect(mem.getRecord(promoted!.record.id)).toBeUndefined();
-    expect(mem.listEpisodic().every((r) => r.kind !== "fact")).toBe(true);
+    expect(mem.listEpisodic().every((r) => !r.id.startsWith("fact/"))).toBe(true);
 
     // A query touching no profile predicate promotes nothing.
     const none = await mem.retrieve("how do I parse YAML?", { k: 5, dryRun: true });

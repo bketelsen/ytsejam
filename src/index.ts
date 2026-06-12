@@ -16,7 +16,7 @@ export {
   type FeatureExtractionPipeline,
   type PipelineFactory,
 } from "./embedding/local-embedder.ts";
-export { promoteFacts, type PromotedFact } from "./retrieval/promote.ts";
+export { promoteFacts } from "./retrieval/promote.ts";
 export { VectorIndex } from "./embedding/vector-index.ts";
 export { Bm25Index } from "./retrieval/lexical.ts";
 export { Retriever, packToBudget } from "./retrieval/retriever.ts";

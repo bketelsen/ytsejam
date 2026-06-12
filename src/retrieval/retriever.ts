@@ -26,6 +26,15 @@ import type { EpisodicStore } from "../episodic/store.ts";
 
 const CANDIDATE_POOL = 50;
 
+/**
+ * rank() output before fact promotion: every record comes from the episodic
+ * store, so scoring/MMR may rely on EpisodicRecord-only fields (embedding)
+ * that the wider RetrievedMemory union (which admits PromotedFact) lacks.
+ */
+interface RankedMemory extends RetrievedMemory {
+  record: EpisodicRecord;
+}
+
 export interface RetrieverDeps {
   store: EpisodicStore;
   embedder: Embedder;
@@ -90,7 +99,7 @@ export class Retriever {
       ...graphBoosts.keys(),
     ]);
 
-    const scored: RetrievedMemory[] = [];
+    const scored: RankedMemory[] = [];
     for (const id of candidateIds) {
       const record = store.get(id);
       if (!record || !record.text) continue;
@@ -126,9 +135,9 @@ export class Retriever {
   }
 
   /** Maximal Marginal Relevance over embeddings; falls back to plain order. */
-  private mmr(ranked: RetrievedMemory[], k: number, lambda: number): RetrievedMemory[] {
+  private mmr(ranked: RankedMemory[], k: number, lambda: number): RankedMemory[] {
     const pool = ranked.slice(0, Math.max(k * 4, 20));
-    const selected: RetrievedMemory[] = [];
+    const selected: RankedMemory[] = [];
     while (selected.length < k && pool.length > 0) {
       let bestIdx = 0;
       let bestScore = -Infinity;

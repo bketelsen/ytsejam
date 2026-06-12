@@ -11,7 +11,7 @@
  * like "use" are excluded because they'd promote on most queries.
  */
 
-import type { EpisodicRecord, ProfileSummary, SemanticFact } from "../types.ts";
+import type { ProfileSummary, PromotedFact, SemanticFact } from "../types.ts";
 import { tokenize } from "../embedding/embedder.ts";
 
 /** Query keyword → profile predicates it addresses. */
@@ -79,14 +79,13 @@ function renderFact(fact: SemanticFact): string {
   return `The user's ${p}: ${fact.object}.`;
 }
 
-export interface PromotedFact {
-  fact: SemanticFact;
-  record: EpisodicRecord;
-}
-
 const MAX_PROMOTED = 3;
 
-/** Profile facts the query addresses, as synthetic episodic records. */
+/**
+ * Profile facts the query addresses, as synthetic retrieval-only items.
+ * PromotedFact is NOT an EpisodicRecord: it is re-derived from facts.jsonl
+ * on every call and must never reach the episodic store.
+ */
 export function promoteFacts(query: string, profile: ProfileSummary): PromotedFact[] {
   const predicates = new Set<string>();
   for (const token of tokenize(query)) {
@@ -102,11 +101,11 @@ export function promoteFacts(query: string, profile: ProfileSummary): PromotedFa
   ].filter((f) => predicates.has(f.predicate));
 
   facts.sort((a, b) => b.strength - a.strength);
-  return facts.slice(0, MAX_PROMOTED).map((fact) => ({
-    fact,
-    record: {
+  return facts.slice(0, MAX_PROMOTED).map(
+    (fact): PromotedFact => ({
       id: `fact/${fact.id}`,
       kind: "fact",
+      fact,
       sessionId: fact.sources[0]?.sessionId ?? "profile",
       entryId: fact.sources[0]?.entryId,
       role: "summary",
@@ -114,7 +113,6 @@ export function promoteFacts(query: string, profile: ProfileSummary): PromotedFa
       timestamp: fact.lastSeenAt,
       salience: fact.strength,
       accessCount: 0,
-      state: "active",
-    },
-  }));
+    }),
+  );
 }

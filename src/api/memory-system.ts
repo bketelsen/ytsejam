@@ -201,14 +201,14 @@ export class MemorySystem {
     // of episodic items (composeContext puts the profile first anyway, and
     // a slot answer beats a lexical near-miss). Synthetic records — never
     // persisted, never access-bumped.
-    const promoted = promoteFacts(query, profile).map(({ fact, record }): RetrievedMemory => ({
+    const promoted = promoteFacts(query, profile).map((record): RetrievedMemory => ({
       record,
       score: 1,
       breakdown: {
         vector: 0,
         lexical: 0,
         recency: 0,
-        salience: fact.strength,
+        salience: record.salience, // = fact.strength
         graph: 0,
         retention: 1,
         total: 1,

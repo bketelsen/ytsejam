@@ -60,10 +60,11 @@ export interface ParsedSession {
 export type RecordState = "active" | "consolidated" | "redacted";
 
 /**
- * "fact" records are synthetic: profile facts promoted into retrieval
- * results (never persisted to the episodic store).
+ * The closed set of kinds that can appear in episodic.jsonl. Synthetic
+ * retrieval-only items (promoted profile facts) are deliberately NOT part
+ * of this union — see PromotedFact.
  */
-export type EpisodicKind = "turn" | "consolidated" | "fact";
+export type EpisodicKind = "turn" | "consolidated";
 
 /**
  * One episodic memory: a chunk of a conversation turn, or a consolidated
@@ -166,6 +167,34 @@ export interface GraphEdge {
 // ---------------------------------------------------------------------------
 // Retrieval
 
+/**
+ * A profile fact promoted into retrieval results (retrieval/promote.ts).
+ *
+ * Synthetic and retrieval-only: NEVER persisted. The underlying fact lives
+ * in facts.jsonl (the source of truth) and a PromotedFact is re-derived
+ * from it on every retrieve() call. Its `kind: "fact"` is deliberately not
+ * an EpisodicKind, so the type system rejects promoted items at every
+ * persist boundary (episodic store writes take EpisodicRecord).
+ */
+export interface PromotedFact {
+  /** `fact/${fact.id}` — namespaced so it can never collide with a store id. */
+  id: string;
+  kind: "fact";
+  /** The semantic fact this item renders. */
+  fact: SemanticFact;
+  /** Provenance: the session/entry that first asserted the fact. */
+  sessionId: string;
+  entryId?: string;
+  role: TurnRole;
+  text: string;
+  /** The fact's lastSeenAt. */
+  timestamp: string;
+  /** The fact's strength. */
+  salience: number;
+  /** Always 0 — promoted items are never access-bumped. */
+  accessCount: number;
+}
+
 export interface ScoreBreakdown {
   vector: number;
   lexical: number;
@@ -178,7 +207,8 @@ export interface ScoreBreakdown {
 }
 
 export interface RetrievedMemory {
-  record: EpisodicRecord;
+  /** A stored episodic memory, or a synthetic promoted profile fact. */
+  record: EpisodicRecord | PromotedFact;
   score: number;
   breakdown: ScoreBreakdown;
 }
