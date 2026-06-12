@@ -64,6 +64,48 @@ One step back only. For an older release, point `current` at a specific
 against `/tmp/ytsejam-dev/data`. Its memory store is under that throwaway data
 dir, so it cannot affect the production instance on :9873.
 
+## Runtime operations
+
+### Context-window compaction
+
+ytsejam auto-compacts long sessions at idle boundaries before they hit the
+selected model's contextWindow. Calibration is model-aware: every catalog entry
+in `@earendil-works/pi-ai` carries its own `contextWindow` and `maxTokens`, so
+there is no per-model configuration to maintain. The compaction module lives at
+`server/src/compaction.ts`; main-session wiring is in `server/src/manager.ts`;
+subagent wiring is in `server/src/task-manager.ts`.
+
+**Per-session backups:** before each `harness.compact()`, the session JSONL is
+copied to `<session.jsonl>.pre-compact-<epoch-ms>`. The last 3 backups are
+kept and older backups are auto-pruned. Backups are co-located with the session
+file, not in a per-session-id directory; pi's actual layout is
+`<sessionsRoot>/--<cwd>--/<timestamp>_<id>.jsonl`.
+
+**Per-session observability log:** each compaction event writes a JSON record to
+`<session.jsonl>.compactions.jsonl`. Fields include timestamp, trigger
+(proactive/reactive), reason, model, contextWindow, reserveTokens,
+tokensBefore, tokensAfter, summaryTokens, droppedTurns, filesRead,
+filesModified, compactionDurationMs, succeeded, and backupPath. Run
+`tail -f <path>` or `jq` over it for diagnostics.
+
+**Cog dev-log entry:** each compaction also writes a single line to the cog
+dev-log (`~/.ytsejam/data/memory/projects/ytsejam/dev-log.md`, or whatever
+`YTSEJAM_MEMORY_DIR` resolves to). There is one line per compaction event,
+surfaced by `/housekeeping` pattern detection.
+
+**Reactive recovery:** when the API returns "prompt is too long" mid-turn, the
+harness compacts immediately and retries the turn once. If the retry also
+fails, the user gets an actionable diagnostic message with token count,
+contextWindow, and options: summarize so far, start a fresh session, or switch
+model. ytsejam does not auto-switch models.
+
+**Emergency disable.** If the compaction module ships a bug that's corrupting
+sessions or misbehaving, set `YTSEJAM_COMPACTION_ENABLED=false` in
+`~/.ytsejam/ytsejam.env` and `systemctl --user restart ytsejam`. The service
+reverts to no-compaction behavior: sessions will 400 with "prompt is too long"
+on overflow, the pre-compaction behavior. This is known-bad-but-survivable
+while a fix ships.
+
 ## Migrating an existing data dir
 
 When you move from a dev/manual data dir to the production one (or to a new
