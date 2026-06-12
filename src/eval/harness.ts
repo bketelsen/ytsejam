@@ -79,9 +79,12 @@ export interface BandSpec {
 }
 
 /**
- * Thresholds reflect measured behavior of the current system minus headroom
- * (see PLAN.md "Defaults reflect the current code's actual behavior — these
- * are not aspirational"). Calibration notes per band:
+ * Thresholds reflect measured behavior of the current system minus 5pp
+ * headroom, re-baselined per PLAN.md Task 4.4 after a 20-seed sweep
+ * (measured ranges were seed-invariant to ±0.13: short r@5 1.00 / para
+ * 0.75 / MRR 1.00 / F1 1.00 / stab 1.00; medium 0.88 / 0.00–0.13 / 0.69 /
+ * 0.33 / 0.40; long 0.88 / 0.00 / 0.88 / 0.33 / 0.20). Calibration notes
+ * per band:
  *
  * - short: everything alive; near-perfect is the honest bar.
  * - medium: at per-session clocks, preferences planted with 2–3 statements
@@ -101,10 +104,10 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     intervalDays: 14,
     turnsPerSession: 12,
     thresholds: {
-      recallAt5: 0.85,
-      mrr: 0.6,
-      paraphraseRecallAt5: 0.2,
-      preferenceF1: 0.75,
+      recallAt5: 0.95,
+      mrr: 0.95,
+      paraphraseRecallAt5: 0.7,
+      preferenceF1: 0.95,
       directiveRecall: 1,
       identityExpected: true,
       contradictionRequired: true,
@@ -123,14 +126,14 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     // even at the lowered floor.
     config: { profile: { identityFloor: 0.2 } },
     thresholds: {
-      recallAt5: 0.85,
-      mrr: 0.6,
+      recallAt5: 0.83,
+      mrr: 0.64,
       paraphraseRecallAt5: 0,
-      preferenceF1: 0.25,
+      preferenceF1: 0.28,
       directiveRecall: 0,
       identityExpected: true,
       contradictionRequired: true,
-      stability: 0.3,
+      stability: 0.35,
     },
   },
   long: {
@@ -142,10 +145,10 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     // against the seam, not just against the default.
     config: { profile: { identityFloor: 0.2 } },
     thresholds: {
-      recallAt5: 0.7,
-      mrr: 0.4,
+      recallAt5: 0.83,
+      mrr: 0.83,
       paraphraseRecallAt5: 0,
-      preferenceF1: 0.2,
+      preferenceF1: 0.28,
       directiveRecall: 0,
       identityExpected: false,
       contradictionRequired: false,
