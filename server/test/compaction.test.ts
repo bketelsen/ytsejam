@@ -520,6 +520,90 @@ describe("buildCompactionEvent", () => {
       "subagent task task-abc (parent session parent-session-123)",
     );
   });
+
+  it("marks succeeded=false when kept-set estimate exceeds budget", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true, // harness path succeeded
+        durationMs: 1000,
+        backupPath: "/tmp/session.jsonl.pre-compact-x",
+        pending: {
+          trigger: "proactive",
+          reason: "test",
+          tokensBefore: 850_000,
+          budget: 100_000,
+        },
+      },
+      {
+        tokensBefore: 850_000,
+        tokensAfter: 250_000, // 2.5x over budget — should flip succeeded
+        summaryTokens: 2000,
+      },
+    );
+    expect(event.succeeded).toBe(false);
+    expect(event.reason).toMatch(/KEPT_SET_OVERSIZED/);
+    expect(event.reason).toContain("tokensAfterEstimated=250000");
+    expect(event.reason).toContain("budget=100000");
+  });
+
+  it("marks succeeded=true when kept-set estimate fits under budget", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true,
+        durationMs: 1000,
+        backupPath: "/tmp/session.jsonl.pre-compact-x",
+        pending: {
+          trigger: "proactive",
+          reason: "test",
+          tokensBefore: 850_000,
+          budget: 100_000,
+        },
+      },
+      {
+        tokensBefore: 850_000,
+        tokensAfter: 60_000, // under 100k budget
+        summaryTokens: 2000,
+      },
+    );
+    expect(event.succeeded).toBe(true);
+    expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);
+  });
+
+  it("does NOT add the post-condition when harness path already failed", () => {
+    // If harness.compact() threw, succeeded=false stands regardless of estimate.
+    // The reason should be the harness error, not KEPT_SET_OVERSIZED.
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: false,
+        durationMs: 1000,
+        backupPath: "/tmp/session.jsonl.pre-compact-x",
+        pending: {
+          trigger: "proactive",
+          reason: "test",
+          tokensBefore: 850_000,
+          budget: 100_000,
+        },
+        error: new Error("compact threw"),
+      },
+      {
+        tokensBefore: 850_000,
+        tokensAfter: 60_000, // would pass the post-condition if checked
+        summaryTokens: 2000,
+      },
+    );
+    expect(event.succeeded).toBe(false);
+    expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);
+    expect(event.reason).toContain("compact threw");
+  });
 });
 
 describe("serializeJsonRecord", () => {

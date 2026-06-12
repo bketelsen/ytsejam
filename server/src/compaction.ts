@@ -349,12 +349,35 @@ export function buildCompactionEvent(
   const pending = result.pending;
   const details = compactionEntry?.details ?? {};
   const summaryText = compactionEntry?.summary ?? "";
-  const succeeded = result.succeeded === true;
+  const summaryTokens =
+    compactionEntry?.summaryTokens ?? Math.ceil(String(summaryText).length / 4);
+  const tokensAfterEstimated = compactionEntry?.tokensAfter ?? 0;
+
+  // Post-condition: succeeded is true only if (a) the harness path succeeded
+  // AND (b) the kept-set structural estimate fits under budget. Per #72: a
+  // working trim that still leaves an oversized kept-set (one giant tool
+  // result dominating the keep_recent window) must NOT report succeeded=true
+  // — otherwise the caller has no signal to surrender (the trigger for #76).
+  // The (budget>0 && tokensAfterEstimated>0) guard means: only gate strictly
+  // when BOTH a budget AND a measurement exist; missing-measurement paths
+  // (e.g. estimate-throws, no-pending-compaction) pass through unchanged.
+  const harnessSucceeded = result.succeeded === true;
+  const budget = pending?.budget ?? 0;
+  const fitsBudget =
+    budget > 0 && tokensAfterEstimated > 0
+      ? tokensAfterEstimated < budget
+      : true;
+  const succeeded = harnessSucceeded && fitsBudget;
+
   const reason = result.surrendered
     ? `VERIFY CORRUPTED: ${result.error?.message ?? "unknown error"}`
-    : result.succeeded === false && !result.backupPath
+    : !harnessSucceeded && !result.backupPath
       ? `SKIPPED: ${result.error?.message ?? pending?.reason ?? "backup failed"}`
-      : (pending?.reason ?? result.error?.message ?? "compaction fired");
+      : !harnessSucceeded
+        ? (result.error?.message ?? pending?.reason ?? "compaction fired")
+        : !fitsBudget
+          ? `KEPT_SET_OVERSIZED:tokensAfterEstimated=${tokensAfterEstimated}>budget=${budget}`
+          : (pending?.reason ?? "compaction fired");
 
   return {
     timestamp: new Date(),
@@ -371,10 +394,8 @@ export function buildCompactionEvent(
       pending && pending.tokensBefore > 0
         ? pending.tokensBefore
         : (compactionEntry?.tokensBefore ?? 0),
-    tokensAfterEstimated: compactionEntry?.tokensAfter ?? 0,
-    summaryTokens:
-      compactionEntry?.summaryTokens ??
-      Math.ceil(String(summaryText).length / 4),
+    tokensAfterEstimated,
+    summaryTokens,
     firstKeptEntryId: compactionEntry?.firstKeptEntryId ?? "",
     filesRead: Array.isArray(details.readFiles) ? details.readFiles : [],
     filesModified: Array.isArray(details.modifiedFiles)
