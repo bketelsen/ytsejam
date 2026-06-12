@@ -30,8 +30,8 @@ service — no root. Key facts from `deploy/ytsejam.service`:
   `EnvironmentFile=` for matching keys, so a stale env file can't flip it). This is the source of the
   subagent install gotcha documented in [`delegation.md`](delegation.md).
 - Path defaults (`YTSEJAM_PORT=9873`, `YTSEJAM_DATA_DIR=%h/.ytsejam/data`,
-  `YTSEJAM_WEB_DIST=%h/.ytsejam/current/web/dist`, `YTSEJAM_COG_SOCKET=%h/.local/share/cogmemory/cog-memory.sock`,
-  `YTSEJAM_PI_AUTH=%h/.pi/agent/auth.json`) live **in the unit** via `%h`, because systemd expands
+  `YTSEJAM_WEB_DIST=%h/.ytsejam/current/web/dist`, `YTSEJAM_PI_AUTH=%h/.pi/agent/auth.json`) live
+  **in the unit** via `%h`, because systemd expands
   `%h` in `Environment=` but does **not** expand `${HOME}`/`~` inside an `EnvironmentFile`. Override
   any of them only with an **absolute** path in the env file.
 - `EnvironmentFile=-%h/.ytsejam/ytsejam.env` — read *after* the unit's `Environment=` lines, so keys
@@ -39,8 +39,7 @@ service — no root. Key facts from `deploy/ytsejam.service`:
   at the app layer (`config.ts` requires `YTSEJAM_AUTH_TOKEN`) rather than at unit-parse time.
 - `ExecStartPre=` checks for `server/src/index.ts` and `web/dist/index.html` — fail loud at activation
   if a release is incomplete.
-- `cogmemory.service` is a **soft dependency** (`Wants=`/`After=`, not `Requires=`); ytsejam boots
-  without it and only the `cog_*` tools error.
+- Memory is in-process; the unit has no memory-service dependency.
 - Stop sends `SIGTERM` with `TimeoutStopSec=45` to let an in-flight LLM stream drain.
 
 ## Release layout
@@ -106,13 +105,11 @@ that sourced prod env would otherwise leak prod paths into dev. Differences from
 | Port | `9873` | `3000` (`DEV_PORT`) |
 | Code | `~/.ytsejam/current` | your checkout, live `--watch` reload |
 | Data | `~/.ytsejam/data` | `/tmp/ytsejam-dev/data` (throwaway; `WIPE=1` to reset) |
-| Memory socket | cogmemory **prod** socket | cogmemory **test** socket (`DEV_COG_SOCKET`, default `cogmemory-test`) |
+| Memory | in-process under the data dir | in-process under the throwaway data dir |
 | Web dist | prod release's | this checkout's freshly built `web/dist` |
 
 Notes that matter:
 
-- It reads **`DEV_COG_SOCKET`**, *not* `YTSEJAM_COG_SOCKET`, so an inherited prod cog socket can never
-  silently win.
 - It builds the web UI on launch (`env -u NODE_ENV npm run build --workspace web`) unless `NO_BUILD=1`,
   because `dev:server` serves a *prebuilt* `web/dist` (the server's `--watch` reloads the server, not
   the bundle). `NODE_ENV` is cleared for the build so devDeps are present.

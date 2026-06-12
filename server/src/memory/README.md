@@ -3,7 +3,7 @@
 ## Purpose
 
 `server/src/memory/` is the in-process memory module for ytsejam. It replaces
-the cogmemory daemon, folded into ytsejam on 2026-06-12 per
+the former external memory service, folded into ytsejam on 2026-06-12 per
 `docs/plans/2026-06-12-fold-cogmemory.md`.
 
 ## Public surface

@@ -28,7 +28,7 @@ The deploy/share/complexity wins:
 
 - **Install drops from 2 services + 2 configs + 2 data paths to 1 / 1 / 1.** This is the unblocker for the two pending friend installs.
 - **Memory-system patches ship with the next ytsejam release** — no daemon restart that ends the live session. Today, every cogmemory RPC merge requires Brian's deliberate restart timing.
-- **Removes:** unix-socket protocol, 60KB line-cap workaround, socket-chmod race window, daemon lifecycle, `cogmemory.service`+`cogmemory-test.service` pair, the `~/.chapterhouse/memory` directory name (legacy from a retired project).
+- **Removes:** unix-socket protocol, 60KB line-cap workaround, socket-chmod race window, daemon lifecycle, `cogmemory.service` plus test-service pair, the `~/.chapterhouse/memory` directory name (legacy from a retired project).
 - **Preserves:** the file format spec (markdown + L0 + domains.yml + glacier YAML frontmatter) — that's the real portability surface, and it's untouched. A future non-TS harness writes against the file format, not against an RPC.
 
 ## 2. What "fold" means concretely
@@ -37,7 +37,7 @@ The deploy/share/complexity wins:
 - All `cog_*` tools call in-process TypeScript functions instead of JSON-RPC over a socket.
 - The cogmemory repo gets archived after migration; its docs (`RPC-CONSOLIDATION.md`, `WIKI-TIER.md`, `TIERED-PATTERNS.md`) migrate to `ytsejam/docs/memory/` as the canonical spec.
 - The live store on disk is unchanged in format. The path moves from `~/.chapterhouse/memory` to `~/.ytsejam/data/memory/` as part of the migration.
-- The cogmemory daemon stops running. Its systemd units get disabled and removed. The socket file goes away.
+- The external memory service stops running. Its systemd units get disabled and removed. The socket file goes away.
 
 ## 3. Internal-boundary discipline (load-bearing for future optionality)
 
@@ -196,13 +196,13 @@ This is a memory-store change, NOT a code PR. Brian-driven.
 
 **Steps:**
 1. `systemctl --user stop ytsejam` (the live session ends).
-2. `systemctl --user stop cogmemory cogmemory-test` (daemons stop).
+2. `systemctl --user stop cogmemory <test-service>` (daemons stop).
 3. `mv ~/.chapterhouse/memory ~/.ytsejam/data/memory` (rename, single `mv`).
 4. `git -C ~/.ytsejam/data/memory log --oneline | head` — verify history intact.
 5. Restart ytsejam pointing at the new path (env var `YTSEJAM_MEMORY_DIR` if needed; default is the new path).
 6. `cog_rpc("health")` returns ok with the new path.
 7. Smoke: open a chat, ask "who are you?", confirm hot-memory loads.
-8. Remove `cogmemory.service`, `cogmemory-test.service` from `~/.config/systemd/user/`.
+8. Remove the memory service units from `~/.config/systemd/user/`.
 9. `systemctl --user daemon-reload`.
 10. `rm ~/.local/share/cogmemory/cog-memory.sock` (and the test socket).
 11. `rm -rf ~/.config/cogmemory/` (the config dir).
@@ -225,14 +225,14 @@ This is a memory-store change, NOT a code PR. Brian-driven.
 **PR-5b: Migration script + friend install path (D8).**
 
 - Add `deploy/migrate-to-folded.sh`:
-  - Detects `cogmemory.service` / `cogmemory-test.service` presence
+  - Detects memory service unit presence
   - Stops + disables both
   - Detects `~/.chapterhouse/memory` and offers to `mv` it to `~/.ytsejam/data/memory`
   - Removes the socket + config dir
   - Idempotent — re-running is a no-op
 - Update `README.md` install section: one service, one data dir.
 - Update `deploy/install.sh` (or equivalent): no cogmemory dependency.
-- Add a note in `CHANGELOG.md`: "BREAKING (deploy): cogmemory daemon dependency removed; run `deploy/migrate-to-folded.sh` before upgrading."
+- Add a note in `CHANGELOG.md`: "BREAKING (deploy): external memory service dependency removed; run `deploy/migrate-to-folded.sh` before upgrading."
 
 **Gate:** dry-run `migrate-to-folded.sh` on a snapshot of the live system; verify idempotency.
 
@@ -247,14 +247,14 @@ This is a memory-store change, NOT a code PR. Brian-driven.
 
 **Cog skills migration (cog-skills side, lives in `ytsejam/server/data/reference/cog-skills/`):**
 - The skills already talk about "memory tools" abstractly — `cog_read`, `cog_append`, etc. They will continue to work because the tool surface is preserved in PR-3.
-- One real change: any skill that says "the cogmemory daemon" or "restart cogmemory" must be reworded to "the memory module" / "restart ytsejam".
-- `grep -rn "cogmemory\|cog-memory-service\|cogmemory daemon\|daemon restart" server/data/reference/cog-skills/` — fix every hit. Likely <20 lines total.
+- One real change: any skill that names the external memory service or "restart cogmemory" must be reworded to "the memory module" / "restart ytsejam".
+- `grep -rn "cogmemory\|cog-memory-service\|external memory service\|service restart" server/data/reference/cog-skills/` — fix every hit. Likely <20 lines total.
 
 **Cog memory store cleanup (one cog_patch each):**
 - `cog-meta/improvements.md`: mark the "Cog memory store git commit cadence" line as RESOLVED (folded). Mark "Tiered patterns" as un-blocked-on-cogmemory-pause-now-blocked-on-fold.
 - `projects/cog-memory-service/hot-memory.md`: rewrite as a tombstone pointing at ytsejam's `server/src/memory/`.
 - Cross-domain `hot-memory.md`: remove the cogmemory bullet from Current Focus; add a note that memory is in-process.
-- `infra/hot-memory.md`: remove cogmemory daemon references.
+- `infra/hot-memory.md`: remove external memory service references.
 
 ## 6. Sequence + dependencies
 
@@ -329,7 +329,7 @@ D9 sets the bar at 100% test-case parity. Make it numerical: count Go test funct
 The fold is done when ALL of the following hold:
 
 1. `~/projects/cogmemory` is archived on GitHub with deprecation banner.
-2. `systemctl --user status cogmemory cogmemory-test` returns "not found" on Brian's machine.
+2. `systemctl --user status cogmemory <test-service>` returns "not found" on Brian's machine.
 3. `~/.chapterhouse/memory` no longer exists; `~/.ytsejam/data/memory` is the live store.
 4. ytsejam install instructions in README.md describe ONE service.
 5. ~~Two friends can install via the new path successfully.~~ Fresh-install dry-run from a clean home directory succeeds (friends will install fresh post-fold; no migration to verify).
@@ -352,7 +352,7 @@ The fold is done when ALL of the following hold:
 
 - The 60KB line-cap workaround in `CogClient` (the `MAX_REQUEST_BYTES` guard) disappears. Big appends now just work.
 - The "daemon was rebuilt but not restarted" failure mode disappears. Every memory-system change ships with the ytsejam release.
-- `cogmemory-test.service` disappears; dev uses `YTSEJAM_DATA_DIR=/tmp/...` and that's it.
+- The test memory service disappears; dev uses `YTSEJAM_DATA_DIR=/tmp/...` and that's it.
 - The `~/.chapterhouse/memory` directory name (named after Chapterhouse, which is DEAD) finally goes away. Symbolic but real — the dead-project-name in the live config has been a small daily wart.
 - Release engineering simplifies: one binary, one unit, one config file, one data dir. The deploy.sh becomes shorter.
 

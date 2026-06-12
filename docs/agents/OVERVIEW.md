@@ -90,15 +90,13 @@ directory. Plus per-session `delegate`/`schedule` tools, the global `skill` tool
 memory tools. Files: `index.ts` (assembly), `shell.ts`, `files.ts`, `search.ts`, `web.ts`,
 `delegation.ts`, `scheduling.ts`, `skills.ts`, `cog.ts`. See [`tools.md`](tools.md).
 
-### `server/src/cog/` — persistent memory client
+### `server/src/memory/` + `server/src/cog/` — persistent memory
 
-ytsejam talks to a **separate cogmemory Go daemon** over a unix socket (newline-delimited JSON-RPC
-2.0). `client.ts` (`CogClient`) opens one short-lived connection per request; `brief.ts`
-(`CogBriefProvider`) fetches a `session_brief` and renders the `## Memory (cog)` system-prompt section
-(cached with a short TTL, never throws — sessions degrade gracefully when the daemon is down). cog
-memory is **not** stored in `YTSEJAM_DATA_DIR`; ytsejam holds no copy. Prod and dev point at
-**different sockets** (`YTSEJAM_COG_SOCKET`): prod `~/.local/share/cogmemory/cog-memory.sock`, dev a
-`cogmemory-test` socket.
+Persistent memory is served in-process by `server/src/memory/`; there is no separate process, socket,
+or JSON-RPC hop. `server/src/cog/brief.ts` (`CogBriefProvider`) fetches a `session_brief` through the
+memory module and renders the `## Memory (cog)` system-prompt section (cached with a short TTL, never
+throws — sessions degrade gracefully if a memory read fails). The model-facing `cog_*` tool vocabulary
+is retained for skill compatibility. See [`storage.md`](storage.md) and `server/src/memory/README.md`.
 
 ### `server/skills/` — seeded skill playbooks
 
@@ -141,10 +139,10 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 1. Browser sends `POST /api/sessions/:id/messages` (bearer token) or the user opens a session.
 2. `server.ts` authenticates, routes to `AgentManager.sendMessage`, which opens/reuses the session's
    `AgentHarness` and prompts (or steers, if a run is in flight).
-3. The harness runs the agent loop: it composes the system prompt (persona + cog brief + skills table
+3. The harness runs the agent loop: it composes the system prompt (persona + memory brief + skills table
    + context files), streams model output, and **dispatches tool calls** to the wired tools — file/
    shell tools resolve against the session's workdir; `delegate` spawns a background subagent; `cog_*`
-   tools RPC the memory daemon.
+   tools call the in-process memory module.
 4. State changes are written **JSONL-first** (the pi session tree, or a store's event log), then
    mirrored into the sqlite index, then emitted on the `EventBus`.
 5. The WebSocket relays harness/metadata events to subscribed clients; the UI streams the assistant's
@@ -171,8 +169,8 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 - **Subagent worktree gotcha:** the harness shell inherits `NODE_ENV=production`, so a bare
   `npm install` skips devDeps the gate needs. Symlink `node_modules` from a good checkout, or install
   with `env -u NODE_ENV npm ci --include=dev`; the gate clears `NODE_ENV` itself. → [`delegation.md`](delegation.md)
-- **cog memory is a separate daemon over a unix socket**, soft-dependency, prod/dev use different
-  socket paths; the assistant degrades gracefully when it's down. → `server/src/cog/`, this doc above.
+- **Memory is in-process**, with no separate service/socket. Prod and dev isolate it by using different
+  data dirs; the assistant degrades gracefully if a memory read fails. → `server/src/memory/README.md`.
 - **Crash-safety via event-sourcing:** tasks and schedules record their state-changing event *before*
   the side effect (a cancel before abort; a schedule fire before inject), so a crash never
   double-fires and recovery is a fold over the log.
@@ -194,8 +192,6 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 | `YTSEJAM_GENERATE_TITLES` | `true` | LLM-generated session titles |
 | `YTSEJAM_CONTEXT_FILES` | `true` | auto-load `AGENTS.md`/`CLAUDE.md` into the prompt |
 | `YTSEJAM_PI_AUTH` | `~/.pi/agent/auth.json` | pi CLI OAuth credentials (Copilot/Codex subscriptions) |
-| `YTSEJAM_COG_SOCKET` | `~/.local/share/cogmemory-test/cog-memory-test.sock` (prod unit sets the prod socket) | cogmemory daemon unix socket (soft dep) |
-| `YTSEJAM_COG_ROLE` | `agent` | RBAC role on every cogmemory RPC |
 | `BRAVE_API_KEY` | — | enables the `web_search` tool |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, … | — | enabling a provider's key adds its models to the picker |
 
@@ -207,7 +203,7 @@ Config files:
   unit (via `%h`), because systemd doesn't expand `${HOME}`/`~` in an `EnvironmentFile`; override a
   path there only with an **absolute** path.
 - **Dev:** `deploy/dev.sh` sets every isolation-critical var inline (port 3000, throwaway data dir,
-  cogmemory-test socket, this checkout's `web/dist`) and clears `NODE_ENV`.
+  this checkout's `web/dist`) and clears `NODE_ENV`.
 
 ## Subsystem docs
 
