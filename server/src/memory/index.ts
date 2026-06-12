@@ -1,5 +1,4 @@
 import type {
-  ActionTarget,
   Cluster,
   ClusterCheckParams,
   Domain,
@@ -18,7 +17,6 @@ import type {
   LinkAuditResult,
   LinkIndexResult,
   ListResult,
-  Manifest,
   MemoryRoot,
   OkResult,
   OpenActionsParams,
@@ -38,6 +36,7 @@ import type {
 import * as store from "./store/index.ts";
 
 export type * from "./types.ts";
+export { Controller, loadManifest } from "./domain/index.ts";
 
 const notImplemented = (pr: string): never => {
   throw new Error(`not implemented — ${pr}`);
@@ -102,55 +101,7 @@ export async function git(params: GitParams): Promise<GitResult> {
   return store.git(params);
 }
 
-/** Load and parse domains.yml from a memory root; filled in PR-1b. */
-export async function loadManifest(_root: MemoryRoot): Promise<Manifest> {
-  return notImplemented("PR-1b");
-}
-
-/** Domain manifest controller for path resolution and validation; filled in PR-1b. */
-export class Controller {
-  readonly root: MemoryRoot;
-
-  constructor(root: MemoryRoot) {
-    this.root = root;
-  }
-
-  /** List declared domains from domains.yml; filled in PR-1b. */
-  async list(): Promise<Domain[]> {
-    return notImplemented("PR-1b");
-  }
-
-  /** Get a domain by id from domains.yml; filled in PR-1b. */
-  async get(_id: string): Promise<Domain> {
-    return notImplemented("PR-1b");
-  }
-
-  /** Resolve all action-items targets declared by domains.yml; filled in PR-1b. */
-  async actionItems(_domain?: string): Promise<ActionTarget[]> {
-    return notImplemented("PR-1b");
-  }
-
-  /** Resolve a declared file basename to its memory-root-relative path; filled in PR-1b. */
-  async resolveFile(_id: string, _file: string): Promise<string> {
-    return notImplemented("PR-1b");
-  }
-
-  /** Map a memory-root-relative path to its owning declared domain; filled in PR-1b. */
-  async domainForPath(_path: string): Promise<DomainForPathResult> {
-    return notImplemented("PR-1b");
-  }
-
-  /** Validate that a write path is well-formed for its domain; filled in PR-1b. */
-  async validateWrite(_path: string): Promise<void> {
-    return notImplemented("PR-1b");
-  }
-
-  /** Return the last domains.yml hot-reload error, if any; filled in PR-1b. */
-  async lastError(): Promise<string | null> {
-    return notImplemented("PR-1b");
-  }
-}
-
+/** Domain controller exports are implemented in ./domain (PR-1b). */
 /** Build the session-start memory brief envelope; filled in PR-2a. */
 export async function sessionBrief(): Promise<SessionBrief> {
   return notImplemented("PR-2a");

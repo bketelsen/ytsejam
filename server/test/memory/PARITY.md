@@ -1,4 +1,6 @@
-# PR-1a Go test parity
+# Memory test parity
+
+## Store (PR-1a)
 
 Scope: primitive store functions and write-path RPC cases from cogmemory. Consolidated/domain tests in the same large Go files are intentionally owned by later PRs.
 
@@ -65,3 +67,23 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | rpc/write_path_test.go TestWriteRejectsIDAsPath | `write allow-list...` |
 | TestAppendRejectsIDAsPath | append id-as-path case |
 | TestWriteUndeclaredFileUnderDomainPathStillAllowed | `write allow-list...` allows `*/INDEX.md` under configured path |
+
+## Domain (PR-1b)
+
+| Go test | Vitest equivalent | Status |
+|---|---|---|
+| TestControllerLoadAndList | ControllerLoadAndList | Ported |
+| TestControllerGetIncludesSubdomains | ControllerGetIncludesSubdomains | Ported |
+| TestControllerObservationsResolves | ControllerObservationsResolves | Ported |
+| TestControllerActionItemsResolves | ControllerActionItemsResolves | Ported |
+| TestControllerResolveFile | ControllerResolveFile | Ported |
+| TestControllerValidateWriteWarnsUnknown | ControllerValidateWriteWarnsUnknown | Ported |
+| TestControllerHotReloadOnMtimeChange | ControllerHotReloadOnMtimeChange | Ported |
+| TestControllerMalformedYAMLRejected | ControllerMalformedYAMLRejected | Ported |
+| TestControllerInvalidSchemaRejected | ControllerInvalidSchemaRejected | Ported; includes bad-file and slash-file |
+| TestControllerMissingManifestEmpty | ControllerMissingManifestEmpty | Ported |
+| TestControllerEntitiesResolves | ControllerEntitiesResolves | Ported |
+| TestControllerValidateWriteFlagsIDAsPath | ControllerValidateWriteFlagsIDAsPath | Ported |
+| TestControllerValidateWriteAllowsIDPrefixedPath | ControllerValidateWriteAllowsIDPrefixedPath | Ported |
+
+Additional PR-1b coverage required by plan: `loadManifest` happy path, `domainForPath`, optional domain filters for action-items/observations/entities, hot-reload stale-but-served error path, I1 null-domains regression, I2 `..` resolution + escape rejection, I5 recovery after parse error.

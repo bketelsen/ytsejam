@@ -19,10 +19,12 @@ export interface Manifest {
 }
 
 /** Resolved domain-owned file target. */
-export interface ActionTarget {
+export interface DomainFileRef {
   domain: string;
   path: string;
+  file: string;
 }
+
 
 /** Result of mapping a memory-root-relative path back to a declared domain file. */
 export interface DomainForPathResult {
