@@ -1,6 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import * as memory from "../memory/index.ts";
+import type { DomainSummaryParams, GitParams } from "../memory/index.ts";
 import { truncate } from "./shell.ts";
 
 /**
@@ -36,11 +37,11 @@ const RPC_METHODS = [
 ] as const;
 
 type RpcMethod = (typeof RPC_METHODS)[number];
-type RpcParams = Record<string, unknown>;
+type RpcParams = Record<string, unknown> & Partial<DomainSummaryParams> & Partial<GitParams>;
 
 const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = {
   "session_brief": (params) => memory.sessionBrief(params),
-  "domain_summary": (params) => memory.domainSummary(params as any),
+  "domain_summary": (params) => memory.domainSummary(params as DomainSummaryParams),
   "housekeeping_scan": (params) => memory.housekeepingScan(params),
   "open_actions": (params) => memory.openActions(params),
   "recent_observations": (params) => memory.recentObservations(params),
@@ -53,17 +54,13 @@ const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = 
   "scenario_check": (params) => memory.scenarioCheck(params),
   "domains.list": async (params) => {
     rejectParams("domains.list", params, []);
-    const root = memoryRootFromHealth(await memory.health());
-    if (!root) throw new Error("domains.list: memory root unavailable");
-    return { domains: new memory.Controller(root).list() };
+    return { domains: new memory.Controller(memory.memoryRoot()).list() };
   },
   "domains.get": async (params) => {
     rejectParams("domains.get", params, ["id"]);
     const id = params.id;
     if (typeof id !== "string" || id === "") throw new Error("domains.get: id is required");
-    const root = memoryRootFromHealth(await memory.health());
-    if (!root) throw new Error("domains.get: memory root unavailable");
-    return { domain: new memory.Controller(root).get(id) };
+    return { domain: new memory.Controller(memory.memoryRoot()).get(id) };
   },
   "l0index": (params) => memory.l0index(params),
   "stats": (params) => {
@@ -72,22 +69,23 @@ const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = 
     if (prefix !== undefined && typeof prefix !== "string") throw new Error("stats: prefix must be a string");
     return memory.stats(prefix);
   },
-  "git": (params) => memory.git(params as any),
+  "git": (params) => memory.git(params as GitParams),
   "health": (params) => {
     rejectParams("health", params, []);
     return memory.health();
   },
 };
 
+// rejectParams: tool-layer unknown-key guard for methods whose memory function
+// does not carry its own validateParams (Controller methods + scalar/no-arg calls).
+// The other methods route to memory.* functions that already enforce D12
+// strict-params via their own validateParams call.
 function rejectParams(method: string, params: RpcParams, allowed: string[]): void {
   const allowedSet = new Set(allowed);
   const key = Object.keys(params).find((k) => !allowedSet.has(k));
   if (key) throw new Error(`${method}: invalid params: unknown param key: ${key}`);
 }
 
-function memoryRootFromHealth(health: Awaited<ReturnType<typeof memory.health>>): string | undefined {
-  return health[("memory_" + "root") as keyof typeof health] as string | undefined;
-}
 
 function textResult(text: string) {
   return { content: [{ type: "text" as const, text: truncate(text) }], details: {} };

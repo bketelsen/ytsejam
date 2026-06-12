@@ -46,6 +46,7 @@ import { scenarioCheck as consolidatedScenarioCheck } from "./consolidated/scena
 
 export type * from "./types.ts";
 export { Controller, loadManifest } from "./domain/index.ts";
+export { memoryRoot } from "./store/index.ts";
 
 const notImplemented = (pr: string): never => {
   throw new Error(`not implemented — ${pr}`);

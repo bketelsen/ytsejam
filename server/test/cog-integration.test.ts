@@ -114,6 +114,11 @@ describe("in-process cog tool integration", () => {
       const out = await run("cog_rpc", { method: c.method, params: c.params });
       const parsed = JSON.parse(out);
       for (const key of c.expectKeys) expect(parsed).toHaveProperty(key);
+      if (c.method === "domains.list") {
+        expect(parsed.domains).toBeInstanceOf(Array);
+        expect(parsed.domains.length).toBeGreaterThan(0);
+        expect(parsed.domains.map((d: { id: string }) => d.id)).toContain("personal");
+      }
     }
   });
 });
