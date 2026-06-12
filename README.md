@@ -7,11 +7,11 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 
 ## Prerequisites
 
-- **Operating system:** Linux. The deploy is built around `systemd --user`, which rules out macOS and Windows. Tested on Fedora-family (snosi); Ubuntu/Debian/Arch with `systemd` should work.
+- **Operating system:** Linux. The deploy is built around `systemd --user`, which rules out macOS and Windows. Tested on Fedora-family Linux; Ubuntu/Debian/Arch with `systemd` should work.
 - **Node.js ≥ 22.0.0** — required for the built-in `node:sqlite` module the memory store uses. Check with `node --version`.
 - **`systemd` with user services.** If running headless, enable lingering so the service survives logout: `loginctl enable-linger "$USER"`.
 - **`git`, `npm`, and a Bourne-compatible shell** for the install scripts.
-- **~200 MB free disk** for `node_modules`; runtime data under `~/.ytsejam/data` grows with use.
+- **~400 MB free disk** for `node_modules`; runtime data under `~/.ytsejam/data` grows with use.
 - **An LLM provider credential** for runtime: one of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `BRAVE_API_KEY` (for web search), or a GitHub Copilot subscription via `~/.pi/agent/auth.json`. See `deploy/ytsejam.env.example` for the current list.
 
 ## Run
@@ -43,7 +43,7 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 - **Loopback by default.** ytsejam binds `127.0.0.1` — only processes on the same machine can reach it. Override with `YTSEJAM_HOST=0.0.0.0` only behind a reverse proxy you trust.
 - **Single shared bearer token.** Authentication is one token (`YTSEJAM_AUTH_TOKEN`). Anyone who has it has full agent access. Treat it like an SSH key: rotate if leaked, never commit, never share over plaintext channels.
 - **The agent has a `bash` tool.** A reachable, token-known endpoint is therefore a remote shell on the host. Do not expose to the public internet. Do not run ytsejam as a user with files you wouldn't want the agent to be able to read or write.
-- **Subagents, schedules, and tools** (`web_fetch`, `bash`, `delegate`, file operations) run with the ytsejam process's privileges. See `docs/agents/tooling.md` if you intend to harden further.
+- **Subagents, schedules, and tools** (`web_fetch`, `bash`, `delegate`, file operations) run with the ytsejam process's privileges. See [`docs/agents/tools.md`](docs/agents/tools.md) for the full tool surface and how each is registered.
 - **Outbound traffic** goes to whichever LLM provider you configured and to URLs the agent decides to fetch via `web_fetch`/`web_search`. There is no built-in egress filter.
 
 ## Development
