@@ -4,8 +4,12 @@ import { isContextOverflow, type AssistantMessage, type Model } from "@earendil-
 import {
   estimateContextTokens,
   shouldCompact,
+  type AgentHarness,
   type AgentMessage,
   type CompactionSettings,
+  type JsonlSessionMetadata,
+  type JsonlSessionRepo,
+  type Session,
 } from "@earendil-works/pi-agent-core";
 
 /**
@@ -380,4 +384,129 @@ export async function verifySessionLoadable(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
   }
+}
+
+
+/**
+ * Per-opened-session state we need to carry for compaction wiring.
+ *
+ * Attached to the OpenSession object held by AgentManager / TaskManager.
+ * Defined as a structural interface here so the orchestrator can be
+ * implemented against this contract without circular imports back into
+ * manager.ts.
+ */
+export interface CompactionWiringState {
+  pendingCompaction: PendingCompaction | null;
+  reactiveRetryAttempted: boolean;
+}
+
+export interface PendingCompaction {
+  trigger: "proactive" | "reactive";
+  reason: string;
+  tokensBefore: number;
+  budget: number;
+}
+
+/**
+ * Minimal subset of the OpenSession shape the orchestrator needs.
+ *
+ * Kept minimal — only the pieces compaction touches. Allows the orchestrator
+ * to remain testable without importing the full OpenSession from manager.ts.
+ */
+export interface OpenedForCompaction {
+  session: Session<JsonlSessionMetadata> & { metadata: JsonlSessionMetadata };
+  harness: AgentHarness;
+  compaction: CompactionWiringState;
+}
+
+export interface RunCompactionResult {
+  fired: boolean;
+  succeeded?: boolean;
+  surrendered?: boolean;
+  durationMs?: number;
+  backupPath?: string;
+  error?: Error;
+}
+
+/**
+ * The orchestrator called at idle boundaries and from the reactive-error path.
+ * No-op if no pending compaction.
+ *
+ * Flow:
+ *   1. Read+clear the pending flag (clear eagerly so concurrent triggers don't double-fire).
+ *   2. snapshotSessionJsonl(opened.session.metadata.path) — backup FIRST. If this throws,
+ *      ABORT compaction entirely per design §5 (don't call harness.compact). Best-effort
+ *      pruneOldBackups runs in parallel (fire-and-forget) — failure doesn't abort.
+ *   3. await opened.harness.compact(CUSTOM_INSTRUCTIONS).
+ *   4. verifySessionLoadable(() => repo.open(opened.session.metadata)) — corruption check.
+ *      If load fails: surrender flag set, user surrender message responsibility falls
+ *      to the caller (manager.ts wires the surrender emit).
+ *
+ * Caller decides what to do based on the returned flags:
+ *   - fired=false      → nothing to do
+ *   - succeeded=true   → safe to continue (session_compact handler ran the observability write)
+ *   - succeeded=false  → harness.compact errored; clear pending; if reactive caller, surrender
+ *   - surrendered=true → JSONL corrupted post-compact; surrender message MUST be emitted by caller
+ */
+export async function runCompactionIfPending(
+  opened: OpenedForCompaction,
+  repo: JsonlSessionRepo,
+): Promise<RunCompactionResult> {
+  const pending = opened.compaction.pendingCompaction;
+  if (!pending) return { fired: false };
+
+  // Clear flag eagerly so concurrent triggers don't double-fire
+  opened.compaction.pendingCompaction = null;
+
+  const start = Date.now();
+  const sessionFilePath = opened.session.metadata.path;
+  let backupPath: string;
+
+  try {
+    backupPath = await snapshotSessionJsonl(sessionFilePath);
+  } catch (err) {
+    console.error(`[compaction] backup failed for session ${opened.session.metadata.id}, ABORTING compaction:`, err);
+    return { fired: true, succeeded: false, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+
+  // Best-effort prune (no abort on failure)
+  void pruneOldBackups(sessionFilePath, 3);
+
+  try {
+    await opened.harness.compact(CUSTOM_INSTRUCTIONS);
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    console.error(`[compaction] harness.compact failed for session ${opened.session.metadata.id}:`, e);
+    return {
+      fired: true,
+      succeeded: false,
+      durationMs: Date.now() - start,
+      backupPath,
+      error: e,
+    };
+  }
+
+  // Verify the session is still loadable after compaction wrote
+  const verify = await verifySessionLoadable(() => repo.open(opened.session.metadata));
+  if (!verify.ok) {
+    console.error(
+      `[compaction] post-compact load verification FAILED for session ${opened.session.metadata.id}:`,
+      verify.error,
+    );
+    return {
+      fired: true,
+      succeeded: false,
+      surrendered: true,
+      durationMs: Date.now() - start,
+      backupPath,
+      error: verify.error,
+    };
+  }
+
+  return {
+    fired: true,
+    succeeded: true,
+    durationMs: Date.now() - start,
+    backupPath,
+  };
 }

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, readdir, readFile, rm } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model, AssistantMessage } from "@earendil-works/pi-ai";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentHarness, AgentMessage, JsonlSessionMetadata, JsonlSessionRepo, Session } from "@earendil-works/pi-agent-core";
 import {
   computeReserveTokens,
   buildSettings,
@@ -19,7 +19,9 @@ import {
   snapshotSessionJsonl,
   pruneOldBackups,
   verifySessionLoadable,
+  runCompactionIfPending,
   type CompactionEvent,
+  type OpenedForCompaction,
 } from "../src/compaction.ts";
 
 const fauxModel = (cw: number, mt: number): Model<any> =>
@@ -453,5 +455,92 @@ describe("verifySessionLoadable", () => {
     const result = await verifySessionLoadable(reload);
     expect(result.ok).toBe(false);
     expect(result.error?.message).toBe("plain string");
+  });
+});
+
+
+describe("runCompactionIfPending", () => {
+  let tmp: string;
+  let sessionFilePath: string;
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "orchestrator-test-"));
+    const sessionDir = join(tmp, "sessions", "--chat--");
+    await mkdir(sessionDir, { recursive: true });
+    sessionFilePath = join(sessionDir, "2026-06-12T00-00-00-000Z_test-uuid.jsonl");
+    await writeFile(sessionFilePath, "line\n");
+  });
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  // Helper: build a mock OpenedForCompaction with a controllable harness.compact()
+  const makeMockOpened = (compactImpl: () => Promise<void>): OpenedForCompaction => {
+    const harness = { compact: compactImpl } as unknown as AgentHarness;
+    return {
+      session: {
+        metadata: { id: "test-uuid", path: sessionFilePath } as JsonlSessionMetadata,
+      } as unknown as Session<JsonlSessionMetadata> & { metadata: JsonlSessionMetadata },
+      harness,
+      compaction: { pendingCompaction: null, reactiveRetryAttempted: false },
+    };
+  };
+
+  const okRepo = { open: async () => ({}) } as unknown as JsonlSessionRepo;
+  const failingRepo = { open: async () => { throw new Error("corrupt"); } } as unknown as JsonlSessionRepo;
+
+  it("returns fired:false when no pending", async () => {
+    const opened = makeMockOpened(async () => { });
+    const r = await runCompactionIfPending(opened, okRepo);
+    expect(r.fired).toBe(false);
+  });
+
+  it("calls harness.compact and returns succeeded:true on happy path", async () => {
+    let called = false;
+    const opened = makeMockOpened(async () => { called = true; });
+    opened.compaction.pendingCompaction = {
+      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+    };
+    const r = await runCompactionIfPending(opened, okRepo);
+    expect(called).toBe(true);
+    expect(r.fired).toBe(true);
+    expect(r.succeeded).toBe(true);
+    expect(r.backupPath).toMatch(/\.pre-compact-\d+$/);
+    expect(opened.compaction.pendingCompaction).toBeNull(); // cleared
+  });
+
+  it("returns succeeded:false on harness.compact error", async () => {
+    const opened = makeMockOpened(async () => { throw new Error("summarization_failed"); });
+    opened.compaction.pendingCompaction = {
+      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+    };
+    const r = await runCompactionIfPending(opened, okRepo);
+    expect(r.fired).toBe(true);
+    expect(r.succeeded).toBe(false);
+    expect(r.error?.message).toBe("summarization_failed");
+  });
+
+  it("returns surrendered:true when post-compact load fails", async () => {
+    const opened = makeMockOpened(async () => { /* compact succeeds */ });
+    opened.compaction.pendingCompaction = {
+      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+    };
+    const r = await runCompactionIfPending(opened, failingRepo);
+    expect(r.fired).toBe(true);
+    expect(r.succeeded).toBe(false);
+    expect(r.surrendered).toBe(true);
+    expect(r.error?.message).toBe("corrupt");
+  });
+
+  it("returns succeeded:false on backup failure (source file missing)", async () => {
+    const opened = makeMockOpened(async () => { });
+    // Point the session at a path that doesn't exist:
+    (opened.session as any).metadata.path = join(tmp, "does-not-exist.jsonl");
+    opened.compaction.pendingCompaction = {
+      trigger: "proactive", reason: "test", tokensBefore: 900_000, budget: 800_000,
+    };
+    const r = await runCompactionIfPending(opened, okRepo);
+    expect(r.fired).toBe(true);
+    expect(r.succeeded).toBe(false);
+    expect(r.error).toBeDefined();
   });
 });

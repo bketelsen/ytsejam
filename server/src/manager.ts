@@ -2,6 +2,7 @@ import path from "node:path";
 import {
   AgentHarness,
   JsonlSessionRepo,
+  estimateContextTokens,
   type AgentHarnessEvent,
   type AgentMessage,
   type AgentTool,
@@ -9,7 +10,7 @@ import {
   type Session,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import { completeSimple, type Model } from "@earendil-works/pi-ai";
+import { completeSimple, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -18,6 +19,20 @@ import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
 import { createSessionCwdTools } from "./tools/index.ts";
+import {
+  appendDevLogLine,
+  appendSessionCompactionJsonl,
+  buildSurrenderMessage,
+  classifyOverflow,
+  compactionEnabled,
+  computeReserveTokens,
+  decideCompaction,
+  formatDevLogLine,
+  runCompactionIfPending,
+  serializeJsonRecord,
+  type CompactionEvent,
+  type CompactionWiringState,
+} from "./compaction.ts";
 
 const SESSIONS_CWD = "chat";
 
@@ -88,6 +103,7 @@ interface OpenSession {
   running: boolean;
   /** rename requested while running; flushed to JSONL on agent_end (JSONL is SSOT) */
   pendingTitle?: string;
+  compaction?: CompactionWiringState;
 }
 
 export function previewOf(message: AgentMessage): string {
@@ -196,31 +212,41 @@ export class AgentManager {
       getApiKeyAndHeaders: makeApiKeyResolver(this.opts.authStore),
     });
     const opened: OpenSession = { id: metadata.id, metadata, session, harness, running: false };
+    (opened.session as any).metadata = metadata;
 
-    harness.subscribe((event: AgentHarnessEvent) => {
-      this.onHarnessEvent(opened, event);
-    });
+    harness.subscribe((event: AgentHarnessEvent) =>
+      this.onHarnessEvent(opened, event).catch((err) =>
+        console.error(`agent event handler failed for session ${opened.id}`, err),
+      ),
+    );
+
+    // Compaction wiring (no-op if YTSEJAM_COMPACTION_ENABLED=false at boot)
+    if (compactionEnabled()) {
+      opened.compaction = { pendingCompaction: null, reactiveRetryAttempted: false };
+    }
     return opened;
   }
 
-  private onHarnessEvent(opened: OpenSession, event: AgentHarnessEvent): void {
+  private async onHarnessEvent(opened: OpenSession, event: AgentHarnessEvent): Promise<void> {
     if (event.type === "agent_start") opened.running = true;
     if (event.type === "agent_end") opened.running = false;
 
     if (event.type === "message_end") {
-      const message = event.message as AgentMessage;
-      const preview = previewOf(message);
-      if (preview) {
-        this.opts.indexer.touchSession(opened.id, new Date().toISOString(), preview);
-      }
-      if ((message as any).role === "assistant") {
-        this.opts.indexer.setUnread(opened.id, true);
-      }
-      this.emitMeta(opened.id);
+      this.recordMessageEnd(opened, event.message as AgentMessage);
     }
 
     if (FORWARDED_EVENTS.has(event.type)) {
       this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: event as any });
+    }
+
+    if (event.type === "turn_end") {
+      await this.handleCompactionTurnEnd(opened, event);
+    }
+
+    if (event.type === "session_compact" && opened.compaction) {
+      void this.recordCompactionEvent(opened, event).catch((err) =>
+        console.error("[compaction] session_compact observability failed:", err),
+      );
     }
 
     if (event.type === "agent_end") {
@@ -241,8 +267,163 @@ export class AgentManager {
         // outside the run's listener settlement to avoid reentrancy
         setTimeout(() => void this.maybeGenerateTitle(opened), 0);
       }
+      if (opened.compaction?.pendingCompaction?.trigger === "reactive") {
+        const result = await runCompactionIfPending(opened as any, this.repo);
+        if (!result.succeeded) {
+          await this.emitCompactionSurrender(opened);
+        } else {
+          setTimeout(() => {
+            if (this.open.get(opened.id) !== opened) return; // closed or deleted
+            opened.running = true;
+            opened.harness.prompt("Please retry your previous response now that the conversation context has been compacted.").catch((err) => {
+              console.error(`reactive retry prompt failed for session ${opened.id}`, err);
+              opened.running = false;
+            });
+          }, 0);
+        }
+      }
     }
   }
+
+  private async handleCompactionTurnEnd(opened: OpenSession, event: AgentHarnessEvent): Promise<void> {
+    if (!opened.compaction || event.type !== "turn_end") return;
+    const msg = event.message as AssistantMessage;
+    const model = opened.harness.getModel();
+
+    if (msg.stopReason === "error") {
+      if (classifyOverflow(msg, model)) {
+        if (opened.compaction.reactiveRetryAttempted) {
+          opened.compaction.pendingCompaction = null;
+          opened.compaction.reactiveRetryAttempted = false;
+          await this.emitCompactionSurrender(opened);
+          return;
+        }
+        opened.compaction.reactiveRetryAttempted = true;
+        opened.compaction.pendingCompaction = {
+          trigger: "reactive",
+          reason: "isContextOverflow",
+          tokensBefore: 0,
+          budget: model.contextWindow - computeReserveTokens(model),
+        };
+      }
+      return;
+    }
+
+    opened.compaction.reactiveRetryAttempted = false;
+    try {
+      const messages = (await opened.session.buildContext()).messages;
+      const decision = decideCompaction(messages, opened.harness.getModel());
+      if (decision.shouldFire) {
+        opened.compaction.pendingCompaction = {
+          trigger: "proactive",
+          reason: decision.reason,
+          tokensBefore: decision.tokensBefore,
+          budget: decision.budget,
+        };
+      }
+    } catch (err) {
+      console.error("[compaction] turn_end decision failed:", err);
+    }
+  }
+
+  private async runPendingCompactionAtIdle(opened: OpenSession): Promise<boolean> {
+    if (!opened.compaction?.pendingCompaction) return true;
+    const result = await runCompactionIfPending(opened as any, this.repo);
+    if (result.surrendered) {
+      await this.emitCompactionSurrender(opened);
+      return false;
+    }
+    return true;
+  }
+
+  private recordMessageEnd(opened: OpenSession, message: AgentMessage): void {
+    const preview = previewOf(message);
+    if (preview) {
+      this.opts.indexer.touchSession(opened.id, new Date().toISOString(), preview);
+    }
+    if ((message as any).role === "assistant") {
+      this.opts.indexer.setUnread(opened.id, true);
+    }
+    this.emitMeta(opened.id);
+  }
+
+  private async emitCompactionSurrender(opened: OpenSession): Promise<void> {
+    const model = opened.harness.getModel();
+    let tokens = 0;
+    try {
+      tokens = estimateContextTokens((await opened.session.buildContext()).messages).tokens;
+    } catch {
+      // Best-effort diagnostic only.
+    }
+    const text = buildSurrenderMessage(tokens, model.contextWindow);
+    const message = {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      stopReason: "stop",
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      timestamp: Date.now(),
+    } as AgentMessage;
+    await opened.harness.appendMessage(message);
+    this.recordMessageEnd(opened, message);
+    this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: { type: "message_start", message } as any });
+    this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: { type: "message_end", message } as any });
+    this.opts.bus.emit({ type: "agent", sessionId: opened.id, event: { type: "turn_end", message, toolResults: [] } as any });
+  }
+
+  private async recordCompactionEvent(
+    opened: OpenSession,
+    event: any /* the session_compact harness event */,
+  ): Promise<void> {
+    if (!opened.compaction) return;
+    const model = opened.harness.getModel();
+    const pending = opened.compaction.pendingCompaction;
+    const sessionFilePath = opened.metadata.path;
+
+    // Best-effort: extract details from the pi compaction entry
+    const compactionEntry = (event as any).compactionEntry ?? {};
+    const summaryText = compactionEntry.summary ?? "";
+
+    let tokensAfter = 0;
+    try {
+      const messages = (await opened.session.buildContext()).messages;
+      tokensAfter = estimateContextTokens(messages).tokens;
+    } catch {
+      // Best-effort
+    }
+
+    const details = compactionEntry.details ?? {};
+    const compactionEvent: CompactionEvent = {
+      timestamp: new Date(),
+      sessionId: opened.metadata.id,
+      subagentTaskId: null,
+      trigger: pending?.trigger ?? "proactive",
+      reason: pending?.reason ?? "session_compact fired",
+      model: `${model.provider}/${model.id}`,
+      contextWindow: model.contextWindow,
+      reserveTokens: computeReserveTokens(model),
+      keepRecentTokens: 20_000,
+      tokensBefore: pending?.tokensBefore ?? compactionEntry.tokensBefore ?? 0,
+      tokensAfter,
+      summaryTokens: Math.ceil(summaryText.length / 4), // char/4 heuristic
+      firstKeptEntryId: compactionEntry.firstKeptEntryId ?? "",
+      droppedTurns: 0, // best-effort; not always available from pi event
+      filesRead: Array.isArray(details.readFiles) ? details.readFiles : [],
+      filesModified: Array.isArray(details.modifiedFiles) ? details.modifiedFiles : [],
+      compactionDurationMs: 0, // orchestrator already returned this; can be plumbed if needed
+      succeeded: true,
+      backupPath: "", // orchestrator already returned this; not available in this event
+    };
+
+    // Dev-log entry — write to the cog memory dev-log file
+    const devLogPath = `${this.opts.dataDir}/memory/projects/ytsejam/dev-log.md`;
+    await appendDevLogLine(formatDevLogLine(compactionEvent), devLogPath);
+
+    // Per-session JSONL record — co-located with the session file
+    await appendSessionCompactionJsonl(sessionFilePath, serializeJsonRecord(compactionEvent));
+  }
+
 
   // ---- messaging ---------------------------------------------------------
 
@@ -252,6 +433,7 @@ export class AgentManager {
       await opened.harness.steer(text);
       return;
     }
+    if (!(await this.runPendingCompactionAtIdle(opened))) return;
     opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
     opened.harness.prompt(text).catch((err) => {
       // run failures already surface as assistant error messages via events;
@@ -272,6 +454,7 @@ export class AgentManager {
       await opened.harness.followUp(text);
       return;
     }
+    if (!(await this.runPendingCompactionAtIdle(opened))) return;
     opened.running = true;
     opened.harness.prompt(text).catch((err) => {
       console.error(`task result injection failed for session ${id}`, err);

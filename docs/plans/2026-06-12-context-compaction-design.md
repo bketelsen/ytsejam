@@ -71,7 +71,7 @@ next turn about to dispatch (phase becomes "idle")
     → snapshot session JSONL → <timestamp>_<id>.jsonl.pre-compact-<epoch-ms>
     → prune older backups (keep last 3)
     → await harness.compact(CUSTOM_INSTRUCTIONS)
-    → reload session via JsonlSessionRepo.load(id) in try/catch
+    → reload session via `repo.open(opened.session.metadata)` in try/catch (pi's JsonlSessionRepo has no `load` method; `open(metadata)` is the canonical reload)
       → success → clear flag, emit session_compact handler chain
       → corruption → log + dev-log warning + surrender message to user
   → resume normal dispatch
