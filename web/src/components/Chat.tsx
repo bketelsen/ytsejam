@@ -13,6 +13,7 @@ import {
 import { client, getToken, setToken } from "@/lib/api";
 import type { ChatMessage, TaskRow } from "@/lib/types";
 import { Message } from "./Message";
+import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { TaskTranscriptDialog } from "./TaskCard";
 
 export function Chat({
@@ -87,9 +88,15 @@ export function Chat({
             <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
           )}
           {messages.map((m, i) => (
-            <Message key={i} message={m} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />
+            <MessageErrorBoundary key={i} message={m}>
+              <Message message={m} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />
+            </MessageErrorBoundary>
           ))}
-          {streaming && <Message message={streaming} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />}
+          {streaming && (
+            <MessageErrorBoundary message={streaming}>
+              <Message message={streaming} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />
+            </MessageErrorBoundary>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
