@@ -62,8 +62,8 @@ const fauxModel = (cw: number, mt: number): Model<any> =>
 
 describe("computeReserveTokens", () => {
   it("returns maxTokens + 16k for large-output models", () => {
-    expect(computeReserveTokens(fauxModel(1_000_000, 64_000))).toBe(80_000);
-    expect(computeReserveTokens(fauxModel(1_000_000, 128_000))).toBe(144_000);
+    expect(computeReserveTokens(fauxModel(1_000_000, 64_000))).toBe(80_384);
+    expect(computeReserveTokens(fauxModel(1_000_000, 128_000))).toBe(144_384);
   });
 
   it("returns 32k floor for small-output models", () => {
@@ -72,8 +72,8 @@ describe("computeReserveTokens", () => {
   });
 
   it("uses maxTokens + 16k when above floor", () => {
-    // 17k + 16k = 33k > 32k floor
-    expect(computeReserveTokens(fauxModel(200_000, 17_000))).toBe(33_000);
+    // 17k + 16,384 = 33,384 > 32k floor
+    expect(computeReserveTokens(fauxModel(200_000, 17_000))).toBe(33_384);
   });
 });
 
@@ -81,7 +81,7 @@ describe("buildSettings", () => {
   it("returns CompactionSettings with computed reserve", () => {
     const s = buildSettings(fauxModel(1_000_000, 64_000));
     expect(s.enabled).toBe(true);
-    expect(s.reserveTokens).toBe(80_000);
+    expect(s.reserveTokens).toBe(80_384);
     expect(s.keepRecentTokens).toBe(20_000);
   });
 });
@@ -110,17 +110,17 @@ describe("decideCompaction", () => {
     ({ role: "user", content: [{ type: "text", text }] } as AgentMessage);
 
   it("fires when tokens exceed budget", () => {
-    const model = fauxModel(1_000_000, 64_000); // budget = 920_000
+    const model = fauxModel(1_000_000, 64_000); // budget = 919_616
     const messages = [assistantMsgWithUsage(950_000)];
     const d = decideCompaction(messages, model);
     expect(d.shouldFire).toBe(true);
     expect(d.tokensBefore).toBe(950_000);
-    expect(d.budget).toBe(920_000);
+    expect(d.budget).toBe(919_616);
   });
 
   it("does not fire one token below budget", () => {
     const model = fauxModel(1_000_000, 64_000);
-    const messages = [assistantMsgWithUsage(919_999)];
+    const messages = [assistantMsgWithUsage(919_615)];
     expect(decideCompaction(messages, model).shouldFire).toBe(false);
   });
 
@@ -128,8 +128,8 @@ describe("decideCompaction", () => {
     // pi's shouldCompact uses `tokens > contextWindow - reserveTokens` (strict)
     // so exactly-at-budget should NOT fire
     const model = fauxModel(1_000_000, 64_000);
-    expect(decideCompaction([assistantMsgWithUsage(920_000)], model).shouldFire).toBe(false);
-    expect(decideCompaction([assistantMsgWithUsage(920_001)], model).shouldFire).toBe(true);
+    expect(decideCompaction([assistantMsgWithUsage(919_616)], model).shouldFire).toBe(false);
+    expect(decideCompaction([assistantMsgWithUsage(919_617)], model).shouldFire).toBe(true);
   });
 
   it("returns shouldFire=false on empty messages", () => {
@@ -509,18 +509,17 @@ describe("formatDevLogLine", () => {
     reason: "above 920000 budget",
     model: "anthropic/claude-sonnet-4-6",
     contextWindow: 1_000_000,
-    reserveTokens: 80_000,
+    reserveTokens: 80_384,
     keepRecentTokens: 20_000,
     tokensBefore: 947_112,
     tokensAfter: 184_309,
     summaryTokens: 4_821,
     firstKeptEntryId: "evt_8f12",
-    droppedTurns: 27,
     filesRead: ["server/src/manager.ts"],
     filesModified: ["server/src/compaction.ts"],
     compactionDurationMs: 8_412,
     succeeded: true,
-    backupPath: "/home/bjk/.ytsejam/data/sessions/abc123/session.jsonl.pre-compact-1718193600",
+    backupPath: "/home/bjk/.ytsejam/data/sessions/--chat--/<timestamp>_<sessionId>.jsonl.pre-compact-1718193600000",
   };
 
   it("formats a single line for proactive main-session compaction", () => {
@@ -528,7 +527,6 @@ describe("formatDevLogLine", () => {
     expect(line).toMatch(/^2026-06-12.*: compaction in session abc123 — proactive/);
     expect(line).toMatch(/anthropic\/claude-sonnet-4-6/);
     expect(line).toMatch(/ctx 947112→184309 tokens/);
-    expect(line).toMatch(/dropped 27 turns/);
     expect(line).toMatch(/summary 4821 tokens/);
     expect(line).toMatch(/Trigger: above 920000 budget/);
   });
@@ -568,7 +566,6 @@ describe("serializeJsonRecord", () => {
       tokensAfter: 200,
       summaryTokens: 10,
       firstKeptEntryId: "evt",
-      droppedTurns: 3,
       filesRead: [],
       filesModified: [],
       compactionDurationMs: 100,
@@ -586,7 +583,6 @@ describe("serializeJsonRecord", () => {
     expect(parsed.tokens_before).toBe(950);
     expect(parsed.tokens_after).toBe(200);
     expect(parsed.summary_tokens).toBe(10);
-    expect(parsed.dropped_turns).toBe(3);
     expect(parsed.files_read).toEqual([]);
     expect(parsed.files_modified).toEqual([]);
     expect(parsed.compaction_duration_ms).toBe(100);
@@ -626,7 +622,6 @@ export interface CompactionEvent {
   tokensAfter: number;
   summaryTokens: number;
   firstKeptEntryId: string;
-  droppedTurns: number;
   filesRead: string[];
   filesModified: string[];
   compactionDurationMs: number;
@@ -639,7 +634,7 @@ export interface CompactionEvent {
  *
  * Shape:
  *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
- *     <trigger>, <model>, ctx <before>→<after> tokens, dropped <N> turns, summary <S> tokens,
+ *     <trigger>, <model>, ctx <before>→<after> tokens, summary <S> tokens,
  *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
  */
 export function formatDevLogLine(e: CompactionEvent): string {
@@ -652,7 +647,7 @@ export function formatDevLogLine(e: CompactionEvent): string {
   const failedMarker = e.succeeded ? "" : " FAILED";
   return (
     `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
-    `ctx ${e.tokensBefore}→${e.tokensAfter} tokens, dropped ${e.droppedTurns} turns, ` +
+    `ctx ${e.tokensBefore}→${e.tokensAfter} tokens, ` +
     `summary ${e.summaryTokens} tokens, files-read ${filesReadStr}, ` +
     `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker}`
   );
@@ -680,7 +675,6 @@ export function serializeJsonRecord(e: CompactionEvent): Record<string, unknown>
     tokens_after: e.tokensAfter,
     summary_tokens: e.summaryTokens,
     first_kept_entry_id: e.firstKeptEntryId,
-    dropped_turns: e.droppedTurns,
     files_read: e.filesRead,
     files_modified: e.filesModified,
     compaction_duration_ms: e.compactionDurationMs,
@@ -1326,7 +1320,6 @@ if (compactionEnabled()) {
         tokensAfter: 0, // filled below
         summaryTokens: 0, // filled below from e.compactionEntry if available
         firstKeptEntryId: "",
-        droppedTurns: 0,
         filesRead: [],
         filesModified: [],
         compactionDurationMs: 0,
@@ -1492,18 +1485,18 @@ Committed with manager/task-manager wiring, typed adapter, tests, and docs in on
 ## Task 7: Gate-skipped integration test
 
 **Files:**
-- Create: `server/src/compaction.integration.test.ts`
+- Create: `server/test/compaction.integration.test.ts`
 
 ### Step 1: Write the gate-skipped integration test
 
-Create `server/src/compaction.integration.test.ts`:
+Create `server/test/compaction.integration.test.ts`:
 
 ```ts
 /**
  * Real-LLM smoke test — gate-skipped.
  *
  * Run manually with:
- *   INTEGRATION=1 env -u NODE_ENV npx vitest run server/src/compaction.integration.test.ts
+ *   INTEGRATION=1 env -u NODE_ENV npx vitest run server/test/compaction.integration.test.ts
  *
  * Excluded from scripts/gate.sh by the describe.skipIf at the top.
  */
@@ -1536,18 +1529,18 @@ Expected: `=== gate: PASSED ===`. The integration test runs but the `describe.sk
 
 ### Step 3: Verify manual run is well-formed
 
-Run: `INTEGRATION=1 env -u NODE_ENV npx vitest run server/src/compaction.integration.test.ts`
+Run: `INTEGRATION=1 env -u NODE_ENV npx vitest run server/test/compaction.integration.test.ts`
 
 Expected: One `todo` test reported (not failure). Confirms the run path works.
 
 ### Step 4: Commit
 
 ```bash
-git add server/src/compaction.integration.test.ts
+git add server/test/compaction.integration.test.ts
 git commit -m "test(compaction): gate-skipped integration test scaffold
 
 describe.skipIf(!INTEGRATION) keeps it out of scripts/gate.sh runs.
-Manual run: INTEGRATION=1 env -u NODE_ENV npx vitest run server/src/compaction.integration.test.ts.
+Manual run: INTEGRATION=1 env -u NODE_ENV npx vitest run server/test/compaction.integration.test.ts.
 
 Body left as it.todo for follow-up — needs real provider API access for the
 end-to-end smoke flow. Contract is the gate-skipped run path itself; the
@@ -1655,7 +1648,7 @@ The compaction PR is ready to merge when ALL hold:
 - [ ] All 8 task commits present on `feat/context-compaction`
 - [ ] Unit tests cover decision, classification, calibration, observability, kill switch, backup, verify, orchestrator (~32+ cases)
 - [ ] Wiring tests for orchestrator (mocked harness) pass
-- [ ] Integration test scaffold is gate-skipped (verified with `bash scripts/gate.sh` and confirmed by `INTEGRATION=1 npx vitest run server/src/compaction.integration.test.ts` reporting `1 todo`)
+- [ ] Integration test scaffold is gate-skipped (verified with `bash scripts/gate.sh` and confirmed by `INTEGRATION=1 npx vitest run server/test/compaction.integration.test.ts` reporting `4 todo`)
 - [ ] `deploy/ytsejam.env.example` documents `YTSEJAM_COMPACTION_ENABLED`
 - [ ] `deploy/README.md` has the operator section
 - [ ] Two-stage review (spec compliance + code quality) on each task that touched server source

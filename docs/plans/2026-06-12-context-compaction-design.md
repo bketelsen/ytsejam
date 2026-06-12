@@ -312,7 +312,7 @@ Backup is a literal `fs.copyFile`. Pruning is `fs.readdir + sort + unlink` (keep
 Dev-log entry shape (single line):
 
 ```
-2026-06-12 14:32:18: compaction in session abc123 — proactive, anthropic/claude-sonnet-4-6, ctx 947112→184309 tokens, dropped 27 turns, summary 4821 tokens, files-read [server/src/manager.ts, docs/plans/...], files-edited [server/src/compaction.ts]. Trigger: shouldCompact (above 920000 budget).
+2026-06-12 14:32:18: compaction in session abc123 — proactive, anthropic/claude-sonnet-4-6, ctx 947112→184309 tokens, summary 4821 tokens, files-read [server/src/manager.ts, docs/plans/...], files-edited [server/src/compaction.ts]. Trigger: shouldCompact (above 920000 budget).
 ```
 
 For subagent events: prefix changes to `compaction in subagent task <task-id> (parent session <id>) — ...`.
@@ -334,7 +334,6 @@ Per-session JSONL record:
   "tokens_after": 184309,
   "summary_tokens": 4821,
   "first_kept_entry_id": "evt_8f12...",
-  "dropped_turns": 27,
   "files_read": ["server/src/manager.ts", "docs/plans/..."],
   "files_modified": ["server/src/compaction.ts"],
   "compaction_duration_ms": 8412,
@@ -434,7 +433,7 @@ Runs with `INTEGRATION=1 npm test` or similar. Excluded from `scripts/gate.sh`. 
 |---|---|---:|---|
 | `server/src/compaction.ts` | NEW | ~250 | Policy module: decision, calibration, customInstructions, observability writers, backup/verify, surrender builder, kill-switch read |
 | `server/src/compaction.test.ts` | NEW | ~250 | Unit tests (≥15 cases) + wiring tests (mocked harness) |
-| `server/src/compaction.integration.test.ts` | NEW (gate-skipped) | ~80 | Real-LLM smoke against small-context faux model |
+| `server/test/compaction.integration.test.ts` | NEW (gate-skipped) | ~80 | Real-LLM smoke against small-context faux model |
 | `server/src/manager.ts` | MODIFIED | +30 | Wire `turn_end`, `session_compact`, reactive-error hooks |
 | `server/src/task-manager.ts` | MODIFIED | +compaction hooks/state | Same policy on per-task harness; `agent_end` execution, reactive retry, subagent-prefixed observability |
 | `deploy/ytsejam.env.example` | MODIFIED | +5 | Document `YTSEJAM_COMPACTION_ENABLED` |
@@ -484,7 +483,7 @@ The compaction is done when ALL of the following hold:
 3. `YTSEJAM_COMPACTION_ENABLED=false` reproduces the old 400 behavior on the same synthetic session (proves the kill switch isolates).
 4. Killing the unit mid-compaction (sigterm during `harness.compact()`) and resuming loads the session cleanly via the most recent `pre-compact-*` backup (proves backup chain works for the substrate-corruption scenario).
 5. Subagent compaction events are visible in dev-log with the `subagent task <id>` marker.
-6. Unit tests pass; `scripts/gate.sh` green; gate-skipped integration test passes with `INTEGRATION=1`.
+6. Unit tests pass; `scripts/gate.sh` green; `server/test/compaction.integration.test.ts` is a gate-skipped scaffold (4 `it.todo` smoke-contract cases) for the manual real-LLM cutover-confidence check Brian runs before deploying. Run with `INTEGRATION=1 env -u NODE_ENV npx vitest run server/test/compaction.integration.test.ts`. The deterministic regression layer is `server/test/compaction.test.ts` (48 tests) + `server/test/task-manager.test.ts` subagent wiring tests (10 tests, including 2 wiring tests) + `server/test/manager.test.ts` main-session wiring tests.
 7. `cog_search "compaction in session"` returns dev-log entries from real compactions.
 
 ## 11. What this plan does NOT do

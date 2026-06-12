@@ -204,7 +204,6 @@ export interface CompactionEvent {
   tokensAfter: number;
   summaryTokens: number;
   firstKeptEntryId: string;
-  droppedTurns: number;
   filesRead: string[];
   filesModified: string[];
   compactionDurationMs: number;
@@ -217,7 +216,7 @@ export interface CompactionEvent {
  *
  * Shape:
  *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
- *     <trigger>, <model>, ctx <before>→<after> tokens, dropped <N> turns, summary <S> tokens,
+ *     <trigger>, <model>, ctx <before>→<after> tokens, summary <S> tokens,
  *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
  */
 export function formatDevLogLine(e: CompactionEvent): string {
@@ -234,7 +233,7 @@ export function formatDevLogLine(e: CompactionEvent): string {
   const failedMarker = e.succeeded ? "" : " FAILED";
   return (
     `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
-    `ctx ${e.tokensBefore}→${e.tokensAfter} tokens, dropped ${e.droppedTurns} turns, ` +
+    `ctx ${e.tokensBefore}→${e.tokensAfter} tokens, ` +
     `summary ${e.summaryTokens} tokens, files-read ${filesReadStr}, ` +
     `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker}`
   );
@@ -264,7 +263,6 @@ export function serializeJsonRecord(
     tokens_after: e.tokensAfter,
     summary_tokens: e.summaryTokens,
     first_kept_entry_id: e.firstKeptEntryId,
-    dropped_turns: e.droppedTurns,
     files_read: e.filesRead,
     files_modified: e.filesModified,
     compaction_duration_ms: e.compactionDurationMs,
@@ -317,13 +315,15 @@ export function buildCompactionEvent(
     contextWindow: model.contextWindow,
     reserveTokens: computeReserveTokens(model),
     keepRecentTokens: 20_000,
-    tokensBefore: pending?.tokensBefore ?? compactionEntry?.tokensBefore ?? 0,
+    tokensBefore:
+      pending && pending.tokensBefore > 0
+        ? pending.tokensBefore
+        : (compactionEntry?.tokensBefore ?? 0),
     tokensAfter: compactionEntry?.tokensAfter ?? 0,
     summaryTokens:
       compactionEntry?.summaryTokens ??
       Math.ceil(String(summaryText).length / 4),
     firstKeptEntryId: compactionEntry?.firstKeptEntryId ?? "",
-    droppedTurns: compactionEntry?.droppedTurns ?? 0,
     filesRead: Array.isArray(details.readFiles) ? details.readFiles : [],
     filesModified: Array.isArray(details.modifiedFiles)
       ? details.modifiedFiles

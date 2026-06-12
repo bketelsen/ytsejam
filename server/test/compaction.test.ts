@@ -253,7 +253,6 @@ describe("formatDevLogLine", () => {
     tokensAfter: 184_309,
     summaryTokens: 4_821,
     firstKeptEntryId: "evt_8f12",
-    droppedTurns: 27,
     filesRead: ["server/src/manager.ts"],
     filesModified: ["server/src/compaction.ts"],
     compactionDurationMs: 8_412,
@@ -269,7 +268,6 @@ describe("formatDevLogLine", () => {
     );
     expect(line).toMatch(/anthropic\/claude-sonnet-4-6/);
     expect(line).toMatch(/ctx 947112→184309 tokens/);
-    expect(line).toMatch(/dropped 27 turns/);
     expect(line).toMatch(/summary 4821 tokens/);
     expect(line).toMatch(/Trigger: above 920000 budget/);
   });
@@ -348,6 +346,26 @@ describe("buildCompactionEvent", () => {
     expect(formatDevLogLine(event)).toContain("Trigger: isContextOverflow");
   });
 
+  it("falls through reactive pending tokensBefore=0 to compactionEntry tokensBefore", () => {
+    const event = buildCompactionEvent(
+      fauxModel(1_000_000, 64_000),
+      sessionFilePath,
+      {
+        fired: true,
+        succeeded: true,
+        pending: {
+          trigger: "reactive",
+          reason: "isContextOverflow",
+          tokensBefore: 0,
+          budget: 800_000,
+        },
+      },
+      { tokensBefore: 12_345 },
+    );
+
+    expect(event.tokensBefore).toBe(12_345);
+  });
+
   it("records succeeded:false correctly when result.succeeded is false", () => {
     const event = buildCompactionEvent(
       fauxModel(1_000_000, 64_000),
@@ -414,7 +432,6 @@ describe("serializeJsonRecord", () => {
       tokensAfter: 200,
       summaryTokens: 10,
       firstKeptEntryId: "evt",
-      droppedTurns: 3,
       filesRead: [],
       filesModified: [],
       compactionDurationMs: 100,
@@ -432,7 +449,6 @@ describe("serializeJsonRecord", () => {
     expect(parsed.tokens_before).toBe(950);
     expect(parsed.tokens_after).toBe(200);
     expect(parsed.summary_tokens).toBe(10);
-    expect(parsed.dropped_turns).toBe(3);
     expect(parsed.files_read).toEqual([]);
     expect(parsed.files_modified).toEqual([]);
     expect(parsed.compaction_duration_ms).toBe(100);

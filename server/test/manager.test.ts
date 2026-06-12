@@ -1,4 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { registerFauxProvider } from "@earendil-works/pi-ai";
 import type { ServerEvent } from "../src/events.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { fauxAssistantMessage, fauxToolCall, makeManager, setupFaux } from "./helpers.ts";
@@ -10,6 +13,43 @@ beforeEach(() => {
 afterEach(() => {
   faux.unregister();
 });
+
+async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > ms) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+function makeReactiveCompactionFaux() {
+  return registerFauxProvider({
+    provider: "openai",
+    models: [{ id: "faux", contextWindow: 40_000, maxTokens: 256 }],
+  });
+}
+
+function withReactiveCompactionEnv(dataDir: string): () => void {
+  const prevDataDir = process.env.YTSEJAM_DATA_DIR;
+  const prevMemoryDir = process.env.YTSEJAM_MEMORY_DIR;
+  const prevOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.YTSEJAM_DATA_DIR = dataDir;
+  process.env.OPENAI_API_KEY = "test-key-for-faux-compaction";
+  delete process.env.YTSEJAM_MEMORY_DIR;
+  return () => {
+    if (prevDataDir === undefined) delete process.env.YTSEJAM_DATA_DIR;
+    else process.env.YTSEJAM_DATA_DIR = prevDataDir;
+    if (prevMemoryDir === undefined) delete process.env.YTSEJAM_MEMORY_DIR;
+    else process.env.YTSEJAM_MEMORY_DIR = prevMemoryDir;
+    if (prevOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = prevOpenAiKey;
+  };
+}
+
+function readDevLog(dataDir: string): string {
+  const path = join(dataDir, "memory", "projects", "ytsejam", "dev-log.md");
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
 
 describe("AgentManager", () => {
   test("createSession indexes a row and lists it", async () => {
@@ -45,6 +85,96 @@ describe("AgentManager", () => {
     expect(types).toContain("message_end");
     expect(types).toContain("agent_end");
     expect(events.some((e) => e.type === "session_meta")).toBe(true);
+  });
+
+  test("runs reactive compaction + retry on main-session context overflow", async () => {
+    faux.unregister();
+    faux = makeReactiveCompactionFaux() as any;
+    const { manager, bus, dataDir } = makeManager(faux);
+    const events: ServerEvent[] = [];
+    bus.subscribe((e) => events.push(e));
+    const restoreEnv = withReactiveCompactionEnv(dataDir);
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long: 50000 tokens > 40000 maximum" }),
+        fauxAssistantMessage("Summary of compacted overflow attempt."),
+        fauxAssistantMessage("Recovered after reactive compaction"),
+      ]);
+
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "please recover from overflow");
+      await waitFor(() =>
+        events.some((e) =>
+          e.type === "agent" &&
+          e.sessionId === row.id &&
+          (e as any).event.type === "message_end" &&
+          JSON.stringify((e as any).event.message ?? "").includes("Recovered after reactive compaction"),
+        ),
+      );
+      await manager.waitForIdle(row.id);
+      await new Promise((r) => setTimeout(r, 50));
+
+      const messages = await manager.getMessages(row.id);
+      expect(
+        messages.some((m: any) => JSON.stringify(m.content ?? "").includes("Recovered after reactive compaction")),
+      ).toBe(true);
+
+      const devLog = readDevLog(dataDir);
+      expect(devLog).toContain("compaction in session " + row.id);
+      expect(devLog).toContain("— reactive,");
+      expect(devLog).toContain("Trigger: isContextOverflow.");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  test("surrenders main-session turn when reactive retry also overflows", async () => {
+    faux.unregister();
+    faux = makeReactiveCompactionFaux() as any;
+    const { manager, bus, dataDir } = makeManager(faux);
+    const events: ServerEvent[] = [];
+    bus.subscribe((e) => events.push(e));
+    const restoreEnv = withReactiveCompactionEnv(dataDir);
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long: 50000 tokens > 40000 maximum" }),
+        fauxAssistantMessage("Summary of compacted overflow attempt."),
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long: 50001 tokens > 40000 maximum" }),
+      ]);
+
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "overflow twice");
+      await waitFor(() =>
+        events.some((e) =>
+          e.type === "agent" &&
+          e.sessionId === row.id &&
+          (e as any).event.type === "turn_end" &&
+          JSON.stringify((e as any).event.message ?? "").includes("Diagnostic: prompt was ~"),
+        ),
+      );
+      await manager.waitForIdle(row.id);
+
+      const surrenderEvents = events.filter(
+        (e) =>
+          e.type === "agent" &&
+          e.sessionId === row.id &&
+          JSON.stringify((e as any).event.message ?? "").includes("Diagnostic: prompt was ~"),
+      );
+      expect(surrenderEvents.map((e: any) => e.event.type)).toEqual([
+        "message_start",
+        "message_end",
+        "turn_end",
+      ]);
+
+      const messages = await manager.getMessages(row.id);
+      const surrender = messages.find((m: any) =>
+        JSON.stringify(m.content ?? "").includes("Diagnostic: prompt was ~"),
+      ) as any;
+      expect(surrender).toBeTruthy();
+      expect(JSON.stringify(surrender.content)).toContain("tokens against contextWindow 40,000");
+    } finally {
+      restoreEnv();
+    }
   });
 
   test("survives reopen: a second manager instance serves the same transcript", async () => {
