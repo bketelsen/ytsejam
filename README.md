@@ -69,6 +69,49 @@ in-process memory — so they coexist safely). See [`deploy/README.md`](deploy/R
 
 Upgrading from a previous daemon-era install? Run `deploy/migrate-to-folded.sh`
 before upgrading so the old cogmemory service is stopped and the store is moved
-under `~/.ytsejam/data/memory`.
+to `~/.ytsejam/data/memory`.
 
     deploy/dev.sh                     # run a dev instance on :3000 with throwaway data/memory
+
+## First run
+
+After `deploy/deploy.sh` reports a successful health-check, do these three checks
+in order to confirm the install is wired correctly:
+
+1. **Service is up.** Should return 200.
+
+        curl -fsS http://127.0.0.1:9873/ -o /dev/null -w '%{http_code}\n'
+
+2. **Auth + LLM provider configured.** Substitute your token; returns a JSON list of
+   models. If you get `unauthorized`, your `YTSEJAM_AUTH_TOKEN` is wrong; if the
+   list is empty, no provider credential is set in `~/.ytsejam/ytsejam.env`.
+
+        curl -fsS -H "Authorization: Bearer $YTSEJAM_AUTH_TOKEN" \
+          http://127.0.0.1:9873/api/models | head
+
+3. **End-to-end.** Open `http://127.0.0.1:9873/` in a browser, sign in with the
+   token, send a short message ("hello"), and verify a streamed response. This
+   exercises the auth path, websocket, model selection, and tool registration in
+   one shot.
+
+## Uninstall
+
+To remove ytsejam from the host:
+
+    systemctl --user disable --now ytsejam
+    rm -f ~/.config/systemd/user/ytsejam.service
+    systemctl --user daemon-reload
+    rm -rf ~/.ytsejam                              # irreversibly deletes all sessions, memory, schedules, and the env file
+
+The git checkout under wherever you cloned the repo (e.g. `~/projects/ytsejam`)
+is yours to delete or keep.
+
+## Troubleshooting
+
+| Symptom | Cause | Remedy |
+| --- | --- | --- |
+| `journalctl --user -u ytsejam` shows `Unable to locate executable: node` | `node` not on the unit's `PATH=` | Edit `~/.config/systemd/user/ytsejam.service`, add your node install dir (e.g. `%h/.nvm/versions/node/v22.x/bin`) to the `Environment="PATH=…"` line, then `systemctl --user daemon-reload && systemctl --user restart ytsejam`. |
+| Service starts then immediately exits with `YTSEJAM_AUTH_TOKEN is required` | `YTSEJAM_AUTH_TOKEN` unset in env file | `$EDITOR ~/.ytsejam/ytsejam.env`, add `YTSEJAM_AUTH_TOKEN=<your-token>`, then `systemctl --user restart ytsejam`. |
+| `deploy/deploy.sh` health-check passes but the model picker is empty | Default model's provider credential not configured | Add the matching API key (e.g. `ANTHROPIC_API_KEY=…` if the default model is `anthropic/*`) to `~/.ytsejam/ytsejam.env`, then `systemctl --user restart ytsejam`. |
+| `Address already in use` on startup, or `deploy.sh` health-check fails on the port | Port `9873` already taken (another instance, or a port-forward) | Change `YTSEJAM_PORT` in `~/.ytsejam/ytsejam.env` to a free port, then `systemctl --user restart ytsejam`. |
+| `journalctl --user` says `No journal files were found` or `Failed to add match` | User is not running under a `systemd --user` login session | `loginctl enable-linger "$USER"`, then log out and log back in. The Prerequisites section covers the headless case. |
