@@ -1,7 +1,7 @@
 # Design: Tiered patterns — global + per-domain (DRAFT)
 
 **Status:** DRAFT 2026-06-11 — to hash out further. Filed because the problem GROWS as an issue until solved (every reflect run that promotes a project-specific rule into the always-injected global tier makes it worse).
-**Spans:** memory module (`session_brief`, `housekeeping_scan`) + cog-skills (`/cog` generator, reflect, housekeeping).
+**Spans:** cogmemory daemon (`session_brief`, `housekeeping_scan`) + cog-skills (`/cog` generator, reflect, housekeeping) — NOT a single-repo change.
 **Blocked on:** cogmemory is PAUSED during the ytsejam supernova burst. This is a POST-BURST evolve item.
 
 ---
