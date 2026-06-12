@@ -63,7 +63,12 @@ export function loadManifest(rootDir: string): Domain[] {
   } catch (err) {
     throw new Error(`domain: parse ${JSON.stringify(manifestPath)}: ${(err as Error).message}`);
   }
-  if (!isRecord(raw) || !Array.isArray(raw.domains)) {
+  if (raw == null) return [];
+  if (!isRecord(raw)) {
+    throw new Error(`domain: validate ${JSON.stringify(manifestPath)}: manifest must be an object`);
+  }
+  if (raw.domains === undefined) return [];
+  if (!Array.isArray(raw.domains)) {
     throw new Error(`domain: validate ${JSON.stringify(manifestPath)}: domains must be an array`);
   }
 

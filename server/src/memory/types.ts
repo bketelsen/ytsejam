@@ -30,7 +30,7 @@ export type ActionTarget = DomainFileRef;
 
 /** Result of mapping a memory-root-relative path back to a declared domain file. */
 export interface DomainForPathResult {
-  domain: Domain | string;
+  domain: string;
   file: string;
   ok: boolean;
 }

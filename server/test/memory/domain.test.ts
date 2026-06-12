@@ -141,7 +141,6 @@ describe("memory domain controller", () => {
       dotdot: "domains:\n  - {id: a, path: ../escape}\n",
       "bad-file": "domains:\n  - {id: a, path: a, files: ['hot-memory.md']}\n",
       "slash-file": "domains:\n  - {id: a, path: a, files: ['sub/file']}\n",
-      "missing-domains": "version: 1\n",
       "bad-subdomains": "domains:\n  - {id: a, path: a, subdomains: nope}\n",
     };
     for (const [name, body] of Object.entries(cases)) {

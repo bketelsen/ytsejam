@@ -31,7 +31,7 @@ export class Controller {
   private flat = new Map<string, Domain>();
   private mtimeMs = 0;
 
-  constructor(root: string) {
+  constructor(root: string, _options: Record<string, never> = {}) {
     if (!isAbsolute(root)) throw new Error(`domain: memoryRoot must be absolute, got ${JSON.stringify(root)}`);
     this.root = root;
     this.manifestPath = join(root, "domains.yml");
@@ -97,10 +97,9 @@ export class Controller {
       this.checkIDAsPath(path);
       return;
     }
-    const idString = String(id);
-    const domain = this.flat.get(idString);
+    const domain = this.flat.get(id);
     if (domain && !declaresFile(domain, file)) {
-      throw new Error(`write to ${JSON.stringify(path)} is under domain ${JSON.stringify(idString)} but ${JSON.stringify(file)} is not in its declared files ${JSON.stringify(domain.files ?? [])}`);
+      throw new Error(`write to ${JSON.stringify(path)} is under domain ${JSON.stringify(id)} but ${JSON.stringify(file)} is not in its declared files ${JSON.stringify(domain.files ?? [])}`);
     }
   }
 
