@@ -15,7 +15,8 @@
     "@hono/node-ws": "^1.1.0",
     "cron-parser": "^5.5.0",
     "hono": "^4.7.0",
-    "html-to-text": "^9.0.5"
+    "html-to-text": "^9.0.5",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/html-to-text": "^9.0.4",

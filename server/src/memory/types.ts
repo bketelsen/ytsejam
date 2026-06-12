@@ -19,14 +19,18 @@ export interface Manifest {
 }
 
 /** Resolved domain-owned file target. */
-export interface ActionTarget {
+export interface DomainFileRef {
   domain: string;
   path: string;
+  file: string;
 }
+
+/** Backward-compatible alias for action-item targets. */
+export type ActionTarget = DomainFileRef;
 
 /** Result of mapping a memory-root-relative path back to a declared domain file. */
 export interface DomainForPathResult {
-  domain: string;
+  domain: Domain | string;
   file: string;
   ok: boolean;
 }
