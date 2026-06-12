@@ -208,7 +208,7 @@ Scope: cluster_check, entity_audit, link_audit, link_index_compute, and scenario
 | TestEntityAuditMultipleFilesSorted | all-domain/sorted target behavior covered by deterministic outputs | Ported |
 | TestEntityAuditTotals | totals test | Ported |
 | TestEntityAuditTotalsEmptyStore | empty test | Ported |
-| rpc/link_test.go TestLinkIndexCompute | `TestLinkIndexCompute` | Ported |
+| rpc/link_test.go TestLinkIndexCompute | `TestLinkIndexCompute` | Ported; intentional divergence from Go: glacier files excluded per PR-2b spec ("outside glacier"); Go includes them. |
 | TestLinkIndexComputeRBACFilters | superseded by D6 role removal | N/A |
 | TestLinkIndexComputeMissingRole | superseded by D6; strict params rejects `role` | Covered |
 | TestLinkAudit | `TestLinkAudit / WholeWordBoundary` | Ported |

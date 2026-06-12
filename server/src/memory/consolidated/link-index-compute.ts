@@ -6,6 +6,11 @@ export async function linkIndexCompute(params: Record<string, unknown> = {}): Pr
   validateParams(params, []);
   const idx = new Map<string, Set<string>>();
   for (const f of await markdownFiles()) {
+    // INTENTIONAL DIVERGENCE FROM GO: Go's linkIndexCompute includes glacier
+    // files (its scanFiles() only skips `.git`). Per the fold-cogmemory plan
+    // spec (PR-2b task table: "outside glacier"), the TS port excludes the
+    // archive tier so the index reflects active narrative only. Documented at
+    // `server/test/memory/PARITY.md` PR-2b section; regression test exists.
     if (f.rel.startsWith("glacier/")) continue;
     const data = await readRel(f.rel); if (data == null) continue;
     const source = f.rel.replace(/\.md$/, "");

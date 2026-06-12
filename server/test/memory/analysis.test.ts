@@ -42,6 +42,14 @@ describe("cluster_check", () => {
     const res = await clusterCheck({ since: "2026-05-23" });
     expect(res.by_tag.some((c) => c.tag === "old")).toBe(false);
   });
+  test("relative since truncates to UTC midnight", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-12T14:30:00Z"));
+    await seed("personal/observations.md", "- 2026-06-05 [edge]: boundary observation kept\n");
+    const res = await clusterCheck({ since: "7d", min_cluster_size: 1 });
+    expect(res.by_tag).toContainEqual(expect.objectContaining({ tag: "edge", count: 1 }));
+    expect(res.by_tag.find((c) => c.tag === "edge")?.samples).toContainEqual(expect.objectContaining({ date: "2026-06-05", text: "boundary observation kept" }));
+  });
   test("TestClusterByKeyword", async () => {
     await seed("personal/observations.md", "- 2026-05-20 [infra]: kanban dispatcher crashed again\n- 2026-05-21 [infra]: kanban DB still flaky\n- 2026-05-22 [infra]: kanban locking improved\n- 2026-05-23 [infra]: unrelated note about disk\n");
     const res = await clusterCheck({ since: "2026-05-01", min_cluster_size: 3 });
@@ -138,6 +146,13 @@ describe("link audit/index", () => {
     expect(cs.some((c) => c.line === 2 && c.entity_name === "Bob")).toBe(false);
     expect(cs.filter((c) => c.source_path === "personal/observations.md" && c.entity_name === "Bob")).toHaveLength(2);
     await expect(linkAudit({ role: "siona" } as never)).rejects.toThrow(/unknown param/);
+  });
+  test("linkAudit strips entity headings at the first paren group", async () => {
+    await seed("personal/entities.md", "# Entities\n\n### Acme (US) (vendor)\nstatus: active\n");
+    await seed("personal/observations.md", "Acme delivered the integration notes\n");
+    const cs = (await linkAudit()).candidates;
+    expect(cs).toContainEqual(expect.objectContaining({ source_path: "personal/observations.md", line: 1, entity_name: "Acme", target_link: "personal/entities#Acme" }));
+    expect(cs.some((c) => c.entity_name === "Acme (US)")).toBe(false);
   });
 });
 

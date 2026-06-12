@@ -47,13 +47,24 @@ function parseObs(domain: string, path: string, line: number, trimmed: string): 
 }
 function parseSince(raw = ""): Date {
   raw = raw.trim(); const now = new Date();
-  if (!raw) return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 7));
-  const d = raw.match(/^(\d+)d$/); if (d && Number(d[1]) > 0) return new Date(Date.now() - Number(d[1]) * 86400000);
-  const dur = raw.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/);
-  if (dur) return new Date(Date.now() - Number(dur[1]) * ({ ms: 1, s: 1000, m: 60000, h: 3600000 }[dur[2] as "ms" | "s" | "m" | "h"]));
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(`${raw}T00:00:00Z`);
-  const parsed = new Date(raw); if (!Number.isNaN(parsed.getTime())) return parsed;
-  throw new Error(`invalid since ${JSON.stringify(raw)} (want RFC3339 date, duration, or Nd)`);
+  let result: Date;
+  if (!raw) result = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 7));
+  else {
+    const d = raw.match(/^(\d+)d$/);
+    if (d && Number(d[1]) > 0) result = new Date(Date.now() - Number(d[1]) * 86400000);
+    else {
+      const dur = raw.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/);
+      if (dur) result = new Date(Date.now() - Number(dur[1]) * ({ ms: 1, s: 1000, m: 60000, h: 3600000 }[dur[2] as "ms" | "s" | "m" | "h"]));
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) result = new Date(`${raw}T00:00:00Z`);
+      else {
+        const parsed = new Date(raw); if (Number.isNaN(parsed.getTime())) throw new Error(`invalid since ${JSON.stringify(raw)} (want RFC3339 date, duration, or Nd)`);
+        result = parsed;
+      }
+    }
+  }
+  // Match Go store/cluster.go:108: all parsed since values are truncated to UTC midnight.
+  result.setUTCHours(0, 0, 0, 0);
+  return result;
 }
 function tagClusters(all: Observation[], min: number, sampleLimit: number): TagCluster[] {
   const map = new Map<string, Observation[]>();
