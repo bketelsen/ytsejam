@@ -212,6 +212,10 @@ export interface GroundTruth {
   contradictions: { object: string; finalPolarity: 1 | -1; flipSessionIndex: number }[];
   userName: string;
   sessionIds: string[];
+  /** ISO start timestamp of each session, index-aligned with sessionIds. */
+  sessionStarts: string[];
+  /** Days between session starts. */
+  intervalDays: number;
   /** ISO timestamp just after the last session; "now" for the eval. */
   horizonEnd: string;
 }
@@ -294,6 +298,8 @@ export function generateFixtures(opts: GenerateOptions): GroundTruth {
     })),
     userName: persona.userName,
     sessionIds: [],
+    sessionStarts: [],
+    intervalDays: opts.intervalDays ?? 14,
     horizonEnd: new Date(startMs + (sessions - 1) * intervalMs + 24 * 60 * 60 * 1000).toISOString(),
   };
 
@@ -308,6 +314,7 @@ export function generateFixtures(opts: GenerateOptions): GroundTruth {
     const sessionId = `00000000-0000-7000-8000-${String(s).padStart(12, "0")}`;
     truth.sessionIds.push(sessionId);
     const sessionStart = startMs + s * intervalMs;
+    truth.sessionStarts.push(new Date(sessionStart).toISOString());
     const lines: string[] = [];
     lines.push(
       JSON.stringify({

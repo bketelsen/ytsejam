@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runEval, DEFAULT_THRESHOLDS } from "../src/eval/harness.ts";
+import { runEval, BANDS } from "../src/eval/harness.ts";
 import { generateFixtures } from "../src/eval/synthetic.ts";
 import { readSessionFile } from "../src/session/reader.ts";
 
@@ -18,6 +18,7 @@ describe("synthetic fixture generator", () => {
     const truthB = generateFixtures({ outDir: b, seed: 42, sessions: 3, turnsPerSession: 6 });
 
     expect(truthA.sessionIds).toEqual(truthB.sessionIds);
+    expect(truthA.sessionStarts).toHaveLength(3);
     for (const id of truthA.sessionIds) {
       const fileA = fs.readFileSync(path.join(a, `${id}.jsonl`), "utf8");
       const fileB = fs.readFileSync(path.join(b, `${id}.jsonl`), "utf8");
@@ -36,30 +37,38 @@ describe("synthetic fixture generator", () => {
   });
 });
 
-describe("evaluation harness (long horizon)", () => {
-  it(
-    "proves recall quality and personality-mirroring consistency over a 12-session horizon",
-    { timeout: 120_000 },
-    async () => {
-      const report = await runEval({ workDir: tmpDir(), seed: 42 });
-
-      // The headline assertions of the spec: recall quality and
-      // personality-mirroring consistency over long horizons.
-      expect(report.failures).toEqual([]);
-      expect(report.passed).toBe(true);
-      expect(report.recall.at5).toBeGreaterThanOrEqual(DEFAULT_THRESHOLDS.recallAt5);
-      expect(report.recall.mrr).toBeGreaterThanOrEqual(DEFAULT_THRESHOLDS.mrr);
-      expect(report.preferences.f1).toBeGreaterThanOrEqual(DEFAULT_THRESHOLDS.preferenceF1);
-      expect(report.stability).toBeGreaterThanOrEqual(DEFAULT_THRESHOLDS.stability);
-      expect(report.identityCorrect).toBe(true);
-      expect(report.contradictions.correct).toBe(report.contradictions.total);
-      // Consolidation actually ran mid-horizon — recall survived it.
-      expect(report.consolidation.created).toBeGreaterThan(0);
-    },
-  );
-
-  it("holds up on a second seed", { timeout: 120_000 }, async () => {
-    const report = await runEval({ workDir: tmpDir(), seed: 1337 });
+describe("evaluation bands (PLAN.md Task 1.1)", () => {
+  it("short band: everything alive, near-perfect mirroring", { timeout: 120_000 }, async () => {
+    const report = await runEval({ workDir: tmpDir(), seed: 42, band: "short" });
     expect(report.failures).toEqual([]);
+    expect(report.recall.at5).toBeGreaterThanOrEqual(BANDS.short.thresholds.recallAt5);
+    expect(report.preferences.f1).toBeGreaterThanOrEqual(BANDS.short.thresholds.preferenceF1);
+    expect(report.identityCorrect).toBe(true);
+    expect(report.contradictions.correct).toBe(report.contradictions.total);
+    // Consolidation actually ran mid-horizon — recall survived it.
+    expect(report.consolidation.created).toBeGreaterThan(0);
+  });
+
+  it("medium band: decay erodes preferences but episodic recall holds", { timeout: 120_000 }, async () => {
+    const report = await runEval({ workDir: tmpDir(), seed: 42, band: "medium" });
+    expect(report.failures).toEqual([]);
+    // The failure modes the review surfaced, asserted so a future
+    // "improvement" that silently re-calibrates them away is caught:
+    // preferences planted 8+ months before horizon end have decayed out.
+    expect(report.preferences.recall).toBeLessThan(0.6);
+    // Episodic memory does NOT decay away — text is re-ranked, not deleted.
+    expect(report.recall.at5).toBeGreaterThanOrEqual(0.85);
+  });
+
+  it("long band: decay bites identity too (Task 1.3 lives in its own test)", { timeout: 120_000 }, async () => {
+    const report = await runEval({ workDir: tmpDir(), seed: 42, band: "long" });
+    expect(report.failures).toEqual([]);
+  });
+
+  it("holds up on a second seed across all bands", { timeout: 240_000 }, async () => {
+    for (const band of ["short", "medium", "long"] as const) {
+      const report = await runEval({ workDir: tmpDir(), seed: 1337, band });
+      expect(report.failures, `band ${band}`).toEqual([]);
+    }
   });
 });

@@ -1,12 +1,13 @@
 /**
- * CLI: npm run eval [-- --seed 7 --sessions 16 --turns 12 --workdir .eval]
- * Generates fixtures, runs the full harness, prints the report, writes
- * report.json next to the generated corpus. Exits non-zero on failure.
+ * CLI: npm run eval [-- --seed 7 --band short|medium|long --workdir .eval]
+ * Default runs ALL bands (short/medium/long), prints per-band reports and a
+ * summary table, writes report.json. Exits non-zero if any band fails its
+ * thresholds.
  */
 
 import path from "node:path";
 import fs from "node:fs";
-import { formatReport, runEval } from "./harness.ts";
+import { formatBandedResult, formatReport, runAllBands, runEval, type EvalBand } from "./harness.ts";
 
 function argValue(name: string): string | undefined {
   const idx = process.argv.indexOf(`--${name}`);
@@ -14,14 +15,18 @@ function argValue(name: string): string | undefined {
 }
 
 const workDir = path.resolve(argValue("workdir") ?? ".eval");
-const report = await runEval({
-  workDir,
-  seed: argValue("seed") ? Number(argValue("seed")) : undefined,
-  sessions: argValue("sessions") ? Number(argValue("sessions")) : undefined,
-  turnsPerSession: argValue("turns") ? Number(argValue("turns")) : undefined,
-});
+const seed = argValue("seed") ? Number(argValue("seed")) : undefined;
+const band = argValue("band") as EvalBand | undefined;
 
-fs.writeFileSync(path.join(workDir, "report.json"), JSON.stringify(report, null, 2));
-console.log(formatReport(report));
-console.log(`\nReport written to ${path.join(workDir, "report.json")}`);
-process.exit(report.passed ? 0 : 1);
+if (band) {
+  const report = await runEval({ workDir, seed, band });
+  fs.writeFileSync(path.join(workDir, "report.json"), JSON.stringify(report, null, 2));
+  console.log(formatReport(report));
+  process.exit(report.passed ? 0 : 1);
+} else {
+  const result = await runAllBands({ workDir, seed });
+  fs.writeFileSync(path.join(workDir, "report.json"), JSON.stringify(result, null, 2));
+  console.log(formatBandedResult(result));
+  console.log(`\nReport written to ${path.join(workDir, "report.json")}`);
+  process.exit(result.passed ? 0 : 1);
+}

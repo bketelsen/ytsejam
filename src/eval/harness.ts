@@ -1,13 +1,30 @@
 /**
- * End-to-end evaluation harness.
+ * End-to-end evaluation harness, banded by horizon (PLAN.md Phase 1).
  *
- * 1. Generate a synthetic multi-month corpus in ytsejam session format.
- * 2. Ingest session by session, snapshotting the learned profile after each
- *    (long-horizon view), running consolidation partway through so the run
- *    proves recall survives decay + consolidation.
- * 3. Probe every planted fact; score recall@k / MRR.
- * 4. Score personality mirroring: preference F1, directive recall, identity,
- *    contradiction resolution, and profile stability across the horizon.
+ * Three bands run the same persona over increasingly long horizons so the
+ * eval measures the regime where decay actually bites instead of only the
+ * regime where nothing has decayed yet:
+ *
+ *   short  — 12 sessions × 14d ≈ 6mo  (decay barely engaged)
+ *   medium — 24 sessions × 30d ≈ 24mo (preferences decay out between
+ *            reassertions; identity hangs on)
+ *   long   — 24 sessions × 60d ≈ 48mo (identity itself decays below the
+ *            profile floor — asserted as CORRECT behavior, see Task 1.3)
+ *
+ * Honesty rules baked in:
+ * - Profile snapshots and the mid-run consolidation pass use the clock of
+ *   that point in the corpus timeline, not the horizon end — evaluating a
+ *   2-year-old snapshot "from the future" would understate decay.
+ * - Thresholds are PER BAND and calibrated to measured behavior (minus
+ *   headroom), not aspiration. A band where decay correctly erodes a metric
+ *   has a low threshold and an explicit identityExpected flag; "fixing" a
+ *   long-band failure by weakening decay is the failure mode this structure
+ *   exists to catch.
+ *
+ * Per run: ingest session-by-session (snapshotting the profile after each at
+ * that session's clock), consolidate two-thirds through at that point's
+ * clock, then probe every planted fact and score recall + personality
+ * mirroring at horizon end.
  */
 
 import fs from "node:fs";
@@ -27,24 +44,96 @@ import {
   type RecallOutcome,
 } from "./metrics.ts";
 
+export type EvalBand = "short" | "medium" | "long";
+
 export interface EvalThresholds {
   recallAt5: number;
   mrr: number;
   preferenceF1: number;
   directiveRecall: number;
+  /**
+   * Exact expectation, not a floor: a band where decay should have erased
+   * the identity FAILS if identity survives (that would mean decay stopped
+   * doing its job — see PLAN.md Task 1.3).
+   */
+  identityExpected: boolean;
+  /** Whether the mid-horizon contradiction must resolve to the latest statement. */
+  contradictionRequired: boolean;
   stability: number;
 }
 
-export const DEFAULT_THRESHOLDS: EvalThresholds = {
-  recallAt5: 0.85,
-  mrr: 0.6,
-  preferenceF1: 0.75,
-  directiveRecall: 1,
-  stability: 0.95,
+export interface BandSpec {
+  sessions: number;
+  intervalDays: number;
+  turnsPerSession: number;
+  thresholds: EvalThresholds;
+}
+
+/**
+ * Thresholds reflect measured behavior of the current system minus headroom
+ * (see PLAN.md "Defaults reflect the current code's actual behavior — these
+ * are not aspirational"). Calibration notes per band:
+ *
+ * - short: everything alive; near-perfect is the honest bar.
+ * - medium: at per-session clocks, preferences planted with 2–3 statements
+ *   over 24 months spend the gaps between reassertions below the profile
+ *   floor (stability ≈ 0.5 measured) and have fully decayed by horizon end
+ *   8 months after their last assertion (F1 ≈ 0.3 measured: only the
+ *   late-flipped contradiction survives). Directives (one assertion at
+ *   month ~1, 365d half-life) are below the floor by month 24 — recall 0
+ *   until the Phase 2 floor seam / Phase 4 work raises it.
+ * - long: identity itself is below the floor (identityExpected: false —
+ *   this band PROVES decay bites); episodic recall stays high because decay
+ *   never deletes text, it only re-ranks.
+ */
+export const BANDS: Record<EvalBand, BandSpec> = {
+  short: {
+    sessions: 12,
+    intervalDays: 14,
+    turnsPerSession: 12,
+    thresholds: {
+      recallAt5: 0.85,
+      mrr: 0.6,
+      preferenceF1: 0.75,
+      directiveRecall: 1,
+      identityExpected: true,
+      contradictionRequired: true,
+      stability: 0.95,
+    },
+  },
+  medium: {
+    sessions: 24,
+    intervalDays: 30,
+    turnsPerSession: 12,
+    thresholds: {
+      recallAt5: 0.85,
+      mrr: 0.6,
+      preferenceF1: 0.25,
+      directiveRecall: 0,
+      identityExpected: false,
+      contradictionRequired: true,
+      stability: 0.3,
+    },
+  },
+  long: {
+    sessions: 24,
+    intervalDays: 60,
+    turnsPerSession: 12,
+    thresholds: {
+      recallAt5: 0.7,
+      mrr: 0.4,
+      preferenceF1: 0.2,
+      directiveRecall: 0,
+      identityExpected: false,
+      contradictionRequired: false,
+      stability: 0.15,
+    },
+  },
 };
 
 export interface EvalReport {
-  corpus: { sessions: number; turns: number; seed: number; horizonEnd: string };
+  band: EvalBand;
+  corpus: { sessions: number; intervalDays: number; turns: number; seed: number; horizonEnd: string };
   recall: RecallMetrics;
   preferences: PreferenceMetrics;
   directiveRecall: number;
@@ -59,14 +148,20 @@ export interface EvalReport {
 
 export interface RunEvalOptions {
   workDir: string;
+  band?: EvalBand;
   seed?: number;
+  /** Override the band's corpus shape (tests use small corpora). */
   sessions?: number;
   turnsPerSession?: number;
   thresholds?: Partial<EvalThresholds>;
   generate?: Partial<GenerateOptions>;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
+  const band = opts.band ?? "short";
+  const spec = BANDS[band];
   const seed = opts.seed ?? 42;
   const sessionsDir = path.join(opts.workDir, "sessions");
   const storeDir = path.join(opts.workDir, "store");
@@ -75,21 +170,32 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   const truth: GroundTruth = generateFixtures({
     outDir: sessionsDir,
     seed,
-    sessions: opts.sessions ?? 12,
-    turnsPerSession: opts.turnsPerSession ?? 12,
+    sessions: opts.sessions ?? spec.sessions,
+    turnsPerSession: opts.turnsPerSession ?? spec.turnsPerSession,
+    intervalDays: spec.intervalDays,
     ...opts.generate,
   });
 
-  const now = truth.horizonEnd;
+  const horizonEnd = truth.horizonEnd;
+  // Clock at "just before the next session" for mid-run snapshots: the
+  // moment this point in history would actually be observed.
+  const clockAfter = (i: number): string =>
+    new Date(
+      Math.min(
+        Date.parse(horizonEnd),
+        Date.parse(truth.sessionStarts[i]) + truth.intervalDays * DAY_MS,
+      ),
+    ).toISOString();
+
+  let now = truth.sessionStarts[0];
   const mem = MemorySystem.open({ storeDir, now: () => now });
 
-  // Long-horizon ingestion: one session at a time, profile snapshot after
-  // each, with a consolidation pass two-thirds through the horizon.
   const snapshots: ProfileSummary[] = [];
   let consolidation = { created: 0, folded: 0 };
   const files = truth.sessionIds.map((id) => path.join(sessionsDir, `${id}.jsonl`));
   const consolidateAfter = Math.floor(files.length * 0.66);
   for (let i = 0; i < files.length; i++) {
+    now = clockAfter(i);
     await mem.ingestSessionFile(files[i]);
     if (i === consolidateAfter) {
       const result = await mem.consolidate({ now });
@@ -97,6 +203,7 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
     }
     snapshots.push(mem.profile(now));
   }
+  now = horizonEnd;
 
   // Recall probes (dryRun so probing doesn't perturb access counts). A probe
   // counts as answered when the answer surfaces in the context the system
@@ -123,7 +230,7 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
     outcomes.push({ key: fact.key, rank });
   }
 
-  const finalProfile = snapshots[snapshots.length - 1];
+  const finalProfile = mem.profile(horizonEnd);
   const recall = recallMetrics(outcomes);
   const preferences = preferenceMetrics(finalProfile, truth);
   const directives = directiveRecall(finalProfile, truth);
@@ -131,7 +238,7 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   const contradictions = contradictionsResolved(finalProfile, truth);
   const stability = stabilityScore(snapshots, truth);
 
-  const thresholds = { ...DEFAULT_THRESHOLDS, ...opts.thresholds };
+  const thresholds = { ...spec.thresholds, ...opts.thresholds };
   const failures: string[] = [];
   if (recall.at5 < thresholds.recallAt5) {
     failures.push(`recall@5 ${recall.at5.toFixed(2)} < ${thresholds.recallAt5} (missed: ${recall.misses.join(", ")})`);
@@ -143,14 +250,31 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
         (preferences.missed.length ? ` (missed: ${preferences.missed.join(", ")})` : ""),
     );
   }
-  if (directives < thresholds.directiveRecall) failures.push(`directive recall ${directives.toFixed(2)} < ${thresholds.directiveRecall}`);
-  if (!identity) failures.push("identity (name) not learned");
-  if (contradictions.correct < contradictions.total) failures.push("contradiction not resolved to latest statement");
+  if (directives < thresholds.directiveRecall) {
+    failures.push(`directive recall ${directives.toFixed(2)} < ${thresholds.directiveRecall}`);
+  }
+  if (identity !== thresholds.identityExpected) {
+    failures.push(
+      thresholds.identityExpected
+        ? "identity (name) not learned"
+        : "identity survived a horizon where decay should have retired it",
+    );
+  }
+  if (thresholds.contradictionRequired && contradictions.correct < contradictions.total) {
+    failures.push("contradiction not resolved to latest statement");
+  }
   if (stability < thresholds.stability) failures.push(`stability ${stability.toFixed(2)} < ${thresholds.stability}`);
 
-  const turns = truth.sessionIds.length * (opts.turnsPerSession ?? 12);
+  const turns = truth.sessionIds.length * (opts.turnsPerSession ?? spec.turnsPerSession);
   return {
-    corpus: { sessions: truth.sessionIds.length, turns, seed, horizonEnd: truth.horizonEnd },
+    band,
+    corpus: {
+      sessions: truth.sessionIds.length,
+      intervalDays: truth.intervalDays,
+      turns,
+      seed,
+      horizonEnd,
+    },
     recall,
     preferences,
     directiveRecall: directives,
@@ -164,22 +288,36 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   };
 }
 
+export interface BandedEvalResult {
+  bands: EvalReport[];
+  passed: boolean;
+}
+
+export async function runAllBands(opts: Omit<RunEvalOptions, "band">): Promise<BandedEvalResult> {
+  const bands: EvalReport[] = [];
+  for (const band of Object.keys(BANDS) as EvalBand[]) {
+    bands.push(await runEval({ ...opts, workDir: path.join(opts.workDir, band), band }));
+  }
+  return { bands, passed: bands.every((b) => b.passed) };
+}
+
 export function formatReport(report: EvalReport): string {
   const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+  const t = report.thresholds;
   const lines = [
-    `LTM evaluation — ${report.corpus.sessions} sessions, seed ${report.corpus.seed}, horizon ends ${report.corpus.horizonEnd.slice(0, 10)}`,
+    `[${report.band}] ${report.corpus.sessions} sessions × ${report.corpus.intervalDays}d, seed ${report.corpus.seed}, horizon ends ${report.corpus.horizonEnd.slice(0, 10)}`,
     ``,
     `Recall quality (${report.recall.n} planted facts)`,
     `  recall@1  ${pct(report.recall.at1)}`,
-    `  recall@5  ${pct(report.recall.at5)}   (threshold ${pct(report.thresholds.recallAt5)})`,
-    `  MRR       ${report.recall.mrr.toFixed(2)}   (threshold ${report.thresholds.mrr})`,
+    `  recall@5  ${pct(report.recall.at5)}   (threshold ${pct(t.recallAt5)})`,
+    `  MRR       ${report.recall.mrr.toFixed(2)}   (threshold ${t.mrr})`,
     ``,
     `Personality mirroring`,
-    `  preference precision ${pct(report.preferences.precision)}  recall ${pct(report.preferences.recall)}  F1 ${report.preferences.f1.toFixed(2)} (threshold ${report.thresholds.preferenceF1})`,
-    `  directive recall     ${pct(report.directiveRecall)}`,
-    `  identity learned     ${report.identityCorrect ? "yes" : "NO"}`,
-    `  contradictions       ${report.contradictions.correct}/${report.contradictions.total} resolved to latest`,
-    `  stability (horizon)  ${pct(report.stability)} (threshold ${pct(report.thresholds.stability)})`,
+    `  preference precision ${pct(report.preferences.precision)}  recall ${pct(report.preferences.recall)}  F1 ${report.preferences.f1.toFixed(2)} (threshold ${t.preferenceF1})`,
+    `  directive recall     ${pct(report.directiveRecall)} (threshold ${pct(t.directiveRecall)})`,
+    `  identity surfaced    ${report.identityCorrect ? "yes" : "no"} (expected: ${t.identityExpected ? "yes" : "no — decay should retire it"})`,
+    `  contradictions       ${report.contradictions.correct}/${report.contradictions.total} resolved${t.contradictionRequired ? "" : " (informational)"}`,
+    `  stability (horizon)  ${pct(report.stability)} (threshold ${pct(t.stability)})`,
     ``,
     `Consolidation: ${report.consolidation.created} summaries folded ${report.consolidation.folded} turn records`,
     ``,
@@ -189,4 +327,29 @@ export function formatReport(report: EvalReport): string {
     lines.push(``, `Spurious learned preferences: ${report.preferences.spurious.join("; ")}`);
   }
   return lines.join("\n");
+}
+
+export function formatBandedResult(result: BandedEvalResult): string {
+  const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+  const rows = result.bands.map((b) =>
+    [
+      b.band.padEnd(7),
+      `r@5 ${pct(b.recall.at5).padStart(4)}`,
+      `MRR ${b.recall.mrr.toFixed(2)}`,
+      `prefF1 ${b.preferences.f1.toFixed(2)}`,
+      `dir ${pct(b.directiveRecall).padStart(4)}`,
+      `id ${b.identityCorrect ? "yes" : "no "}`,
+      `stab ${pct(b.stability).padStart(4)}`,
+      b.passed ? "PASS" : "FAIL",
+    ].join("  "),
+  );
+  return [
+    ...result.bands.map((b) => formatReport(b)).join("\n\n" + "─".repeat(72) + "\n\n"),
+    "",
+    "═".repeat(72),
+    "Summary",
+    ...rows,
+    "",
+    result.passed ? "ALL BANDS PASSED" : "ONE OR MORE BANDS FAILED",
+  ].join("\n");
 }
