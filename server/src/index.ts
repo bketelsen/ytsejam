@@ -124,8 +124,12 @@ try {
 }
 
 const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs });
-const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-  console.log(`ytsejam listening on http://localhost:${info.port}`);
+const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
+  const displayHost = config.host === "0.0.0.0" || config.host === "::" ? "<all interfaces>" : config.host;
+  console.log(`ytsejam listening on http://${displayHost}:${info.port}`);
   console.log(`data dir: ${config.dataDir}`);
+  if (config.host === "0.0.0.0" || config.host === "::") {
+    console.warn("ytsejam: listening on all interfaces — ensure a reverse proxy and auth review are in place before exposing to a network");
+  }
 });
 injectWebSocket(server);
