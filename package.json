@@ -1,11 +1,19 @@
 {
   "name": "ytsejam",
-  "private": true,
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "server",
     "web"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bketelsen/ytsejam.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bketelsen/ytsejam/issues"
+  },
+  "homepage": "https://github.com/bketelsen/ytsejam#readme",
   "scripts": {
     "postinstall": "patch-package",
     "test": "npm test --workspace server && npm test --workspace web",
