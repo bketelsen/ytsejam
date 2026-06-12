@@ -50,12 +50,30 @@ function matchesObject(fact: SemanticFact, object: string): boolean {
   return fact.objectNorm.includes(norm) || norm.includes(fact.objectNorm);
 }
 
+export interface MissedPreference {
+  /** "±object" of the planted preference that never surfaced. */
+  expected: string;
+  /** Closest learned fact by token overlap, or null when nothing is close. */
+  closest: string | null;
+}
+
 export interface PreferenceMetrics {
   precision: number;
   recall: number;
   f1: number;
   missed: string[];
+  missedDetail: MissedPreference[];
   spurious: string[];
+  /** The actual spurious facts, so callers can trace their source turns. */
+  spuriousFacts: SemanticFact[];
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const ta = new Set(a.toLowerCase().split(/\W+/).filter(Boolean));
+  const tb = new Set(b.toLowerCase().split(/\W+/).filter(Boolean));
+  let common = 0;
+  for (const t of ta) if (tb.has(t)) common++;
+  return common / Math.max(1, Math.min(ta.size, tb.size));
 }
 
 export function preferenceMetrics(profile: ProfileSummary, truth: GroundTruth): PreferenceMetrics {
@@ -64,27 +82,49 @@ export function preferenceMetrics(profile: ProfileSummary, truth: GroundTruth): 
     ...truth.contradictions.map((c) => ({ object: c.object, polarity: c.finalPolarity })),
   ];
   const learned = profile.preferences;
+  const describe = (polarity: number, object: string) => `${polarity > 0 ? "+" : "-"}${object}`;
 
   const missed: string[] = [];
+  const missedDetail: MissedPreference[] = [];
   let recalled = 0;
   for (const p of planted) {
     const hit = learned.some((f) => matchesObject(f, p.object) && f.polarity === p.polarity);
-    if (hit) recalled++;
-    else missed.push(`${p.polarity > 0 ? "+" : "-"}${p.object}`);
+    if (hit) {
+      recalled++;
+      continue;
+    }
+    missed.push(describe(p.polarity, p.object));
+    let closest: SemanticFact | null = null;
+    let best = 0;
+    for (const f of learned) {
+      const score = tokenOverlap(f.object, p.object);
+      if (score > best) {
+        best = score;
+        closest = f;
+      }
+    }
+    missedDetail.push({
+      expected: describe(p.polarity, p.object),
+      closest: closest && best >= 0.5 ? describe(closest.polarity, closest.object) : null,
+    });
   }
 
   const spurious: string[] = [];
+  const spuriousFacts: SemanticFact[] = [];
   let correct = 0;
   for (const f of learned) {
     const hit = planted.some((p) => matchesObject(f, p.object) && f.polarity === p.polarity);
     if (hit) correct++;
-    else spurious.push(`${f.polarity > 0 ? "+" : "-"}${f.object}`);
+    else {
+      spurious.push(describe(f.polarity, f.object));
+      spuriousFacts.push(f);
+    }
   }
 
   const recall = planted.length ? recalled / planted.length : 1;
   const precision = learned.length ? correct / learned.length : 1;
   const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
-  return { precision, recall, f1, missed, spurious };
+  return { precision, recall, f1, missed, missedDetail, spurious, spuriousFacts };
 }
 
 export function directiveRecall(profile: ProfileSummary, truth: GroundTruth): number {

@@ -153,6 +153,26 @@ export const BANDS: Record<EvalBand, BandSpec> = {
   },
 };
 
+export interface RecallMissDiagnostic {
+  probeSet: "plain" | "paraphrase";
+  key: string;
+  probe: string;
+  answer: string;
+  topRetrieved: string[];
+}
+
+export interface SpuriousPreferenceDiagnostic {
+  fact: string;
+  /** The first source turn's text that triggered the extraction. */
+  exampleTurn: string;
+}
+
+export interface EvalDiagnostics {
+  recallMisses: RecallMissDiagnostic[];
+  spuriousPreferences: SpuriousPreferenceDiagnostic[];
+  missedPreferences: { expected: string; closest: string | null }[];
+}
+
 export interface EvalReport {
   band: EvalBand;
   corpus: { sessions: number; intervalDays: number; turns: number; seed: number; horizonEnd: string };
@@ -167,6 +187,7 @@ export interface EvalReport {
   thresholds: EvalThresholds;
   passed: boolean;
   failures: string[];
+  diagnostics: EvalDiagnostics;
 }
 
 export interface RunEvalOptions {
@@ -233,7 +254,13 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   // would hand the assistant: episodic items at their rank, or — for facts
   // the semantic layer distilled (employer, name, …) — profile facts, which
   // composeContext places above the episodic section, i.e. rank 1.
-  const probeFact = async (probe: string, answer: string): Promise<number | null> => {
+  const recallMisses: RecallMissDiagnostic[] = [];
+  const probeFact = async (
+    probeSet: "plain" | "paraphrase",
+    key: string,
+    probe: string,
+    answer: string,
+  ): Promise<number | null> => {
     const { items, profile } = await mem.retrieve(probe, { k: 5, now, dryRun: true });
     const needle = answer.toLowerCase();
     let rank: number | null = null;
@@ -249,16 +276,25 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
       ...profile.preferences,
     ].some((f) => f.object.toLowerCase().includes(needle));
     if (inProfile) rank = 1;
+    if (rank === null) {
+      recallMisses.push({
+        probeSet,
+        key,
+        probe,
+        answer,
+        topRetrieved: items.slice(0, 3).map((i) => i.record.text.slice(0, 120)),
+      });
+    }
     return rank;
   };
 
   const outcomes: RecallOutcome[] = [];
   const paraphraseOutcomes: RecallOutcome[] = [];
   for (const fact of truth.facts) {
-    outcomes.push({ key: fact.key, rank: await probeFact(fact.probe, fact.answer) });
+    outcomes.push({ key: fact.key, rank: await probeFact("plain", fact.key, fact.probe, fact.answer) });
     paraphraseOutcomes.push({
       key: fact.key,
-      rank: await probeFact(fact.paraphraseProbe, fact.answer),
+      rank: await probeFact("paraphrase", fact.key, fact.paraphraseProbe, fact.answer),
     });
   }
 
@@ -270,6 +306,21 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
   const identity = identityCorrect(finalProfile, truth);
   const contradictions = contradictionsResolved(finalProfile, truth);
   const stability = stabilityScore(snapshots, truth);
+
+  // Trace spurious preferences back to the turn that triggered them — the
+  // difference between "the eval fails" and "here's where to look first".
+  const diagnostics: EvalDiagnostics = {
+    recallMisses,
+    spuriousPreferences: preferences.spuriousFacts.map((f) => {
+      const src = f.sources[0];
+      const record = src ? mem.getRecord(`${src.sessionId}/${src.entryId}#0`) : undefined;
+      return {
+        fact: `${f.polarity > 0 ? "+" : "-"}${f.object}`,
+        exampleTurn: record?.text.slice(0, 160) ?? (src ? `${src.sessionId}/${src.entryId}` : "unknown"),
+      };
+    }),
+    missedPreferences: preferences.missedDetail,
+  };
 
   mem.close();
 
@@ -326,6 +377,7 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
     thresholds,
     passed: failures.length === 0,
     failures,
+    diagnostics,
   };
 }
 
@@ -365,8 +417,27 @@ export function formatReport(report: EvalReport): string {
     ``,
     report.passed ? `PASSED` : `FAILED:\n${report.failures.map((f) => `  - ${f}`).join("\n")}`,
   ];
-  if (report.preferences.spurious.length) {
-    lines.push(``, `Spurious learned preferences: ${report.preferences.spurious.join("; ")}`);
+
+  // Diagnostics: enough context to start debugging without re-running.
+  const d = report.diagnostics;
+  if (!report.passed && d.recallMisses.length) {
+    lines.push(``, `Recall misses:`);
+    for (const miss of d.recallMisses) {
+      lines.push(`  [${miss.probeSet}] ${miss.key}: "${miss.probe}" expected "${miss.answer}"`);
+      miss.topRetrieved.forEach((t, i) => lines.push(`      top${i + 1}: ${t}`));
+    }
+  }
+  if (d.spuriousPreferences.length) {
+    lines.push(``, `Spurious learned preferences (with triggering turn):`);
+    for (const s of d.spuriousPreferences) {
+      lines.push(`  ${s.fact}`, `      from: ${s.exampleTurn}`);
+    }
+  }
+  if (!report.passed && d.missedPreferences.length) {
+    lines.push(``, `Missed planted preferences:`);
+    for (const m of d.missedPreferences) {
+      lines.push(`  expected ${m.expected}, observed: ${m.closest ?? "NONE"}`);
+    }
   }
   return lines.join("\n");
 }

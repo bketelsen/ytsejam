@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runEval, BANDS } from "../src/eval/harness.ts";
+import { formatReport, runEval, BANDS } from "../src/eval/harness.ts";
 import { generateFixtures } from "../src/eval/synthetic.ts";
 import { readSessionFile } from "../src/session/reader.ts";
 
@@ -74,6 +74,29 @@ describe("evaluation bands (PLAN.md Task 1.1)", () => {
       const report = await runEval({ workDir: tmpDir(), seed: 1337, band });
       expect(report.failures, `band ${band}`).toEqual([]);
     }
+  });
+});
+
+describe("eval failure output is actionable (PLAN.md Task 3.5)", () => {
+  it("a failing report names the misses with probes, answers, and retrieved texts", { timeout: 120_000 }, async () => {
+    // Force a paraphrase failure: the lexical embedder can't reach 100%.
+    const report = await runEval({
+      workDir: tmpDir(),
+      seed: 42,
+      band: "short",
+      thresholds: { paraphraseRecallAt5: 1 },
+    });
+    expect(report.passed).toBe(false);
+    expect(report.diagnostics.recallMisses.length).toBeGreaterThan(0);
+    const miss = report.diagnostics.recallMisses[0];
+    expect(miss.probe.length).toBeGreaterThan(0);
+    expect(miss.answer.length).toBeGreaterThan(0);
+    expect(miss.topRetrieved.length).toBeGreaterThan(0);
+
+    const text = formatReport(report);
+    expect(text).toContain("Recall misses:");
+    expect(text).toContain(miss.probe);
+    expect(text).toContain("top1:");
   });
 });
 
