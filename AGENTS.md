@@ -10,6 +10,13 @@ AI-facing docs for this repo live in `docs/agents/`. Start with
 and configuration — and follow its links to subsystem docs. Read the relevant doc before
 working in that area.
 
+## Memory
+
+The memory module lives at `server/src/memory/` — see
+[`server/src/memory/README.md`](server/src/memory/README.md) for the public-surface
+discipline. The on-disk format spec is at
+[`docs/memory/FORMAT.md`](docs/memory/FORMAT.md).
+
 ## Other doc directories
 
 - `docs/plans/` — implementation plans (one per feature, dated). Read the current plan
