@@ -38,7 +38,7 @@ describe("memory module skeleton", () => {
 
   test("public surface exports every planned symbol", () => {
     for (const name of EXPORTS) {
-      expect(memory[name]).toBeDefined();
+      expect(typeof memory[name]).toBe("function");
     }
   });
 });

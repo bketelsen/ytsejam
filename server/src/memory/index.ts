@@ -28,6 +28,7 @@ import type {
   ReadResult,
   RecentObservationsParams,
   RecentObservationsResult,
+  ScenarioCheckResult,
   SearchResults,
   SessionBrief,
   StatsResult,
@@ -197,7 +198,7 @@ export async function linkIndexCompute(): Promise<LinkIndexResult> {
 }
 
 /** Check active scenario files for due and overdue reviews; filled in PR-2b. */
-export async function scenarioCheck(): Promise<import("./types.ts").ScenarioCheckResult> {
+export async function scenarioCheck(): Promise<ScenarioCheckResult> {
   return notImplemented("PR-2b");
 }
 
