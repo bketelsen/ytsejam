@@ -63,7 +63,7 @@ docs/memory/
 
 **The discipline:** every memory operation goes through `server/src/memory/index.ts`. Nothing outside that directory does file I/O against the store. Tools (`server/src/tools/cog.ts`) and brief renderer (`server/src/cog/brief.ts`) import functions; they do not reach into `memory/store/` directly. This is the "you can extract to a npm package on day N+1" property.
 
-**Test for the discipline:** `grep -rn "memory_root\|chapterhouse/memory\|ytsejam/data/memory" server/src | grep -v "memory/"` must return zero lines outside `server/src/memory/`.
+**Test for the discipline:** `grep -rn "memory_root\|ytsejam/data/memory\|chapterhouse/memory" server/src | grep -v "^server/src/memory/"` must return zero lines outside `server/src/memory/`.
 
 ## 4. Open decisions (Brian's call before PR-1)
 
