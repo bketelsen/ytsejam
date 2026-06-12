@@ -1,6 +1,7 @@
 {
   "name": "ytsejam",
   "license": "MIT",
+  "engines": { "node": ">=22.0.0" },
   "type": "module",
   "workspaces": [
     "server",

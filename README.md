@@ -16,6 +16,7 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 
 ## Run
 
+    # If NODE_ENV=production is set in your shell, run `env -u NODE_ENV npm install` instead.
     npm install
     YTSEJAM_AUTH_TOKEN=<secret> ANTHROPIC_API_KEY=<key> npm start
     # open http://localhost:3000 and sign in with the token
@@ -42,6 +43,9 @@ silently skips devDependencies and the build fails. Unset it first
 | `YTSEJAM_TASK_CONCURRENCY` | `4` | max number of subagent tasks running at once |
 | `YTSEJAM_TASK_TIMEOUT_MIN` | `15` | per-task timeout in minutes before the subagent is aborted |
 | `YTSEJAM_CONTEXT_FILES` | `true` | auto-load `AGENTS.md`/`CLAUDE.md` from `~/.pi/agent` and the session's working-directory ancestor chain into the system prompt (mirrors `pi-coding-agent --no-context-files`; set to `false` to disable) |
+| `YTSEJAM_HOST` | `127.0.0.1` | listener interface; only override behind a reverse proxy you trust (see [Security model](#security-model)) |
+| `YTSEJAM_MEMORY_DIR` | `$YTSEJAM_DATA_DIR/memory` | absolute path to relocate the cog memory store |
+| `YTSEJAM_COMPACTION_ENABLED` | `true` | emergency kill switch for auto-compaction (`false` to disable) |
 
 ## Security model
 

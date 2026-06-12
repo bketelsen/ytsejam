@@ -233,7 +233,7 @@ In `README.md` around line 46, replace the literal `<repo-url>` with `https://gi
 
 Add a `## Prerequisites` section near the top of the README (just below the project description, before quick-start). Required content:
 
-- Operating system: Linux (tested on Fedora-family snosi; Ubuntu/Debian likely work; macOS/Windows are not supported because the install is systemd `--user`-based).
+- Operating system: Linux (tested on Fedora-family Linux; Ubuntu/Debian likely work; macOS/Windows are not supported because the install is systemd `--user`-based).
 - `systemd` with user services enabled. If running headless, enable lingering: `loginctl enable-linger "$USER"` (so the service survives logout).
 - Node.js **≥ 22.0.0** — required for the built-in `node:sqlite` module the memory store relies on. Check with `node --version`.
 - `git`, `npm`, and a Bourne-compatible shell.
@@ -514,17 +514,17 @@ git commit -m "docs: document KEEP_RELEASES, add enable-linger, fix stale links"
 
 ---
 
-## Task 8: Username + Microsoft scrub (R7 + audit #2 M2 + audit #1 N1)
+## Task 8: Username + work-fixture scrub (R7 + audit #2 M2 + audit #1 N1)
 
 **Why:** Three small, mechanical content-polish items rolled together:
 - Tracked docs contain absolute paths under the maintainer's home directory.
 - 15 tracked docs use "Brian" first-name in plan/audit/lesson narrative — most fine, but a sweep ensures user-facing docs read neutrally.
-- `server/test/memory/*.test.ts` fixtures seed `work/microsoft/entities.md` with the maintainer's real employer/role.
+- `server/test/memory/*.test.ts` fixtures seed the work-subdomain `entities.md` with identity-revealing employer/role values.
 - `server/test/compaction.test.ts:261` hardcodes a maintainer-home `.ytsejam/data/sessions/…` fixture string.
 
 **Files:**
 - Modify: the tracked docs containing maintainer-home absolute paths (list below)
-- Modify: `server/test/memory/analysis.test.ts`, `server/test/memory/consolidated.test.ts`, `server/test/memory/domain.test.ts` (Microsoft → Acme)
+- Modify: `server/test/memory/analysis.test.ts`, `server/test/memory/consolidated.test.ts`, `server/test/memory/domain.test.ts` (identity-revealing work fixture → generic fixture)
 - Modify: `server/test/compaction.test.ts` (line ~261)
 
 ### Step 1: Replace maintainer-home absolute paths in tracked docs
@@ -539,11 +539,11 @@ Verify zero maintainer-home absolute paths remain in tracked files.
 
 In `server/test/memory/analysis.test.ts`, `server/test/memory/consolidated.test.ts`, and `server/test/memory/domain.test.ts`:
 
-- Replace the path component `work/microsoft` with `work/acme` (search for the literal string `"work/microsoft"` and similar).
-- Replace `### Microsoft (employer)` with `### Acme (employer)`.
-- Replace `Role: Principal Engineering Manager` with `Role: Staff Engineer`.
+- Replace the path component for the work-subdomain fixture with a generic placeholder (the project uses `work/acme`).
+- Replace the entity name in the fixture with a generic company name matching the path.
+- Replace the role title with a generic engineering role.
 
-Verify with: `grep -nE 'microsoft|Principal Engineering Manager' server/test/memory/ -r` returns nothing.
+Verify with a grep for the identity-revealing work fixture and role title; it should return nothing.
 
 ### Step 3: De-personalise the compaction test fixture
 
@@ -555,7 +555,7 @@ In `server/test/compaction.test.ts` around line 261, the hardcoded maintainer-ho
 cd server && NODE_ENV= npx vitest run test/memory/ test/compaction.test.ts
 ```
 
-Expected: PASS. If `domain.test.ts` references `work/microsoft` as a domain id in assertions, those assertions will need their string literals updated too — change all of them in lockstep.
+Expected: PASS. If `domain.test.ts` references the old work fixture as a domain id in assertions, those assertions will need their string literals updated too — change all of them in lockstep.
 
 ### Step 5: Run the full gate
 
@@ -569,9 +569,9 @@ git add docs/ server/test/
 git commit -m "chore: scrub maintainer-home paths + generic-ify test fixtures
 
 Replaces tracked docs' maintainer-home shell snippets with ~/\$HOME/<repo>
-as context allows; renames the work/microsoft test fixture + 'Principal
-Engineering Manager' role to work/acme + 'Staff Engineer' (the real
-values matched the maintainer's public employer/role — fine but a smell);
+as context allows; renames the identity-revealing work test fixture + role
+to generic placeholders (the previous values were identity-revealing for the
+maintainer — fine but a smell);
 replaces a hardcoded maintainer-home session path in compaction.test.ts
 with a synthetic test-only path."
 ```

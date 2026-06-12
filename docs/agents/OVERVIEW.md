@@ -71,6 +71,7 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
 - **`workdirs.ts` / `archive-store.ts`** — per-session sidecar JSONL logs (latest-wins) for the
   agent working directory and the archive (soft-delete) flag. Both are SSOT the index is rebuilt
   from. See [`storage.md`](storage.md).
+- **`compaction.ts`** — model-aware context-window compaction triggered at idle boundaries before a session hits the catalog's `contextWindow`. Wired into the chat session via `manager.ts` and into subagents via `task-manager.ts`; emergency-disable via `YTSEJAM_COMPACTION_ENABLED=false`. See `deploy/README.md` § Runtime operations.
 - **`context-files.ts`** — faithful port of pi-coding-agent's "context files": loads `AGENTS.md`/
   `CLAUDE.md` from `~/.pi/agent` and the workdir's ancestor chain into the system prompt
   (`YTSEJAM_CONTEXT_FILES=false` disables).
