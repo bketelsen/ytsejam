@@ -247,7 +247,7 @@ Add a `## Security model` section. Required content (prose, not the literal bull
 - ytsejam **defaults to loopback (`127.0.0.1`)** — only processes on the same machine can reach it. Override with `YTSEJAM_HOST=0.0.0.0` only behind a reverse proxy you trust.
 - Authentication is a **single shared bearer token** (`YTSEJAM_AUTH_TOKEN` in the env file). Anyone who has the token has full agent access. Treat it like an SSH key: rotate if leaked, never commit, never share over plaintext channels.
 - The web UI talks to an **LLM agent that has a `bash` tool**. A reachable, token-known endpoint is therefore a remote shell on the host running ytsejam. Do not expose to the public internet. Do not run ytsejam as a different user than the one whose files you'd want the agent to be able to touch.
-- The bundled subagent system, schedules, and tools (`web_fetch`, `bash`, `delegate`, file operations) run with the ytsejam process's privileges. Audit `docs/agents/tooling.md` if you intend to harden further.
+- The bundled subagent system, schedules, and tools (`web_fetch`, `bash`, `delegate`, file operations) run with the ytsejam process's privileges. See `docs/agents/tools.md` for the full tool surface and how each is registered.
 - Outbound traffic: ytsejam calls whichever LLM provider you configure and the URLs your agent decides to fetch via `web_fetch`/`web_search`. There is no built-in egress filter.
 
 ### Step 5: Verify gate passes (no code changed but markdownlint is in the gate)
