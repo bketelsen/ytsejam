@@ -27,8 +27,6 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 | `YTSEJAM_SUBAGENT_MODEL` | same as `YTSEJAM_DEFAULT_MODEL` | `provider/modelId` used for delegated background subagents |
 | `YTSEJAM_TASK_CONCURRENCY` | `4` | max number of subagent tasks running at once |
 | `YTSEJAM_TASK_TIMEOUT_MIN` | `15` | per-task timeout in minutes before the subagent is aborted |
-| `YTSEJAM_COG_SOCKET` | `~/.local/share/cogmemory-test/cog-memory-test.sock` | unix socket of the cogmemory daemon (soft dependency) |
-| `YTSEJAM_COG_ROLE` | `agent` | RBAC role passed on every cogmemory RPC |
 | `YTSEJAM_CONTEXT_FILES` | `true` | auto-load `AGENTS.md`/`CLAUDE.md` from `~/.pi/agent` and the session's working-directory ancestor chain into the system prompt (mirrors `pi-coding-agent --no-context-files`; set to `false` to disable) |
 
 ## Development
@@ -41,7 +39,7 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 ## Deployment
 
 Production runs as a systemd `--user` service on port **9873**, isolated from a
-dev instance on **3000** (different port, data dir, and memory socket — so they
+dev instance on **3000** (different port and data dir — including in-process memory — so they
 coexist safely). See [`deploy/README.md`](deploy/README.md). Quick start:
 
     deploy/install.sh                 # creates ~/.ytsejam, seeds env, installs the unit
@@ -49,4 +47,4 @@ coexist safely). See [`deploy/README.md`](deploy/README.md). Quick start:
     deploy/deploy.sh                  # build + cut release + swap + restart + health-check
     systemctl --user enable --now ytsejam
 
-    deploy/dev.sh                     # run a dev instance on :3000 against test memory
+    deploy/dev.sh                     # run a dev instance on :3000 with throwaway data/memory

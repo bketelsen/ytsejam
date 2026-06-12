@@ -124,8 +124,12 @@ why a crash mid-operation is safe: see [`delegation.md`](delegation.md) (tasks) 
 notes in [`OVERVIEW.md`](OVERVIEW.md) (schedules record the fire event *before* injecting, so a
 crash can't double-fire).
 
-## cog memory is NOT in this data dir
+## Memory module
 
-Persistent cross-session "memory" (hot memory, domains, observations, etc.) is **not** stored under
-`YTSEJAM_DATA_DIR`. It lives in a separate cogmemory Go daemon reached over a unix socket. ytsejam
-holds no copy. See [`OVERVIEW.md`](OVERVIEW.md) → cog memory and `server/src/cog/`.
+Persistent cross-session memory (hot memory, domains, observations, action items, etc.) is now
+served in-process by ytsejam. There is no separate process, no socket, and no JSON-RPC hop in the
+runtime path; the `cog_*` tool names remain as the model-facing vocabulary.
+
+The memory store's on-disk format is unchanged from the folded service. See
+[`../../server/src/memory/README.md`](../../server/src/memory/README.md) for the public module
+surface and [`../memory/FORMAT.md`](../memory/FORMAT.md) for the on-disk format spec.

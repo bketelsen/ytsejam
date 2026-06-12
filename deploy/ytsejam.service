@@ -3,12 +3,6 @@ Description=ytsejam — web-based personal AI assistant (pi agent harness)
 Documentation=https://github.com/bketelsen/ytsejam
 After=network-online.target
 Wants=network-online.target
-# cogmemory is a SOFT dependency: ytsejam degrades gracefully when the memory
-# daemon is down (the cog tools just error per-call), so we order startup
-# without making ytsejam fail if cogmemory is absent. If you don't run
-# cogmemory at all, these two lines are harmless.
-Wants=cogmemory.service
-After=cogmemory.service
 
 [Service]
 Type=simple
@@ -40,12 +34,11 @@ Environment=NODE_ENV=production
 Environment=YTSEJAM_PORT=9873
 Environment=YTSEJAM_DATA_DIR=%h/.ytsejam/data
 Environment=YTSEJAM_WEB_DIST=%h/.ytsejam/current/web/dist
-Environment=YTSEJAM_COG_SOCKET=%h/.local/share/cogmemory/cog-memory.sock
 Environment=YTSEJAM_PI_AUTH=%h/.pi/agent/auth.json
 
 # All secrets + path/port overrides live here at mode 0600:
 #   YTSEJAM_AUTH_TOKEN, YTSEJAM_PORT, YTSEJAM_DATA_DIR, YTSEJAM_DEFAULT_MODEL,
-#   YTSEJAM_COG_SOCKET, YTSEJAM_PI_AUTH, provider API keys, BRAVE_API_KEY, ...
+#   YTSEJAM_PI_AUTH, provider API keys, BRAVE_API_KEY, ...
 # Leading '-' makes it optional so a missing file fails loud at the app layer
 # (YTSEJAM_AUTH_TOKEN is required by config.ts) rather than at unit parse time.
 EnvironmentFile=-%h/.ytsejam/ytsejam.env

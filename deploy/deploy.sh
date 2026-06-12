@@ -15,7 +15,7 @@ set -euo pipefail
 # Locations (all override-able; defaults keep everything under ~/.ytsejam):
 #   YTSEJAM_HOME    deploy root        (default ~/.ytsejam)
 #   SOURCE_DIR      dev checkout       (default the repo this script lives in)
-# Runtime config (port, data dir, token, model, cog socket) lives in
+# Runtime config (port, data dir, token, model) lives in
 #   $YTSEJAM_HOME/ytsejam.env  — created by deploy/install.sh, never by this.
 # ─────────────────────────────────────────────────────────────────────────────
 

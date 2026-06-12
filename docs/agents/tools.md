@@ -120,16 +120,15 @@ The `SchedulerService` is late-bound the same way the `TaskManager` is.
 
 ### cog memory — `cog.ts` (global)
 
-Tools over the cogmemory daemon (`CogClient`). The RBAC `role` is injected server-side
-(spread **last** so a model-supplied `role` can't override it) — the model never supplies it.
+Tools over the in-process memory module.
 
 File-style ops: `cog_read`, `cog_write`, `cog_append`, `cog_patch`, `cog_outline`, `cog_search`,
 `cog_list`, `cog_move`. Plus `cog_rpc`, a single tool that fans out to a fixed allow-list of
-consolidated RPC methods (`session_brief`, `domain_summary`, `housekeeping_scan`, `open_actions`,
-audits, index computations, `domains.list/get`, `stats`, `git`, `health`, …). The method list is the
+consolidated methods (`session_brief`, `domain_summary`, `housekeeping_scan`, `open_actions`, audits,
+index computations, `domains.list/get`, `stats`, `git`, `health`, …). The method list is the
 `RPC_METHODS` const in `cog.ts`; file operations are deliberately excluded from `cog_rpc` so they go
 through their dedicated tools. These names mirror the cog skill vocabulary so skill playbooks port
-verbatim. When the daemon is down, these tools error per-call but the rest of the assistant works.
+verbatim.
 
 ## Adding a tool — checklist
 

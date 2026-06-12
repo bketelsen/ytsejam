@@ -8,7 +8,7 @@ production without touching it:
 | Port (`YTSEJAM_PORT`) | **9873** (YTSE on a keypad) | **3000** |
 | Code | `~/.ytsejam/current` → `~/.ytsejam/releases/<ts>` | your repo checkout |
 | Data (`YTSEJAM_DATA_DIR`) | `~/.ytsejam/data` | `/tmp/ytsejam-dev/data` (throwaway) |
-| Memory (`YTSEJAM_COG_SOCKET`) | cogmemory prod socket | cogmemory **test** socket |
+| Memory | in-process under the data dir | in-process under the throwaway data dir |
 
 Because every distinction is just an environment value (see `server/src/config.ts`),
 dev and prod share nothing and cannot collide. The working directory the agent
@@ -21,7 +21,7 @@ Everything lives under `~/.ytsejam/` (override with `YTSEJAM_HOME`):
       releases/<ts>/     # immutable release trees (clean checkout + web build + node_modules)
       current  -> releases/<ts>   # what systemd runs
       previous -> releases/<ts>   # one step back, for rollback
-      data/              # YTSEJAM_DATA_DIR: sessions, index.db, persona, skills
+      data/              # YTSEJAM_DATA_DIR: sessions, index.db, persona, skills, memory
 
 ## First-time setup
 
@@ -34,6 +34,8 @@ Everything lives under `~/.ytsejam/` (override with `YTSEJAM_HOME`):
 To keep the service running after you log out:
 
     loginctl enable-linger "$USER"
+
+Memory is in-process as of Phase 5 of the 2026-06-12 fold; no separate memory service is needed.
 
 ## Deploying a new version
 
@@ -54,13 +56,13 @@ One step back only. For an older release, point `current` at a specific
 
 ## Development beside production
 
-    deploy/dev.sh                 # :3000, throwaway data, cogmemory TEST socket
+    deploy/dev.sh                 # :3000, throwaway data + in-process memory
     WIPE=1 deploy/dev.sh          # wipe the throwaway data dir first
     DEV_PORT=3001 deploy/dev.sh   # different port
 
 `dev.sh` runs from your checkout with `--watch` live reload, on port 3000,
-against `/tmp/ytsejam-dev/data` and the cogmemory **test** socket. It cannot
-affect the production instance on :9873.
+against `/tmp/ytsejam-dev/data`. Its memory store is under that throwaway data
+dir, so it cannot affect the production instance on :9873.
 
 ## Migrating an existing data dir
 
@@ -96,9 +98,6 @@ release-seeded ones are left untouched.
   bare `node` fails with "Unable to locate executable: node". An absolute
   `/usr/bin/env` is always found and then resolves `node` from the PATH we set.
   If your `node` is not on that PATH, add its directory to the unit's `PATH=`.
-- cogmemory is a **soft dependency**: if its socket is absent the server still
-  boots and only the `cog_*` tools error. Drop the `Wants=/After=cogmemory.service`
-  lines from the unit if you do not run it.
 - The server runs TypeScript directly under Node (no server build step); only
   the web UI is built. `ExecStart=node src/index.ts`.
 
