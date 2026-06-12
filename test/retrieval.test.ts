@@ -123,9 +123,9 @@ describe("end-to-end retrieval over synthetic sessions", () => {
     expect(promoted!.record.text).toContain("Initech");
     expect(items[0].record.kind).toBe("fact"); // slot answers lead
 
-    // Synthetic records are never persisted. (kind: "fact" can no longer be
-    // checked here — EpisodicKind excludes it at the type level — so assert
-    // on the namespaced id instead.)
+    // Synthetic records are never persisted. listEpisodic() returns
+    // EpisodicRecord[], whose kind is EpisodicKind — "fact" is not a member
+    // (TS2367 no-overlap), so assert on the fact/ id namespace instead.
     expect(mem.getRecord(promoted!.record.id)).toBeUndefined();
     expect(mem.listEpisodic().every((r) => !r.id.startsWith("fact/"))).toBe(true);
 

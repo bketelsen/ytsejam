@@ -186,6 +186,7 @@ export interface PromotedFact {
   sessionId: string;
   entryId?: string;
   role: TurnRole;
+  /** Rendered natural-language sentence (output of renderFact). */
   text: string;
   /** The fact's lastSeenAt. */
   timestamp: string;
@@ -193,6 +194,8 @@ export interface PromotedFact {
   salience: number;
   /** Always 0 — promoted items are never access-bumped. */
   accessCount: number;
+  // No `state` field, deliberately: promoted items are always "active" and
+  // are never consolidated, redacted, or persisted.
 }
 
 export interface ScoreBreakdown {

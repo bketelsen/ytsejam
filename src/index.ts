@@ -31,5 +31,7 @@ export { extractFacts, extractEntities, normalizeObject } from "./semantic/extra
 export { readSessionFile, listSessionFiles, activeBranch, messageText } from "./session/reader.ts";
 export { IngestPipeline, type IngestReport } from "./pipeline/ingest.ts";
 export { JsonlLog } from "./store/jsonl-log.ts";
+// Re-exports PromotedFact among the rest — callers of promoteFacts import
+// the type from the package root via this wildcard.
 export * from "./types.ts";
 export type * from "./session/format.ts";

@@ -83,7 +83,7 @@ describe("EpisodicKind soundness (FOLLOWUP 3)", () => {
   it('kind: "fact" is not constructible as an EpisodicRecord', () => {
     // @ts-expect-error — "fact" is not an EpisodicKind; promoted facts are PromotedFact.
     const bad: EpisodicRecord = { ...episodic("turn"), kind: "fact" };
-    expect(bad.kind).toBe("fact");
+    void bad;
   });
 
   it("PromotedFact is a distinct shape the compiler keeps out of persist paths", () => {
