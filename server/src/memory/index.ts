@@ -34,6 +34,7 @@ import type {
   WriteResult,
 } from "./types.ts";
 import * as store from "./store/index.ts";
+import * as consolidated from "./consolidated/index.ts";
 import { glacierIndexCompute as computeGlacierIndex } from "./consolidated/glacier-index-compute.ts";
 import { l0index as computeL0Index } from "./consolidated/l0index.ts";
 import { wikiIndexCompute as computeWikiIndex } from "./consolidated/wiki-index-compute.ts";
@@ -107,29 +108,29 @@ export async function git(params: GitParams): Promise<GitResult> {
 /** Domain controller exports are implemented in ./domain (PR-1b). */
 /** Build the session-start memory brief envelope; filled in PR-2a. */
 export async function sessionBrief(): Promise<SessionBrief> {
-  return notImplemented("PR-2a");
+  return consolidated.sessionBrief();
 }
 
 /** Scan memory for housekeeping thresholds and stale items; filled in PR-2a. */
 export async function housekeepingScan(): Promise<HousekeepingScan> {
-  return notImplemented("PR-2a");
+  return consolidated.housekeepingScan();
 }
 
 /** Return unchecked action items, optionally scoped to a domain; filled in PR-2a. */
-export async function openActions(_params: OpenActionsParams = {}): Promise<OpenActionsResult> {
-  return notImplemented("PR-2a");
+export async function openActions(params: OpenActionsParams = {}): Promise<OpenActionsResult> {
+  return consolidated.openActions(params);
 }
 
 /** Summarize one domain's hot memory, actions, and recent observations; filled in PR-2a. */
-export async function domainSummary(_params: DomainSummaryParams): Promise<DomainSummaryResult> {
-  return notImplemented("PR-2a");
+export async function domainSummary(params: DomainSummaryParams): Promise<DomainSummaryResult> {
+  return consolidated.domainSummary(params);
 }
 
 /** Return recent observation entries and aggregate counts; filled in PR-2a. */
 export async function recentObservations(
-  _params: RecentObservationsParams = {},
+  params: RecentObservationsParams = {},
 ): Promise<RecentObservationsResult> {
-  return notImplemented("PR-2a");
+  return consolidated.recentObservations(params);
 }
 
 /** Detect observation clusters by tag, keyword, and thread candidate; filled in PR-2b. */
