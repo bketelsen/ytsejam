@@ -47,6 +47,12 @@ export interface MemorySystemOptions {
   readOptions?: ReadSessionOptions;
   /** Clock override (ISO timestamp) for deterministic tests/evals. */
   now?: () => string;
+  /**
+   * Path of a JSONL trace appended per retrieve() call — the post-fold
+   * "why didn't it surface that?" record (PLAN.md Task 5.3). Defaults to
+   * the LTM_RETRIEVAL_LOG env var; unset means no tracing.
+   */
+  retrievalLog?: string;
 }
 
 interface AuditRecord extends RedactionEvent {
@@ -77,6 +83,7 @@ export class MemorySystem {
   private retriever: Retriever;
   private graph: PreferenceGraph;
   private readonly clock: () => string;
+  private readonly retrievalLog?: string;
   private auditSeq = 0;
 
   private constructor(opts: MemorySystemOptions) {
@@ -87,6 +94,7 @@ export class MemorySystem {
     this.embedder = opts.embedder ?? new HashEmbedder();
     this.summarizer = opts.summarizer ?? extractiveSummary;
     this.clock = opts.now ?? (() => new Date().toISOString());
+    this.retrievalLog = opts.retrievalLog ?? process.env.LTM_RETRIEVAL_LOG;
     this.episodic = EpisodicStore.open(this.storeDir);
     this.semantic = SemanticStore.open(this.storeDir);
     this.auditLog = new JsonlLog<AuditRecord>(path.join(this.storeDir, "redactions.jsonl"));
@@ -216,7 +224,27 @@ export class MemorySystem {
         if (item.record.kind !== "fact") this.episodic.bumpAccess(item.record.id, now);
       }
     }
+    this.trace(query, k, now, items);
     return { items, profile };
+  }
+
+  /** Append one retrieval-trace line; tracing failures never break retrieval. */
+  private trace(query: string, k: number, at: string, items: RetrievedMemory[]): void {
+    if (!this.retrievalLog) return;
+    try {
+      fs.mkdirSync(path.dirname(this.retrievalLog), { recursive: true });
+      fs.appendFileSync(
+        this.retrievalLog,
+        `${JSON.stringify({
+          at,
+          query,
+          k,
+          returned: items.map((i) => ({ id: i.record.id, score: i.score, breakdown: i.breakdown })),
+        })}\n`,
+      );
+    } catch {
+      // tracing is best-effort observability
+    }
   }
 
   /**

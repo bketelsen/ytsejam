@@ -165,6 +165,38 @@ describe("end-to-end retrieval over synthetic sessions", () => {
     expect(persisted.accessCount).toBeGreaterThanOrEqual(512); // last power of two ≤ 1000
   });
 
+  it("retrieval trace log records query, k, and score breakdowns (PLAN 5.3)", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 2, turnsPerSession: 6, seed: 13 });
+    const tracePath = path.join(work, "trace", "retrievals.jsonl");
+    const mem = MemorySystem.open({
+      storeDir: path.join(work, "store"),
+      now: () => truth.horizonEnd,
+      retrievalLog: tracePath,
+    });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+
+    await mem.retrieve("What's my dog called?", { k: 4 });
+    await mem.retrieve("marathon training", { k: 2, dryRun: true }); // dryRun traces too
+
+    const lines = fs.readFileSync(tracePath, "utf8").split("\n").filter(Boolean);
+    expect(lines).toHaveLength(2);
+    const first = JSON.parse(lines[0]) as {
+      at: string;
+      query: string;
+      k: number;
+      returned: { id: string; score: number; breakdown: { lexical: number } }[];
+    };
+    expect(first.query).toBe("What's my dog called?");
+    expect(first.k).toBe(4);
+    expect(first.returned.length).toBeGreaterThan(0);
+    expect(first.returned[0].breakdown).toHaveProperty("lexical");
+    // Without the env/option, nothing is written.
+    const silent = MemorySystem.open({ storeDir: path.join(work, "store2") });
+    silent.close();
+    expect(fs.existsSync(path.join(work, "store2", "retrievals.jsonl"))).toBe(false);
+  });
+
   it("ingestion is incremental: re-ingesting the same dir adds nothing", async () => {
     const work = tmpDir();
     generateFixtures({ outDir: path.join(work, "sessions"), sessions: 2, turnsPerSession: 6, seed: 3 });
