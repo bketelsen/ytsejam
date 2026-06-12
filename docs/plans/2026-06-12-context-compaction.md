@@ -28,13 +28,13 @@ Each task ends with a commit on the `feat/context-compaction` branch. The /ship 
 
 **Files:**
 - Create: `server/src/compaction.ts`
-- Create: `server/src/compaction.test.ts`
+- Create: `server/test/compaction.test.ts`
 
 This task establishes the policy primitives with no consumer wiring. The module is a pure addition; the gate passes after this task because nothing imports it yet.
 
 ### Step 1: Write the failing tests for calibration + decision
 
-Create `server/src/compaction.test.ts`:
+Create `server/test/compaction.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -44,7 +44,7 @@ import {
   computeReserveTokens,
   buildSettings,
   decideCompaction,
-} from "./compaction.js";
+} from "../src/compaction.js";
 
 const fauxModel = (cw: number, mt: number): Model<any> =>
   ({
@@ -154,7 +154,7 @@ describe("decideCompaction", () => {
 
 ### Step 2: Run the tests to verify they fail
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: FAIL with `Cannot find module './compaction.js'` (or similar — the source file does not exist yet).
 
@@ -237,7 +237,7 @@ export function decideCompaction(
 
 ### Step 4: Run the tests to verify they pass
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: PASS, 11 tests green (3 calibration + 1 settings + 6 decision).
 
@@ -250,7 +250,7 @@ Expected: `=== gate: PASSED ===`. The new file + tests are pure addition, no con
 ### Step 6: Commit
 
 ```bash
-git add server/src/compaction.ts server/src/compaction.test.ts
+git add server/src/compaction.ts server/test/compaction.test.ts
 git commit -m "feat(compaction): policy primitives — calibration + decision
 
 Pure-function module exporting computeReserveTokens, buildSettings, and
@@ -268,14 +268,14 @@ Spec: docs/plans/2026-06-12-context-compaction-design.md §D2 + §3.2 + §3.5."
 
 **Files:**
 - Modify: `server/src/compaction.ts` (add exports)
-- Modify: `server/src/compaction.test.ts` (add tests)
+- Modify: `server/test/compaction.test.ts` (add tests)
 
 ### Step 1: Write the failing tests
 
-Append to `server/src/compaction.test.ts`:
+Append to `server/test/compaction.test.ts`:
 
 ```ts
-import { classifyOverflow, CUSTOM_INSTRUCTIONS, buildSurrenderMessage } from "./compaction.js";
+import { classifyOverflow, CUSTOM_INSTRUCTIONS, buildSurrenderMessage } from "../src/compaction.js";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 describe("classifyOverflow", () => {
@@ -360,7 +360,7 @@ describe("buildSurrenderMessage", () => {
 
 ### Step 2: Run tests to verify failure
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: FAIL with `classifyOverflow is not exported` (or similar).
 
@@ -457,7 +457,7 @@ export function buildSurrenderMessage(
 
 ### Step 4: Run tests to verify pass
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: PASS, all tests green (Task-1 11 + Task-2 ~10 = ~21 tests).
 
@@ -470,7 +470,7 @@ Expected: `=== gate: PASSED ===`.
 ### Step 6: Commit
 
 ```bash
-git add server/src/compaction.ts server/src/compaction.test.ts
+git add server/src/compaction.ts server/test/compaction.test.ts
 git commit -m "feat(compaction): overflow classifier + customInstructions + surrender msg
 
 Adds classifyOverflow (thin wrapper around pi-ai's isContextOverflow),
@@ -487,18 +487,18 @@ Spec: docs/plans/2026-06-12-context-compaction-design.md §D3 + §D4 + §3.3."
 
 **Files:**
 - Modify: `server/src/compaction.ts`
-- Modify: `server/src/compaction.test.ts`
+- Modify: `server/test/compaction.test.ts`
 
 ### Step 1: Write the failing tests
 
-Append to `server/src/compaction.test.ts`:
+Append to `server/test/compaction.test.ts`:
 
 ```ts
 import {
   formatDevLogLine,
   serializeJsonRecord,
   type CompactionEvent,
-} from "./compaction.js";
+} from "../src/compaction.js";
 
 describe("formatDevLogLine", () => {
   const baseEvent: CompactionEvent = {
@@ -598,7 +598,7 @@ describe("serializeJsonRecord", () => {
 
 ### Step 2: Run tests to verify failure
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: FAIL — `formatDevLogLine`, `serializeJsonRecord`, `CompactionEvent` not exported.
 
@@ -692,7 +692,7 @@ export function serializeJsonRecord(e: CompactionEvent): Record<string, unknown>
 
 ### Step 4: Run tests to verify pass
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: PASS — Task-1 + Task-2 + Task-3 tests all green.
 
@@ -705,7 +705,7 @@ Expected: `=== gate: PASSED ===`.
 ### Step 6: Commit
 
 ```bash
-git add server/src/compaction.ts server/src/compaction.test.ts
+git add server/src/compaction.ts server/test/compaction.test.ts
 git commit -m "feat(compaction): observability writers — formatDevLogLine + serializeJsonRecord
 
 CompactionEvent interface + two pure formatters: formatDevLogLine produces
@@ -721,11 +721,11 @@ Spec: docs/plans/2026-06-12-context-compaction-design.md §D5 + §4."
 
 **Files:**
 - Modify: `server/src/compaction.ts`
-- Modify: `server/src/compaction.test.ts`
+- Modify: `server/test/compaction.test.ts`
 
 ### Step 1: Write the failing tests
 
-Append to `server/src/compaction.test.ts`:
+Append to `server/test/compaction.test.ts`:
 
 ```ts
 import { mkdtemp, mkdir, writeFile, readdir, readFile, unlink, rm } from "node:fs/promises";
@@ -739,7 +739,7 @@ import {
   pruneOldBackups,
   verifySessionLoadable,
   compactionEnabled,
-} from "./compaction.js";
+} from "../src/compaction.js";
 
 describe("compactionEnabled", () => {
   const prev = process.env.YTSEJAM_COMPACTION_ENABLED;
@@ -867,13 +867,13 @@ describe("verifySessionLoadable", () => {
 
 ### Step 2: Run tests to verify failure
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: FAIL — async writers + kill switch + backup helpers + verifySessionLoadable not exported.
 
 ### Step 3: Add the imports to vitest test file
 
-At the TOP of `server/src/compaction.test.ts`, ensure these are in the import set:
+At the TOP of `server/test/compaction.test.ts`, ensure these are in the import set:
 
 ```ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -1013,7 +1013,7 @@ export async function verifySessionLoadable(
 
 ### Step 5: Run tests to verify pass
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: PASS — all tests through Task 4 green (~32 cases total).
 
@@ -1026,7 +1026,7 @@ Expected: `=== gate: PASSED ===`.
 ### Step 7: Commit
 
 ```bash
-git add server/src/compaction.ts server/src/compaction.test.ts
+git add server/src/compaction.ts server/test/compaction.test.ts
 git commit -m "feat(compaction): async writers + kill switch + backup/verify helpers
 
 - compactionEnabled(): reads YTSEJAM_COMPACTION_ENABLED kill switch (defaults true)
@@ -1047,7 +1047,7 @@ Spec: docs/plans/2026-06-12-context-compaction-design.md §D8 + §D9 + §4."
 **Files:**
 - Modify: `server/src/compaction.ts` (add `runCompactionIfPending` + types for opened-session extensions)
 - Modify: `server/src/manager.ts` (wire turn_end + session_compact + reactive-error hooks)
-- Modify: `server/src/compaction.test.ts` (wiring tests with mocked harness)
+- Modify: `server/test/compaction.test.ts` (wiring tests with mocked harness)
 
 ### Step 1: Add orchestrator + extension type to compaction.ts
 
@@ -1171,10 +1171,10 @@ export async function runCompactionIfPending(
 
 ### Step 2: Write wiring tests (mocked harness)
 
-Append to `server/src/compaction.test.ts`:
+Append to `server/test/compaction.test.ts`:
 
 ```ts
-import { runCompactionIfPending, type OpenedForCompaction } from "./compaction.js";
+import { runCompactionIfPending, type OpenedForCompaction } from "../src/compaction.js";
 import { EventEmitter } from "node:events";
 
 describe("runCompactionIfPending", () => {
@@ -1248,7 +1248,7 @@ describe("runCompactionIfPending", () => {
 
 ### Step 3: Run tests to verify failure
 
-Run: `env -u NODE_ENV npx vitest run server/src/compaction.test.ts`
+Run: `env -u NODE_ENV npx vitest run server/test/compaction.test.ts`
 
 Expected: PASS for new tests (since the orchestrator is implemented). If anything fails, fix and re-run.
 
@@ -1278,7 +1278,7 @@ import {
   computeReserveTokens,
   type CompactionWiringState,
   type CompactionEvent,
-} from "./compaction.js";
+} from "../src/compaction.js";
 ```
 
 2. **Extend the OpenedSession type** that manager.ts uses internally — add a `compaction: CompactionWiringState` field with default `{ pendingCompaction: null, reactiveRetryAttempted: false }`. (Find the type/interface near the top of `wire()` or `openSession()` and add the field where the session/harness/etc are stored.)
@@ -1435,7 +1435,7 @@ Expected: `=== gate: PASSED ===`.
 ### Step 7: Commit
 
 ```bash
-git add server/src/compaction.ts server/src/compaction.test.ts server/src/manager.ts
+git add server/src/compaction.ts server/test/compaction.test.ts server/src/manager.ts
 git commit -m "feat(compaction): orchestrator + main-session wiring in manager.ts
 
 - runCompactionIfPending orchestrator: backup → harness.compact → verify → return result
