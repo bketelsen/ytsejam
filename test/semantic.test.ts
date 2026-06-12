@@ -66,6 +66,26 @@ describe("fact extraction heuristics", () => {
     );
   });
 
+  it("extracts allergies, residence, and relationships as slot facts (PLAN 4.3)", () => {
+    expect(extractFacts("Remember that I am allergic to peanuts when suggesting recipes.")).toContainEqual(
+      expect.objectContaining({ predicate: "allergic_to", object: "peanuts when suggesting recipes" }),
+    );
+    expect(extractFacts("I live in Boulder these days.")).toContainEqual(
+      expect.objectContaining({ predicate: "lives_in", object: "Boulder" }),
+    );
+    expect(extractFacts("Here in Boulder where I live, it snowed.")).toContainEqual(
+      expect.objectContaining({ predicate: "lives_in", object: "Boulder" }),
+    );
+    expect(extractFacts("My sister Alice is visiting.")).toContainEqual(
+      expect.objectContaining({ predicate: "rel_sister", object: "Alice" }),
+    );
+    expect(extractFacts("I took my dog Biscuit to the vet.")).toContainEqual(
+      expect.objectContaining({ predicate: "rel_dog", object: "Biscuit" }),
+    );
+    // Third-person relationships are NOT user facts.
+    expect(extractFacts("Her brother Tom called.").some((f) => f.predicate === "rel_brother")).toBe(false);
+  });
+
   it("does not hallucinate facts from plain task chatter", () => {
     expect(extractFacts("Can you help me debug a flaky integration test?")).toEqual([]);
   });

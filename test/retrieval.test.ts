@@ -103,10 +103,33 @@ describe("end-to-end retrieval over synthetic sessions", () => {
     await mem.ingestSessionDir(path.join(work, "sessions"));
 
     const before = await mem.retrieve("What's my dog called?", { k: 3 });
-    const hit = before.items.find((i) => i.record.text.includes("Biscuit"));
+    // Promoted slot facts are synthetic; pick the real episodic record.
+    const hit = before.items.find((i) => i.record.kind !== "fact" && i.record.text.includes("Biscuit"));
     expect(hit).toBeDefined();
     const after = mem.getRecord(hit!.record.id)!;
     expect(after.accessCount).toBe(1);
+  });
+
+  it("profile facts promote into results for zero-overlap paraphrase queries (PLAN 4.3)", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 4, turnsPerSession: 8, seed: 7 });
+    const mem = MemorySystem.open({ storeDir: path.join(work, "store"), now: () => truth.horizonEnd });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+
+    // "employed" shares no content words with "I work at Initech…".
+    const { items } = await mem.retrieve("Where am I currently employed?", { k: 5, dryRun: true });
+    const promoted = items.find((i) => i.record.kind === "fact");
+    expect(promoted).toBeDefined();
+    expect(promoted!.record.text).toContain("Initech");
+    expect(items[0].record.kind).toBe("fact"); // slot answers lead
+
+    // Synthetic records are never persisted.
+    expect(mem.getRecord(promoted!.record.id)).toBeUndefined();
+    expect(mem.listEpisodic().every((r) => r.kind !== "fact")).toBe(true);
+
+    // A query touching no profile predicate promotes nothing.
+    const none = await mem.retrieve("how do I parse YAML?", { k: 5, dryRun: true });
+    expect(none.items.every((i) => i.record.kind !== "fact")).toBe(true);
   });
 
   it("1000 retrievals grow the episodic log by O(k·log n), not O(k·n) (PLAN 2.6)", async () => {
@@ -132,8 +155,8 @@ describe("end-to-end retrieval over synthetic sessions", () => {
     expect(linesAfter - linesBefore).toBeLessThanOrEqual(maxExtra);
 
     // The in-memory count is exact and survives reopen at its last flush.
-    const hit = (await mem.retrieve("What's my dog called?", { k, dryRun: true })).items.find((i) =>
-      i.record.text.includes("Biscuit"),
+    const hit = (await mem.retrieve("What's my dog called?", { k, dryRun: true })).items.find(
+      (i) => i.record.kind !== "fact" && i.record.text.includes("Biscuit"),
     )!;
     expect(hit.record.accessCount).toBe(queries);
     mem.close();

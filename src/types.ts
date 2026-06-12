@@ -59,7 +59,11 @@ export interface ParsedSession {
 
 export type RecordState = "active" | "consolidated" | "redacted";
 
-export type EpisodicKind = "turn" | "consolidated";
+/**
+ * "fact" records are synthetic: profile facts promoted into retrieval
+ * results (never persisted to the episodic store).
+ */
+export type EpisodicKind = "turn" | "consolidated" | "fact";
 
 /**
  * One episodic memory: a chunk of a conversation turn, or a consolidated

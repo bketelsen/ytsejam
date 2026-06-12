@@ -145,23 +145,63 @@ const PATTERNS: PatternSpec[] = [
     re: new RegExp(`\\bi(?:'m| am) working on\\s+${OBJ}`, "gi"),
     make: (m) => ({ kind: "attribute", predicate: "works_on", object: clean(m[1]), polarity: 1, initialStrength: 0.55 }),
   },
+  // Health constraints are durable and high-stakes; learned eagerly.
+  {
+    re: new RegExp(`\\bi(?:'m| am) allergic to\\s+${OBJ}`, "gi"),
+    make: (m) => ({ kind: "attribute", predicate: "allergic_to", object: clean(m[1]), polarity: 1, initialStrength: 0.75 }),
+  },
+  // Residence: "I live in Boulder" and the inverted "in Boulder, where I live".
+  {
+    re: new RegExp(`\\b[Ii] live in ${NAME}`, "g"),
+    make: (m) => ({ kind: "attribute", predicate: "lives_in", object: clean(m[1]), polarity: 1, initialStrength: 0.7 }),
+  },
+  {
+    re: new RegExp(`\\bin ${NAME},?\\s+where i live\\b`, "gi"),
+    make: (m) => ({ kind: "attribute", predicate: "lives_in", object: clean(m[1]), polarity: 1, initialStrength: 0.7 }),
+  },
 ];
+
+/**
+ * Relationships are facts, not just entities: "my sister Alice" asserts
+ * rel_sister=Alice. Multi-valued by design (two sisters is not a
+ * contradiction). Only first-person ("my …") statements assert facts.
+ */
+function relationshipFacts(text: string): FactCandidate[] {
+  const out: FactCandidate[] = [];
+  RELATIONSHIP.lastIndex = 0;
+  for (const m of text.matchAll(RELATIONSHIP)) {
+    if (CAP_STOPLIST.has(m[2])) continue;
+    const relation = RELATION_CANONICAL[m[1].toLowerCase()] ?? m[1].toLowerCase();
+    out.push({
+      kind: "attribute",
+      predicate: `rel_${relation}`,
+      object: clean(m[2]),
+      polarity: 1,
+      initialStrength: 0.7,
+    });
+  }
+  return out;
+}
 
 export function extractFacts(text: string): FactCandidate[] {
   const out: FactCandidate[] = [];
   const seen = new Set<string>();
+  const candidates: (FactCandidate | undefined)[] = [];
   for (const spec of PATTERNS) {
     spec.re.lastIndex = 0;
     for (const m of text.matchAll(spec.re)) {
-      const candidate = spec.make(m);
-      if (!candidate || !candidate.object) continue;
-      const norm = normalizeObject(candidate.object);
-      if (!norm || norm.length < 2 || norm.length > 80) continue;
-      const key = factId(candidate, norm);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(candidate);
+      candidates.push(spec.make(m));
     }
+  }
+  candidates.push(...relationshipFacts(text));
+  for (const candidate of candidates) {
+    if (!candidate || !candidate.object) continue;
+    const norm = normalizeObject(candidate.object);
+    if (!norm || norm.length < 2 || norm.length > 80) continue;
+    const key = factId(candidate, norm);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(candidate);
   }
   return out;
 }
@@ -191,7 +231,13 @@ const CAP_STOPLIST = new Set(
 );
 
 const RELATIONSHIP =
-  /\b(?:[Mm]y|[Hh]is|[Hh]er|[Tt]heir)\s+(?:sister|brother|mom|mother|dad|father|wife|husband|partner|friend|boss|manager|colleague|coworker|son|daughter|cousin|aunt|uncle|dog|cat)(?:'s)?(?:\s+(?:is\s+(?:named|called)\s+|name\s+is\s+)?)([A-Z][\w'-]*)/g;
+  /\b[Mm]y\s+(sister|brother|mom|mother|dad|father|wife|husband|partner|friend|boss|manager|colleague|coworker|son|daughter|cousin|aunt|uncle|dog|cat)(?:'s)?(?:\s+(?:is\s+(?:named|called)\s+|name\s+is\s+)?)([A-Z][\w'-]*)/g;
+
+/** Third-person variants only feed entity extraction, never user facts. */
+const RELATIONSHIP_OTHERS =
+  /\b(?:[Hh]is|[Hh]er|[Tt]heir)\s+(?:sister|brother|mom|mother|dad|father|wife|husband|partner|friend|boss|manager|colleague|coworker|son|daughter|cousin|aunt|uncle|dog|cat)(?:'s)?(?:\s+(?:is\s+(?:named|called)\s+|name\s+is\s+)?)([A-Z][\w'-]*)/g;
+
+const RELATION_CANONICAL: Record<string, string> = { mom: "mother", dad: "father" };
 
 export function extractEntities(text: string): EntityCandidate[] {
   const out = new Map<string, EntityCandidate>();
@@ -224,6 +270,10 @@ export function extractEntities(text: string): EntityCandidate[] {
 
   RELATIONSHIP.lastIndex = 0;
   for (const m of text.matchAll(RELATIONSHIP)) {
+    if (!CAP_STOPLIST.has(m[2])) add(m[2], "person");
+  }
+  RELATIONSHIP_OTHERS.lastIndex = 0;
+  for (const m of text.matchAll(RELATIONSHIP_OTHERS)) {
     if (!CAP_STOPLIST.has(m[1])) add(m[1], "person");
   }
 

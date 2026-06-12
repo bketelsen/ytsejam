@@ -33,6 +33,7 @@ import { retention } from "../episodic/decay.ts";
 import { SemanticStore } from "../semantic/store.ts";
 import { PreferenceGraph } from "../semantic/graph.ts";
 import { Retriever, packToBudget } from "../retrieval/retriever.ts";
+import { promoteFacts } from "../retrieval/promote.ts";
 import { IngestPipeline, type IngestReport } from "../pipeline/ingest.ts";
 import { JsonlLog } from "../store/jsonl-log.ts";
 import type { ReadSessionOptions } from "../session/reader.ts";
@@ -185,14 +186,37 @@ export class MemorySystem {
   async retrieve(query: string, opts: RetrieveOptions = {}): Promise<RetrievalResult> {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
+    const profile = this.semantic.profile(now, this.config.profile);
     const ranked = await this.retriever.rank(query, k, now, opts.includeConsolidated ?? false);
-    const items = packToBudget(ranked, opts.tokenBudget ?? 1200);
+
+    // Slot-aware promotion: profile facts the query addresses surface ahead
+    // of episodic items (composeContext puts the profile first anyway, and
+    // a slot answer beats a lexical near-miss). Synthetic records — never
+    // persisted, never access-bumped.
+    const promoted = promoteFacts(query, profile).map(({ fact, record }): RetrievedMemory => ({
+      record,
+      score: 1,
+      breakdown: {
+        vector: 0,
+        lexical: 0,
+        recency: 0,
+        salience: fact.strength,
+        graph: 0,
+        retention: 1,
+        total: 1,
+      },
+    }));
+
+    const items = packToBudget([...promoted, ...ranked], opts.tokenBudget ?? 1200).slice(
+      0,
+      Math.max(k, promoted.length),
+    );
     if (!opts.dryRun) {
       for (const item of items) {
-        this.episodic.bumpAccess(item.record.id, now);
+        if (item.record.kind !== "fact") this.episodic.bumpAccess(item.record.id, now);
       }
     }
-    return { items, profile: this.semantic.profile(now, this.config.profile) };
+    return { items, profile };
   }
 
   /**
