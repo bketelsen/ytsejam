@@ -140,8 +140,8 @@ release-seeded ones are left untouched.
 If you're upgrading from a release that used the separate `cogmemory` daemon,
 run `deploy/migrate-to-folded.sh` once. It stops and removes the legacy
 `cogmemory.service` and `cogmemory-test.service` units, moves the legacy
-`~/.chapterhouse/memory` store under `~/.ytsejam/data/memory`, and cleans up
-the daemon's sockets and config. Idempotent — safe to re-run.
+`~/.chapterhouse/memory` store to `~/.ytsejam/data/memory`, and cleans up
+the daemon's sockets and config. The daemon binary at `~/.local/bin/cogmemory` is intentionally left in place as a rollback safety net; the script prints when it's safe to delete. Idempotent — safe to re-run.
 
     deploy/migrate-to-folded.sh
     systemctl --user restart ytsejam
