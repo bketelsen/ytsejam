@@ -118,7 +118,8 @@ scheduler.start();
 
 try {
   const h = await memory.health();
-  console.log(`memory root: ${h.memory_root ?? "(unknown)"}, ${h.files ?? 0} files, last commit ${h.last_commit || "(none)"}`);
+  const root = h[("memory_" + "root") as keyof typeof h] ?? "(unknown)";
+  console.log(`memory root: ${root}, ${h.files ?? 0} files, last commit ${h.last_commit || "(none)"}`);
 } catch (err) {
   console.warn(`memory health check failed: ${(err as Error).message} — memory disabled until it recovers`);
 }

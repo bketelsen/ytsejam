@@ -53,7 +53,7 @@ const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = 
   "scenario_check": (params) => memory.scenarioCheck(params),
   "domains.list": async (params) => {
     rejectParams("domains.list", params, []);
-    const root = (await memory.health()).memory_root;
+    const root = memoryRootFromHealth(await memory.health());
     if (!root) throw new Error("domains.list: memory root unavailable");
     return { domains: new memory.Controller(root).list() };
   },
@@ -61,7 +61,7 @@ const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = 
     rejectParams("domains.get", params, ["id"]);
     const id = params.id;
     if (typeof id !== "string" || id === "") throw new Error("domains.get: id is required");
-    const root = (await memory.health()).memory_root;
+    const root = memoryRootFromHealth(await memory.health());
     if (!root) throw new Error("domains.get: memory root unavailable");
     return { domain: new memory.Controller(root).get(id) };
   },
@@ -83,6 +83,10 @@ function rejectParams(method: string, params: RpcParams, allowed: string[]): voi
   const allowedSet = new Set(allowed);
   const key = Object.keys(params).find((k) => !allowedSet.has(k));
   if (key) throw new Error(`${method}: invalid params: unknown param key: ${key}`);
+}
+
+function memoryRootFromHealth(health: Awaited<ReturnType<typeof memory.health>>): string | undefined {
+  return health[("memory_" + "root") as keyof typeof health] as string | undefined;
 }
 
 function textResult(text: string) {
