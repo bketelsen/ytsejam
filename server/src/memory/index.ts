@@ -34,6 +34,9 @@ import type {
   WriteResult,
 } from "./types.ts";
 import * as store from "./store/index.ts";
+import { glacierIndexCompute as computeGlacierIndex } from "./consolidated/glacier-index-compute.ts";
+import { l0index as computeL0Index } from "./consolidated/l0index.ts";
+import { wikiIndexCompute as computeWikiIndex } from "./consolidated/wiki-index-compute.ts";
 
 export type * from "./types.ts";
 export { Controller, loadManifest } from "./domain/index.ts";
@@ -156,15 +159,15 @@ export async function scenarioCheck(): Promise<ScenarioCheckResult> {
 
 /** Compute the glacier archive index envelope; filled in PR-2c. */
 export async function glacierIndexCompute(): Promise<GlacierIndexResult> {
-  return notImplemented("PR-2c");
+  return computeGlacierIndex();
 }
 
 /** Compute the wiki page index envelope; filled in PR-2c. */
 export async function wikiIndexCompute(): Promise<WikiIndexResult> {
-  return notImplemented("PR-2c");
+  return computeWikiIndex();
 }
 
 /** Compute the L0 summary index, optionally scoped to a domain; filled in PR-2c. */
-export async function l0index(_params: L0IndexParams = {}): Promise<L0IndexResult> {
-  return notImplemented("PR-2c");
+export async function l0index(params: L0IndexParams = {}): Promise<L0IndexResult> {
+  return computeL0Index(params);
 }

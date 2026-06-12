@@ -462,11 +462,6 @@ export interface L0IndexParams {
 
 /** L0 index envelope. */
 export interface L0IndexResult {
-  /**
-   * Newline-joined L0 header text. Go reference returns
-   * `strings.Join(lines, "\n")` — a single string blob.
-   * PR-2c may widen to a structured row shape if it deliberately
-   * improves on the Go output; pinned to string by default.
-   */
+  /** Newline-joined L0 header text; mirrors Go's `strings.Join(lines, "\n")`. */
   index: string;
 }

@@ -49,9 +49,9 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestStatsPrefix | same |
 | TestList | same |
 | TestFileScansSkipGitDirectory | same |
-| TestL0Index | `TestReadL0INDEX and TestReadLIST` |
-| TestL0IndexFiltersByDomain | deferred to PR-2c public l0index; store helper implemented |
-| TestL0IndexMissingDomainReturnsEmpty | deferred to PR-2c public l0index; store helper implemented |
+| TestL0Index | PR-1a smoke in `TestReadL0INDEX and TestReadLIST`; full public parity in PR-2c `l0index.test.ts` |
+| TestL0IndexFiltersByDomain | PR-2c `l0index.test.ts` |
+| TestL0IndexMissingDomainReturnsEmpty | PR-2c `l0index.test.ts` |
 | TestNewRelativePathRejected | env root resolution uses absolute resolved roots; path traversal cases cover relative user paths |
 | TestGitStatusCleanRepo | `health and git operations` |
 | TestGitCommitRequiresMessage | same |
@@ -87,3 +87,24 @@ Scope: primitive store functions and write-path RPC cases from cogmemory. Consol
 | TestControllerValidateWriteAllowsIDPrefixedPath | ControllerValidateWriteAllowsIDPrefixedPath | Ported |
 
 Additional PR-1b coverage required by plan: `loadManifest` happy path, `domainForPath`, optional domain filters for action-items/observations/entities, hot-reload stale-but-served error path, I1 null-domains regression, I2 `..` resolution + escape rejection, I5 recovery after parse error.
+
+## Consolidated — Index+Wiki (PR-2c)
+
+Scope: in-process consolidated replacements for `glacier_index_compute`, `wiki_index_compute`, and public `l0index`. RBAC/role-required RPC cases are intentionally obsolete per fold-plan D6 (single-user, no role/RBAC); coverage notes assert unfiltered in-process behavior where useful.
+
+| Go test | Vitest equivalent | Status |
+|---|---|---|
+| rpc/glacier_test.go TestGlacierIndexComputeMethod | `glacier-index-compute.test.ts` `TestGlacierIndexParsesFrontmatter / TestGlacierIndexComputeMethod` | Ported |
+| TestGlacierIndexComputeRBACFilters | `glacier-index-compute.test.ts` `TestGlacierIndexComputeRBACFilters is obsolete after RBAC removal` | Obsolete semantics documented; unfiltered result tested |
+| TestGlacierIndexComputeMissingRole | N/A | Obsolete per D6; public TS function takes no role |
+| store/glacier_test.go TestGlacierIndexEmpty | `glacier-index-compute.test.ts` `TestGlacierIndexEmpty` | Ported |
+| TestGlacierIndexParsesFrontmatter | `glacier-index-compute.test.ts` `TestGlacierIndexParsesFrontmatter / TestGlacierIndexComputeMethod` | Ported |
+| TestGlacierIndexSkipsTmp | `glacier-index-compute.test.ts` `TestGlacierIndexSkipsTmp` | Ported |
+| rpc/wiki_test.go TestWikiIndexComputeMethod | `wiki-index-compute.test.ts` `TestWikiIndexComputeMethod` | Ported |
+| TestWikiIndexComputeRBACFilters | `wiki-index-compute.test.ts` `TestWikiIndexComputeRBACFilters is obsolete after RBAC removal` | Obsolete semantics documented; unfiltered result tested |
+| TestWikiIndexComputeMissingRole | N/A | Obsolete per D6; public TS function takes no role |
+| store/store_test.go TestL0Index | `l0index.test.ts` `TestL0Index` | Ported |
+| TestL0IndexFiltersByDomain | `l0index.test.ts` `TestL0IndexFiltersByDomain` | Ported |
+| TestL0IndexMissingDomainReturnsEmpty | `l0index.test.ts` `TestL0IndexMissingDomainReturnsEmpty` | Ported |
+
+Additional PR-2c coverage: `l0index` strict-param rejection for unknown keys; wiki `category` alias accepted alongside Go's `entity_type` for the tightened TS type/spec wording.
