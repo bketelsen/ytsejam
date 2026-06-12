@@ -13,7 +13,7 @@ domains:
     files: [hot-memory, action-items, observations, entities]
   - id: work
     path: work/acme
-    label: MSFT
+    label: Acme
     files: [hot-memory, action-items]
     subdomains:
       - id: work-sub

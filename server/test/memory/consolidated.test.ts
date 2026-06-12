@@ -47,7 +47,7 @@ describe("memory consolidated PR-2a", () => {
     await seed("cog-meta/patterns.md", "# Patterns\nrule one\n");
     await seed("projects/dakota/action-items.md", "- [ ] dakota task | pri:high\n- [ ] another | pri:medium\n");
     await seed("personal/action-items.md", "- [ ] private | pri:low\n");
-    await seed("work/acme/action-items.md", "- [ ] msft task | priority:high\n");
+    await seed("work/acme/action-items.md", "- [ ] acme task | priority:high\n");
 
     const r = await sessionBrief();
     expect(r.hot_memory).toContain("strategic state");

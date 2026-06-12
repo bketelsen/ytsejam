@@ -335,7 +335,7 @@ The bridge content is derived from §1–§5 above (stale items, birthdays, dorm
 ```json
 {
   "scenarios": [
-    {"path": "cog-meta/scenarios/microsoft-stay-vs-leave.md",
+    {"path": "cog-meta/scenarios/employer-stay-vs-leave.md",
      "check_by": "2026-06-15", "status": "due_now" | "overdue" | "active",
      "days_until_check": 17}
   ]

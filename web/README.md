@@ -10,4 +10,4 @@ npm run build
 
 ## Styling rule
 
-UI uses shadcn-only tokens — no raw Tailwind color classes. See [`CLAUDE.md`](CLAUDE.md) for the rule and `docs/agents/OVERVIEW.md` for full architecture.
+UI uses shadcn-only tokens — no raw Tailwind color classes. See [`CLAUDE.md`](CLAUDE.md) for the rule and [`../docs/agents/OVERVIEW.md`](../docs/agents/OVERVIEW.md) for full architecture.

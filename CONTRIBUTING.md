@@ -4,9 +4,10 @@ ytsejam is a personal-assistant project that happens to be open source. PRs and 
 
 ## Before submitting a PR
 
-1. Run the gate: `NODE_ENV= bash scripts/gate.sh` (server typecheck + tests + web build/typecheck + tests). It must pass.
-2. Follow the conventions in [`AGENTS.md`](AGENTS.md) — they apply to humans and AI coding assistants alike.
-3. Keep PRs scoped. One concern per PR; one fix or one feature.
+1. Install dependencies: `NODE_ENV= npm install` (the `NODE_ENV=` prefix matters if your shell has `NODE_ENV=production` set — see README § Run).
+2. Run the gate: `NODE_ENV= bash scripts/gate.sh` (server typecheck + tests + web build/typecheck + tests). It must pass.
+3. Follow the conventions in [`AGENTS.md`](AGENTS.md) — they apply to humans and AI coding assistants alike.
+4. Keep PRs scoped. One concern per PR; one fix or one feature.
 
 ## What to expect
 

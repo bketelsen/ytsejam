@@ -8,6 +8,6 @@ ytsejam is a single-user personal assistant. The threat model assumes:
 
 ## Reporting a vulnerability
 
-If you find a security issue, please email **<security-contact>** rather than opening a public GitHub issue. Include reproduction steps and any relevant config.
+Please use GitHub's [private security advisories](https://github.com/bketelsen/ytsejam/security/advisories/new) rather than opening a public issue. Include reproduction steps and any relevant config.
 
 Public issues for non-security bugs are welcome.
