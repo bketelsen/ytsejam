@@ -15,6 +15,21 @@ SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 log()  { echo "$PREFIX $*"; }
 warn() { echo "$PREFIX WARNING: $*"; }
 
+# Fresh-install guard: if no legacy daemon-era state exists at all, skip.
+# This script is upgrade-only — it migrates from the pre-fold cogmemory daemon
+# install to the in-process memory layout. Nothing to do on a fresh install.
+if [[ ! -f "$SYSTEMD_USER_DIR/cogmemory.service" \
+   && ! -f "$SYSTEMD_USER_DIR/cogmemory-test.service" \
+   && ! -d "$HOME/.chapterhouse/memory" \
+   && ! -d "$HOME/.config/cogmemory" \
+   && ! -e "$HOME/.local/share/cogmemory/cog-memory.sock" \
+   && ! -e "$HOME/.local/share/cogmemory-test/cog-memory-test.sock" \
+   && ! -f "$HOME/.local/bin/cogmemory" ]]; then
+  log "No legacy daemon-era state detected — fresh install, nothing to migrate."
+  log "(This script is only needed when upgrading from a pre-fold cogmemory install.)"
+  exit 0
+fi
+
 unit_present() {
   local unit="$1"
 

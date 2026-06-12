@@ -109,7 +109,14 @@ reverts to no-compaction behavior: sessions will 400 with "prompt is too long"
 on overflow, the pre-compaction behavior. This is known-bad-but-survivable
 while a fix ships.
 
-## Migrating an existing data dir
+## Migrating from an older install
+
+**First-time installers can skip this whole section.** Both `deploy/migrate-data.sh`
+and `deploy/migrate-to-folded.sh` are upgrade-only — they detect a fresh install
+and exit 0 with a brief explanation, so it's harmless to run them, but you don't
+need to.
+
+### Moving an existing data dir
 
 When you move from a dev/manual data dir to the production one (or to a new
 host), carry the **source-of-truth** state — sessions, tasks, schedules,
@@ -127,6 +134,17 @@ Defaults are `SRC=~/projects/ytsejam/server/data` and `DST=~/.ytsejam/data`.
 the source. Run it with the **source instance stopped** so nothing is
 mid-write. Skills are merged: files missing in the destination are copied,
 release-seeded ones are left untouched.
+
+### Folding from the cogmemory daemon (pre-2026-06-12 installs)
+
+If you're upgrading from a release that used the separate `cogmemory` daemon,
+run `deploy/migrate-to-folded.sh` once. It stops and removes the legacy
+`cogmemory.service` and `cogmemory-test.service` units, moves the legacy
+`~/.chapterhouse/memory` store under `~/.ytsejam/data/memory`, and cleans up
+the daemon's sockets and config. Idempotent — safe to re-run.
+
+    deploy/migrate-to-folded.sh
+    systemctl --user restart ytsejam
 
 ## Notes / portability
 
