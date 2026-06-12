@@ -5,6 +5,15 @@ JSONL files are the source of truth; sqlite is a derived index. Spec and plans i
 The assistant can delegate long-running research or multi-step work to background subagents via the `delegate` tool; subagents run concurrently, and the assistant is notified and takes a turn when each completes or fails.
 It can also schedule reminders and recurring jobs that wake it up (cron times are server-local).
 
+## Prerequisites
+
+- **Operating system:** Linux. The deploy is built around `systemd --user`, which rules out macOS and Windows. Tested on Fedora-family (snosi); Ubuntu/Debian/Arch with `systemd` should work.
+- **Node.js ≥ 22.0.0** — required for the built-in `node:sqlite` module the memory store uses. Check with `node --version`.
+- **`systemd` with user services.** If running headless, enable lingering so the service survives logout: `loginctl enable-linger "$USER"`.
+- **`git`, `npm`, and a Bourne-compatible shell** for the install scripts.
+- **~200 MB free disk** for `node_modules`; runtime data under `~/.ytsejam/data` grows with use.
+- **An LLM provider credential** for runtime: one of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `BRAVE_API_KEY` (for web search), or a GitHub Copilot subscription via `~/.pi/agent/auth.json`. See `deploy/ytsejam.env.example` for the current list.
+
 ## Run
 
     npm install
@@ -29,6 +38,14 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
 | `YTSEJAM_TASK_TIMEOUT_MIN` | `15` | per-task timeout in minutes before the subagent is aborted |
 | `YTSEJAM_CONTEXT_FILES` | `true` | auto-load `AGENTS.md`/`CLAUDE.md` from `~/.pi/agent` and the session's working-directory ancestor chain into the system prompt (mirrors `pi-coding-agent --no-context-files`; set to `false` to disable) |
 
+## Security model
+
+- **Loopback by default.** ytsejam binds `127.0.0.1` — only processes on the same machine can reach it. Override with `YTSEJAM_HOST=0.0.0.0` only behind a reverse proxy you trust.
+- **Single shared bearer token.** Authentication is one token (`YTSEJAM_AUTH_TOKEN`). Anyone who has it has full agent access. Treat it like an SSH key: rotate if leaked, never commit, never share over plaintext channels.
+- **The agent has a `bash` tool.** A reachable, token-known endpoint is therefore a remote shell on the host. Do not expose to the public internet. Do not run ytsejam as a user with files you wouldn't want the agent to be able to read or write.
+- **Subagents, schedules, and tools** (`web_fetch`, `bash`, `delegate`, file operations) run with the ytsejam process's privileges. See `docs/agents/tooling.md` if you intend to harden further.
+- **Outbound traffic** goes to whichever LLM provider you configured and to URLs the agent decides to fetch via `web_fetch`/`web_search`. There is no built-in egress filter.
+
 ## Development
 
     npm run dev:server   # API on :3000 (set YTSEJAM_AUTH_TOKEN)
@@ -42,7 +59,7 @@ Production runs as a single systemd `--user` service on port **9873**, isolated
 from a dev instance on **3000** (different port and data dir — including
 in-process memory — so they coexist safely). See [`deploy/README.md`](deploy/README.md). Quick start:
 
-    git clone <repo-url> ytsejam
+    git clone https://github.com/bketelsen/ytsejam.git
     cd ytsejam
     npm install
     deploy/install.sh                 # creates ~/.ytsejam, seeds env, installs the unit
