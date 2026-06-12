@@ -228,7 +228,15 @@ describe("estimateKeptSetTokens", () => {
       { role: "user", content: undefined },
       { role: "user", content: 42 },
       { role: "user", content: {} }, // not an array, not a string
-      { role: "user", content: [null, undefined, { type: "text" }, { type: "text", text: 42 }] }, // malformed array parts
+      {
+        role: "user",
+        content: [
+          null,
+          undefined,
+          { type: "text" },
+          { type: "text", text: 42 },
+        ],
+      }, // malformed array parts
       { role: "user", content: "x".repeat(40) }, // 10 — one valid signal so the result isn't 0
     ];
     const r = estimateKeptSetTokens(messages, 0);
