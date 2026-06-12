@@ -8,6 +8,9 @@ import {
   classifyOverflow,
   CUSTOM_INSTRUCTIONS,
   buildSurrenderMessage,
+  formatDevLogLine,
+  serializeJsonRecord,
+  type CompactionEvent,
 } from "../src/compaction.ts";
 
 const fauxModel = (cw: number, mt: number): Model<any> =>
@@ -192,5 +195,101 @@ describe("buildSurrenderMessage", () => {
     expect(msg).toMatch(/summarize/i);
     expect(msg).toMatch(/fresh session/i);
     expect(msg).toMatch(/larger.*model|switch.*model/i);
+  });
+});
+
+
+describe("formatDevLogLine", () => {
+  const baseEvent: CompactionEvent = {
+    timestamp: new Date("2026-06-12T14:32:18.412Z"),
+    sessionId: "abc123",
+    subagentTaskId: null,
+    trigger: "proactive",
+    reason: "above 920000 budget",
+    model: "anthropic/claude-sonnet-4-6",
+    contextWindow: 1_000_000,
+    reserveTokens: 80_000,
+    keepRecentTokens: 20_000,
+    tokensBefore: 947_112,
+    tokensAfter: 184_309,
+    summaryTokens: 4_821,
+    firstKeptEntryId: "evt_8f12",
+    droppedTurns: 27,
+    filesRead: ["server/src/manager.ts"],
+    filesModified: ["server/src/compaction.ts"],
+    compactionDurationMs: 8_412,
+    succeeded: true,
+    backupPath: "/home/bjk/.ytsejam/data/sessions/abc123/session.jsonl.pre-compact-1718193600",
+  };
+
+  it("formats a single line for proactive main-session compaction", () => {
+    const line = formatDevLogLine(baseEvent);
+    expect(line).toMatch(/^2026-06-12.*: compaction in session abc123 — proactive/);
+    expect(line).toMatch(/anthropic\/claude-sonnet-4-6/);
+    expect(line).toMatch(/ctx 947112→184309 tokens/);
+    expect(line).toMatch(/dropped 27 turns/);
+    expect(line).toMatch(/summary 4821 tokens/);
+    expect(line).toMatch(/Trigger: above 920000 budget/);
+  });
+
+  it("adds subagent prefix when subagentTaskId is present", () => {
+    const e = { ...baseEvent, subagentTaskId: "task-xyz" };
+    const line = formatDevLogLine(e);
+    expect(line).toMatch(/subagent task task-xyz \(parent session abc123\)/);
+  });
+
+  it("formats reactive trigger explicitly", () => {
+    const e = { ...baseEvent, trigger: "reactive" as const, reason: "isContextOverflow" };
+    const line = formatDevLogLine(e);
+    expect(line).toMatch(/reactive/);
+    expect(line).toMatch(/Trigger: isContextOverflow/);
+  });
+
+  it("includes FAILED marker when succeeded=false", () => {
+    const e = { ...baseEvent, succeeded: false };
+    expect(formatDevLogLine(e)).toMatch(/FAILED/);
+  });
+});
+
+describe("serializeJsonRecord", () => {
+  it("round-trips via JSON.parse with all expected keys", () => {
+    const e: CompactionEvent = {
+      timestamp: new Date("2026-06-12T14:32:18.412Z"),
+      sessionId: "abc",
+      subagentTaskId: null,
+      trigger: "proactive",
+      reason: "test",
+      model: "test/m",
+      contextWindow: 1000,
+      reserveTokens: 100,
+      keepRecentTokens: 50,
+      tokensBefore: 950,
+      tokensAfter: 200,
+      summaryTokens: 10,
+      firstKeptEntryId: "evt",
+      droppedTurns: 3,
+      filesRead: [],
+      filesModified: [],
+      compactionDurationMs: 100,
+      succeeded: true,
+      backupPath: "/tmp/x",
+    };
+    const json = serializeJsonRecord(e);
+    const parsed = JSON.parse(JSON.stringify(json));
+    expect(parsed.timestamp).toBe("2026-06-12T14:32:18.412Z");
+    expect(parsed.session_id).toBe("abc");
+    expect(parsed.subagent_task_id).toBeNull();
+    expect(parsed.trigger).toBe("proactive");
+    expect(parsed.context_window).toBe(1000);
+    expect(parsed.reserve_tokens).toBe(100);
+    expect(parsed.tokens_before).toBe(950);
+    expect(parsed.tokens_after).toBe(200);
+    expect(parsed.summary_tokens).toBe(10);
+    expect(parsed.dropped_turns).toBe(3);
+    expect(parsed.files_read).toEqual([]);
+    expect(parsed.files_modified).toEqual([]);
+    expect(parsed.compaction_duration_ms).toBe(100);
+    expect(parsed.succeeded).toBe(true);
+    expect(parsed.backup_path).toBe("/tmp/x");
   });
 });

@@ -158,3 +158,85 @@ export function buildSurrenderMessage(
     `Diagnostic: prompt was ~${tokens.toLocaleString()} tokens against contextWindow ${contextWindow.toLocaleString()}.`,
   ].join("\n");
 }
+
+/**
+ * Per-compaction event record. Constructed at session_compact handler time,
+ * fed to both formatDevLogLine (one-line cog dev-log entry) and
+ * serializeJsonRecord (full structured record for per-session JSONL).
+ */
+export interface CompactionEvent {
+  timestamp: Date;
+  sessionId: string;
+  subagentTaskId: string | null;
+  trigger: "proactive" | "reactive";
+  reason: string;
+  model: string; // "provider/id"
+  contextWindow: number;
+  reserveTokens: number;
+  keepRecentTokens: number;
+  tokensBefore: number;
+  tokensAfter: number;
+  summaryTokens: number;
+  firstKeptEntryId: string;
+  droppedTurns: number;
+  filesRead: string[];
+  filesModified: string[];
+  compactionDurationMs: number;
+  succeeded: boolean;
+  backupPath: string;
+}
+
+/**
+ * Format a single-line dev-log entry for cog appending.
+ *
+ * Shape:
+ *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
+ *     <trigger>, <model>, ctx <before>→<after> tokens, dropped <N> turns, summary <S> tokens,
+ *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
+ */
+export function formatDevLogLine(e: CompactionEvent): string {
+  const ts = e.timestamp.toISOString().replace("T", " ").slice(0, 19);
+  const sessionPart = e.subagentTaskId
+    ? `subagent task ${e.subagentTaskId} (parent session ${e.sessionId})`
+    : `session ${e.sessionId}`;
+  const filesReadStr = e.filesRead.length ? `[${e.filesRead.join(", ")}]` : "[]";
+  const filesModStr = e.filesModified.length ? `[${e.filesModified.join(", ")}]` : "[]";
+  const failedMarker = e.succeeded ? "" : " FAILED";
+  return (
+    `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
+    `ctx ${e.tokensBefore}→${e.tokensAfter} tokens, dropped ${e.droppedTurns} turns, ` +
+    `summary ${e.summaryTokens} tokens, files-read ${filesReadStr}, ` +
+    `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker}`
+  );
+}
+
+/**
+ * Serialize a CompactionEvent to the JSON shape persisted in
+ * `~/.ytsejam/data/sessions/<id>/compactions.jsonl`.
+ *
+ * Keys use snake_case to match conventional JSONL ergonomics; values are
+ * primitives + arrays only (round-trips through JSON.stringify cleanly).
+ */
+export function serializeJsonRecord(e: CompactionEvent): Record<string, unknown> {
+  return {
+    timestamp: e.timestamp.toISOString(),
+    session_id: e.sessionId,
+    subagent_task_id: e.subagentTaskId,
+    trigger: e.trigger,
+    reason: e.reason,
+    model: e.model,
+    context_window: e.contextWindow,
+    reserve_tokens: e.reserveTokens,
+    keep_recent_tokens: e.keepRecentTokens,
+    tokens_before: e.tokensBefore,
+    tokens_after: e.tokensAfter,
+    summary_tokens: e.summaryTokens,
+    first_kept_entry_id: e.firstKeptEntryId,
+    dropped_turns: e.droppedTurns,
+    files_read: e.filesRead,
+    files_modified: e.filesModified,
+    compaction_duration_ms: e.compactionDurationMs,
+    succeeded: e.succeeded,
+    backup_path: e.backupPath,
+  };
+}
