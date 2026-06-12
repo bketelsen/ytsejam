@@ -7,8 +7,15 @@ export async function atomicWrite(abs: string, content: string): Promise<void> {
   const tmp = `${abs}.${process.pid}.${randomUUID()}.tmp`;
   const fh = await open(tmp, "w");
   try {
-    await fh.writeFile(content, "utf8");
-    await fh.sync();
+    try {
+      await fh.writeFile(content, "utf8");
+      await fh.sync();
+    } catch (err) {
+      // Match Go's atomic-write failure path: once the temp file exists,
+      // remove it if the write or fsync fails before surfacing the error.
+      await rm(tmp, { force: true }).catch(() => undefined);
+      throw err;
+    }
   } finally {
     await fh.close();
   }

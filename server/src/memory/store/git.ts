@@ -16,10 +16,11 @@ export async function git(params: GitParams): Promise<GitResult> {
       if (!params.message) throw new Error("store: git commit requires message");
       await run(root, ["add", "-A"]);
       return { output: await run(root, ["commit", "-m", params.message]) };
-    case "revert":
+    case "revert": {
       const target = params.commit ?? params.ref;
       if (!target) throw new Error("store: git revert requires commit");
       return { output: await run(root, ["revert", "--no-edit", target]) };
+    }
     default: throw new Error(`store: git: unknown op ${(op as string)}`);
   }
 }
@@ -30,6 +31,9 @@ async function run(cwd: string, args: string[]): Promise<string> {
     return `${stdout}${stderr}`.trim();
   } catch (err) {
     const e = err as Error & { stdout?: string; stderr?: string };
+    // stderr is included in the thrown Error for debugging visibility; fine
+    // for a personal memory store, but would need scrubbing if hooks ever
+    // printed secrets to stderr (none do today).
     throw new Error(`store: git ${args[0]}: ${e.message}: ${`${e.stdout ?? ""}${e.stderr ?? ""}`.trim()}`);
   }
 }

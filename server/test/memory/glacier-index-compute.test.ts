@@ -56,6 +56,27 @@ tags: [housekeeping, milestone]
     expect(result.entries[1]).toEqual({ path: "glacier/projects/orphan.md", tags: [] });
   });
 
+  test("omits entries when frontmatter count is zero", async () => {
+    await seed("glacier/zero.md", "---\nentries: 0\n---\nbody\n");
+
+    const [entry] = (await glacierIndexCompute()).entries;
+    expect(entry).not.toHaveProperty("entries");
+  });
+
+  test("truncates fractional entries like Go int YAML decoding", async () => {
+    await seed("glacier/fractional.md", "---\nentries: 3.7\n---\nbody\n");
+
+    const [entry] = (await glacierIndexCompute()).entries;
+    expect(entry.entries).toBe(3);
+  });
+
+  test("empty frontmatter does not add undefined-valued keys", async () => {
+    await seed("glacier/empty.md", "---\n---\nbody\n");
+
+    const [entry] = (await glacierIndexCompute()).entries;
+    expect(Object.keys(entry).sort()).toEqual(["path", "tags"]);
+  });
+
   test("TestGlacierIndexSkipsTmp", async () => {
     await seed("glacier/x.md.tmp", "---\ntype: x\n---\n");
     expect(await glacierIndexCompute()).toEqual({ entries: [], count: 0 });
