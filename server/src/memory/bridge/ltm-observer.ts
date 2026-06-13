@@ -6,20 +6,27 @@ export type ParsedObservation = {
   tags: string[];
 };
 
-const LINE_RE =
-  /^-\s+(\d{4}-\d{2}-\d{2})(?:\s+\[([^\]]*)\])?\s*:\s*(.+?)\s*$/;
+// Mirrors the cog SSOT validator in server/src/memory/store/append.ts:7.
+// Tags are MANDATORY (non-empty bracket block); body is mandatory and non-empty.
+const OBSERVATION_LINE_RE =
+  /^-\s+(\d{4}-\d{2}-\d{2})\s+\[([^\]]+)\]\s*:\s*(.+?)\s*$/;
 
 export function parseObservationLine(line: string): ParsedObservation | null {
-  const m = LINE_RE.exec(line);
+  const m = OBSERVATION_LINE_RE.exec(line);
   if (!m) return null;
   const [, date, tagBlock, text] = m;
   if (!text || !text.trim()) return null;
+  // Date validity: 2026-13-99 etc. would pass the shape regex but produce
+  // an Invalid Date downstream. Mirrors observations-parser.ts:11-12.
+  const d = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) {
+    return null;
+  }
   const tags = tagBlock
-    ? tagBlock
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0)
-    : [];
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  if (tags.length === 0) return null; // [   ] or [, ,] yields zero tags -> invalid per cog SSOT
   return {
     text: text.trim(),
     timestamp: `${date}T00:00:00.000Z`,

@@ -14,15 +14,6 @@ describe("parseObservationLine", () => {
     });
   });
 
-  it("parses an untagged observation", () => {
-    const r = parseObservationLine("- 2026-06-13: a thing happened");
-    expect(r).toEqual({
-      text: "a thing happened",
-      timestamp: "2026-06-13T00:00:00.000Z",
-      tags: [],
-    });
-  });
-
   it("trims whitespace and tag entries", () => {
     const r = parseObservationLine("- 2026-06-13 [  ltm , bridge  ]:   spaced out  ");
     expect(r).toEqual({
@@ -51,6 +42,35 @@ describe("parseObservationLine", () => {
   it("handles multi-tag without spaces", () => {
     const r = parseObservationLine("- 2026-06-13 [a,b,c,d]: many tags");
     expect(r?.tags).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("returns null on untagged observation (tags required per cog SSOT)", () => {
+    expect(parseObservationLine("- 2026-06-13: missing tags")).toBeNull();
+  });
+
+  it("returns null on empty tag block [  ]", () => {
+    expect(parseObservationLine("- 2026-06-13 [  ]: tags spaces-only")).toBeNull();
+  });
+
+  it("returns null on empty tag block []", () => {
+    expect(parseObservationLine("- 2026-06-13 []: no tags")).toBeNull();
+  });
+
+  it("returns null on whitespace-only tag entries [, ,]", () => {
+    // split yields ["", " ", ""], all trimmed to "" and filtered -> tags.length === 0
+    expect(parseObservationLine("- 2026-06-13 [, ,]: no real tags")).toBeNull();
+  });
+
+  it("returns null on structurally-valid but invalid date (2026-13-99)", () => {
+    expect(parseObservationLine("- 2026-13-99 [x]: bad month and day")).toBeNull();
+  });
+
+  it("returns null on Feb 30", () => {
+    expect(parseObservationLine("- 2026-02-30 [x]: not a real day")).toBeNull();
+  });
+
+  it("returns null on embedded newline in body (regex stops at \n)", () => {
+    expect(parseObservationLine("- 2026-06-13 [x]: line one\nline two")).toBeNull();
   });
 });
 
