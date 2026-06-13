@@ -1,0 +1,36 @@
+{
+  "name": "ltm",
+  "version": "0.1.0",
+  "description": "Long-term memory system (episodic + semantic + retrieval) for ytsejam's JSONL session store. Standalone proof of concept.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ltm": "./bin/ltm.js"
+  },
+  "scripts": {
+    "test": "vitest --run",
+    "check": "tsc --noEmit",
+    "eval": "node src/eval/run.ts",
+    "eval:semantic": "node src/eval/run.ts --semantic",
+    "eval:ollama": "node src/eval/run.ts --ollama",
+    "eval:sweep": "node src/eval/sweep.ts",
+    "bench": "node src/bench/run.ts",
+    "fixtures": "node src/eval/generate-fixtures.ts"
+  },
+  "peerDependencies": {
+    "@huggingface/transformers": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}
