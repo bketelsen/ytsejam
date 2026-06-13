@@ -23,7 +23,8 @@
     "build": "npm run build --workspace web",
     "dev:server": "npm run dev --workspace server",
     "dev:web": "npm run dev --workspace web",
-    "start": "npm run build && npm run start --workspace server"
+    "start": "npm run build && npm run start --workspace server",
+    "ltm": "node server/src/index.ts ltm"
   },
   "devDependencies": {
     "patch-package": "^8.0.1"

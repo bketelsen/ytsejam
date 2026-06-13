@@ -40,6 +40,113 @@ That invariant preserves the "extract to npm package on day N+1" property.
   cog observation writes into LTM as `kind: "observation"` records.
 - `server/test/memory/` — memory module tests.
 
+## `recordObservation()` (preferred over `append()` for observations.md)
+
+```ts
+import * as memory from "./memory/index.ts";
+
+const result = await memory.recordObservation({
+  domainPath: "personal",          // or "projects/ytsejam", etc.
+  text: "shipped Bridge 1",
+  tags: ["ltm", "bridge"],         // required (cog observation format)
+  timestamp: new Date(),           // optional, defaults to now
+});
+// result.cog  -> { ok: true, ... }   (cog append result)
+// result.ltm  -> { ok: true | false, error? }  (LTM mirror result)
+```
+
+Two-stage write:
+1. Append the formatted line to `<dataDir>/<domainPath>/observations.md`
+   (cog SSOT, must succeed).
+2. Best-effort mirror to LTM as a `kind: "observation"` record (content-
+   addressed by `cog:<domainPath>/observations.md#<sha256(line)[:12]>` so
+   replay never duplicates).
+
+The cog half always succeeds independently of LTM. Embedded `\n` / `\r` in
+text is rejected (observations are single-line). Tags are mandatory.
+
+`cog_append` to any `observations.md` path is routed through
+`recordObservation()` automatically; direct callers in tool handlers use it
+explicitly.
+
+## LTM bridge wiring
+
+LTM lives at `~/.ytsejam/data/ltm/` by default; override with `LTM_STORE_DIR`
+(empty string falls through to the default).
+
+Boot wires it in `server/src/index.ts` after `scheduler.start()`:
+
+1. Open LTM (`MemorySystem.open({storeDir})`).
+2. `memory.attachLtm(ltm)` — makes `recordObservation()` mirror inline.
+3. Create + `attachReconciler` — back-fill timer for anything that missed
+   the inline path or pre-dates the wire-up.
+
+On boot failure the warning is logged to stderr and the server continues
+without the bridge; `recordObservation()` still writes the cog half. SIGTERM
+/ SIGINT drain the reconciler and close LTM cleanly.
+
+### LtmReconciler
+
+In-process timer (default 5 min, override with `LTM_RECONCILE_INTERVAL_MS`).
+Per tick:
+
+- Walks every domain `observations.md` whose mtime is newer than the last
+  successful scan (or every file when `force: true`).
+- Skips `glacier/` and any dotdir (matches cog's archival convention).
+- Splits on `/\r?\n/` and `.trim()`s each line (CRLF-safe; the parser-then-
+  hash dedup MUST see the same bytes the inline path saw).
+- Parses each line; computes the same content-addressed origin; calls
+  `hasObservation(origin)` to dedup; calls `ltm.recordObservation()` only
+  for misses.
+- Per-line errors bump `stats.errors` but don't fail the tick.
+- Tick-level errors bump `consecutiveFailures` and surface in `health()`.
+
+### CLI
+
+For one-off operations the server exposes argv subcommands intercepted
+before the HTTP boot. The server must be STOPPED first because LTM is
+single-writer (`systemctl --user stop ytsejam`).
+
+```sh
+# direct node invocation (no `bin` shipped this PR)
+node server/src/index.ts ltm replay           # one reconcile pass, mtime-respecting
+node server/src/index.ts ltm replay --force   # full re-scan, ignore mtime cache
+node server/src/index.ts ltm health           # print last-tick stats (CLI snapshot)
+
+# npm-script ergonomic wrapper from repo root
+npm run ltm -- replay
+npm run ltm -- replay --force
+npm run ltm -- health
+```
+
+`ltm replay` prints a single JSON stats line to stdout and exits 0 (no
+errors) or 1 (one or more per-line parse errors).
+
+`ltm health` prints a stderr WARNING (it's a CLI snapshot of an empty-cache
+process, NOT live server health) followed by a single JSON stats line on
+stdout; exit code mirrors `ltm replay`.
+
+A live-server health endpoint is tracked in issue #92.
+
+### Health surface
+
+```ts
+import * as memory from "./memory/index.ts";
+
+const h = await memory.health();
+// h.git, h.lastCommit, ... (existing fields)
+// h.ltm = {
+//   reachable: boolean,
+//   consecutiveFailures: number,
+//   lastError?: { message: string, at: string },
+//   lastTickAt?: string,
+//   lastTickStats?: { scannedFiles, replayed, deduped, errors, durationMs },
+// }
+```
+
+`h.ltm` is OMITTED (not present, not `undefined`) when no reconciler is
+attached. Issue #92 tracks surfacing this in the web UI.
+
 ## Auto-commit cadence
 
 The memory store auto-commits its git repo every 10 writes
