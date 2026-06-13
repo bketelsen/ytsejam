@@ -236,14 +236,17 @@ export class SemanticStore {
   ): ProfileSummary {
     const floorFor = (f: SemanticFact): number =>
       f.kind === "identity" ? floors.identityFloor : f.kind === "directive" ? floors.directiveFloor : floors.floor;
-    const facts = this.activeFacts()
-      .filter((f) => effectiveStrength(f, now) >= floorFor(f))
-      .sort((a, b) => effectiveStrength(b, now) - effectiveStrength(a, now));
+    const all = this.activeFacts().sort(
+      (a, b) => effectiveStrength(b, now) - effectiveStrength(a, now),
+    );
+    const facts = all.filter((f) => effectiveStrength(f, now) >= floorFor(f));
+    const dormant = all.filter((f) => effectiveStrength(f, now) < floorFor(f));
     return {
       identity: facts.filter((f) => f.kind === "identity"),
       preferences: facts.filter((f) => f.kind === "preference"),
       directives: facts.filter((f) => f.kind === "directive"),
       attributes: facts.filter((f) => f.kind === "attribute"),
+      dormant,
       topEntities: this.activeEntities()
         .sort((a, b) => b.mentionCount - a.mentionCount)
         .slice(0, 12),

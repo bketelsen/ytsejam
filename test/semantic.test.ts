@@ -237,3 +237,31 @@ describe("rehearsal-aware effective strength (RECALL 1)", () => {
     );
   });
 });
+
+function userTurn(text: string, timestamp: string, entryId = "e1"): Turn {
+  return { sessionId: "s-dormant", entryId, role: "user", text, timestamp };
+}
+
+describe("dormant profile section (RECALL 2)", () => {
+  it("active facts below their floor land in dormant, sorted strongest-first", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ltm-sem-"));
+    const store = SemanticStore.open(dir);
+    store.ingestTurn(userTurn("I work at Initech.", "2026-01-01T00:00:00.000Z"));
+    const now = "2026-09-28T00:00:00.000Z"; // works_at attribute decayed below 0.3
+
+    const profile = store.profile(now);
+    expect(profile.attributes.find((f) => f.predicate === "works_at")).toBeUndefined();
+    const dormant = profile.dormant.find((f) => f.predicate === "works_at");
+    expect(dormant).toBeDefined();
+    expect(dormant!.object).toBe("Initech");
+  });
+
+  it("above-floor facts never appear in dormant", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ltm-sem-"));
+    const store = SemanticStore.open(dir);
+    store.ingestTurn(userTurn("I work at Initech.", "2026-01-01T00:00:00.000Z"));
+    const profile = store.profile("2026-01-02T00:00:00.000Z"); // fresh
+    expect(profile.attributes.some((f) => f.predicate === "works_at")).toBe(true);
+    expect(profile.dormant.some((f) => f.predicate === "works_at")).toBe(false);
+  });
+});

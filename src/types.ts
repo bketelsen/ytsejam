@@ -235,6 +235,12 @@ export interface ProfileSummary {
   preferences: SemanticFact[];
   directives: SemanticFact[];
   attributes: SemanticFact[];
+  /**
+   * Active, non-superseded facts whose effective strength fell below their
+   * floor — invisible to unprompted composition, but reachable by a direct
+   * slot question (strong-cue recall). Sorted by effective strength desc.
+   */
+  dormant: SemanticFact[];
   topEntities: EntityRecord[];
 }
 
