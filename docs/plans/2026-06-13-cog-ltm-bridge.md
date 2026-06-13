@@ -24,31 +24,59 @@ the LTM dependency.
 
 ---
 
-## PR 0 — workspace plumbing (~1 day)
+## PR 0 — workspace plumbing — **SUPERSEDED by phase 0.0 (PR #90, `9343dfe`)**
 
-**Purpose:** add `~/projects/ltm` as a dependency importable from
-`server/src/`. Smallest reversible change first; unblocks PRs 1-3.
+> Originally proposed: `"ltm": "file:../ltm"` keeping LTM as a sibling
+> repo. Brian's direction: bring LTM fully into ytsejam. PR #90 imported
+> LTM via `git subtree add --prefix=packages/ltm`, preserving all 68
+> LTM commits in the ytsejam DAG with original shas and tags intact.
+> Workspace wired in the same PR; smoke test at
+> `server/test/ltm-import.test.ts`; `scripts/gate.sh` extended with an
+> `ltm tests (vitest)` step (140-test LTM suite now blocks gate).
+>
+> Net: PR 0 done, stronger than designed. The original task list below
+> is kept for historical context; do NOT re-execute.
 
-### Tasks
+### Original tasks (historical — DO NOT re-execute)
 
-- [ ] Decide packaging shape: file-dep (`"ltm": "file:../ltm"` in
-  `server/package.json`) vs npm workspace move. Recommend file-dep.
-- [ ] Wire dependency; `npm install`; confirm `import { MemorySystem }
-  from "ltm"` resolves in a throwaway `server/src/_smoke.ts`.
-- [ ] Validate ESM/CJS interop: LTM is pure ESM, ytsejam server is
-  TS+tsx. Almost certainly works; verify before checking off.
-- [ ] Add a no-op test file `server/src/memory/__tests__/ltm-import.test.ts`
+- [x] ~~Decide packaging shape: file-dep (`"ltm": "file:../ltm"` in
+  `server/package.json`) vs npm workspace move. Recommend file-dep.~~
+  Shipped as npm workspace via subtree import (stronger).
+- [x] ~~Wire dependency; `npm install`; confirm `import { MemorySystem }
+  from "ltm"` resolves in a throwaway `server/src/_smoke.ts`.~~
+  Resolves via `packages/ltm/` workspace; smoke is permanent at
+  `server/test/ltm-import.test.ts`.
+- [x] ~~Validate ESM/CJS interop: LTM is pure ESM, ytsejam server is
+  TS+tsx. Almost certainly works; verify before checking off.~~
+  Verified by gate.
+- [x] ~~Add a no-op test file `server/src/memory/__tests__/ltm-import.test.ts`
   that does `import("ltm")` and asserts the symbol surface (so future
-  ytsejam main breakages of the LTM contract surface during gate).
-- [ ] LTM gate (`cd ~/projects/ltm && npm test && npm run check`) must
-  pass standalone after the wiring.
-- [ ] ytsejam gate (`scripts/gate.sh`) must pass.
+  ytsejam main breakages of the LTM contract surface during gate).~~
+  Landed at `server/test/ltm-import.test.ts` (server vitest's `include`
+  is `test/**/*.test.ts`, not `src/**/__tests__/**`).
+- [x] ~~LTM gate (`cd ~/projects/ltm && npm test && npm run check`) must
+  pass standalone after the wiring.~~ LTM gate now lives inside
+  `scripts/gate.sh` directly.
+- [x] ~~ytsejam gate (`scripts/gate.sh`) must pass.~~ Passed at PR #90.
 
-### Done when
+### What actually shipped
 
-- One PR opened against ytsejam main, gate green.
-- Throwaway smoke file removed; only the symbol-surface test stays.
-- LTM main untouched.
+- `packages/ltm/` — full LTM tree, 67 files, history preserved via
+  subtree import (PR #90 sha `9343dfe`).
+- `package.json` — `workspaces` gains `"packages/ltm"`; root
+  `npm test` and `npm run check` extended.
+- `scripts/gate.sh` — new `ltm tests (vitest)` step.
+- `server/test/ltm-import.test.ts` — symbol-surface smoke (asserts
+  `MemorySystem` and `DEFAULT_CONFIG` exports).
+- Standalone `~/projects/ltm` archived: README banner, tag
+  `v1.0.0-archived` on commit `3631358`.
+
+### Done when (historical)
+
+- ~~One PR opened against ytsejam main, gate green.~~ PR #90 merged.
+- ~~Throwaway smoke file removed; only the symbol-surface test stays.~~
+  No throwaway needed; smoke went straight to its final location.
+- ~~LTM main untouched.~~ N/A — LTM main IS ytsejam main now.
 
 ---
 
