@@ -22,7 +22,7 @@ const row: SessionRow = {
 };
 
 describe("Indexer", () => {
-  test("upsert, touch, title, unread, list ordering, delete", () => {
+  test("upsert, touch, title, unread, list ordering", () => {
     const idx = new Indexer(tempDb());
     idx.upsertSession(row);
     idx.upsertSession({ ...row, id: "s2", updatedAt: "2026-06-09T11:00:00Z" });
@@ -33,10 +33,6 @@ describe("Indexer", () => {
     const sessions = idx.listSessions();
     expect(sessions.map((s) => s.id)).toEqual(["s1", "s2"]); // newest updated first
     expect(sessions[0]).toMatchObject({ title: "Greetings", preview: "hello there", unread: true });
-
-    idx.deleteSession("s1");
-    expect(idx.listSessions().map((s) => s.id)).toEqual(["s2"]);
-    expect(idx.getSession("s1")).toBeUndefined();
   });
 
   test("archived sessions are excluded from default listSessions, included with includeArchived", () => {

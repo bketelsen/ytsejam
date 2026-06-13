@@ -177,10 +177,6 @@ export class Indexer {
     this.db.prepare("UPDATE sessions SET archived=? WHERE id=?").run(archived ? 1 : 0, id);
   }
 
-  deleteSession(id: string): void {
-    this.db.prepare("DELETE FROM sessions WHERE id=?").run(id);
-  }
-
   getSession(id: string): SessionRow | undefined {
     const r = this.db.prepare("SELECT * FROM sessions WHERE id=?").get(id) as SessionDbRow | undefined;
     return r ? this.toRow(r) : undefined;
