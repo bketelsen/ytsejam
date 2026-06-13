@@ -657,11 +657,12 @@ export function toOpenedForCompaction(input: {
   harness: AgentHarness;
   compaction: CompactionWiringState;
 }): OpenedForCompaction {
+  const session = Object.assign(Object.create(Object.getPrototypeOf(input.session)), input.session, {
+    metadata: input.metadata,
+  }) as Session<JsonlSessionMetadata> & { metadata: JsonlSessionMetadata };
+
   return {
-    session: {
-      ...input.session,
-      metadata: input.metadata,
-    } as Session<JsonlSessionMetadata> & { metadata: JsonlSessionMetadata },
+    session,
     harness: input.harness,
     compaction: input.compaction,
   };
