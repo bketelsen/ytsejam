@@ -91,6 +91,54 @@ export function attachLtm(ltm: MemorySystem | null): void {
   attachedLtm = ltm;
 }
 
+// Type-only structural reference to LtmReconciler -- avoids a cycle if
+// memory/index.ts is imported by bridge code in the future.
+type ReconcilerLike = {
+  health(): {
+    reachable: boolean;
+    consecutiveFailures: number;
+    lastTickAt?: string;
+    lastTickStats?: {
+      scannedFiles: number;
+      scannedLines: number;
+      replayed: number;
+      skipped: number;
+      errors: number;
+    };
+    lastError?: { message: string; at: string };
+  };
+  reconcile(opts?: { force?: boolean }): Promise<{
+    scannedFiles: number;
+    scannedLines: number;
+    replayed: number;
+    skipped: number;
+    errors: number;
+  }>;
+};
+
+let attachedReconciler: ReconcilerLike | null = null;
+
+/**
+ * Attach (or detach with null) an LtmReconciler instance to the memory
+ * namespace. The reconciler's health is then included in memory.health().
+ * Module-level state, last write wins -- same contract as attachLtm.
+ */
+export function attachReconciler(r: ReconcilerLike | null): void {
+  attachedReconciler = r;
+}
+
+/**
+ * Pass-through to the attached reconciler's reconcile(opts). Throws if no
+ * reconciler is attached (the CLI handles this and prints a friendly
+ * 'no reconciler attached' message).
+ */
+export async function reconcileNow(opts?: { force?: boolean }) {
+  if (!attachedReconciler) {
+    throw new Error("memory.reconcileNow: no reconciler attached");
+  }
+  return attachedReconciler.reconcile(opts);
+}
+
 /**
  * First-class observation recording: formats the canonical line,
  * appends to <domainPath>/observations.md (SSOT), then best-effort
@@ -188,7 +236,9 @@ export async function stats(prefix?: string): Promise<StatsResult> {
 
 /** Report memory store health and last commit metadata; filled in PR-1a. */
 export async function health(): Promise<HealthResult> {
-  return store.health();
+  const base = await store.health();
+  if (!attachedReconciler) return base;
+  return { ...base, ltm: attachedReconciler.health() };
 }
 
 /** Run a supported git operation against the memory store; filled in PR-1a. */

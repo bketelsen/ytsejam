@@ -117,6 +117,20 @@ export interface HealthResult {
   files?: number;
   last_commit?: string;
   memory_root?: string;
+  /** LTM bridge health when a reconciler is attached; undefined when not. */
+  ltm?: {
+    reachable: boolean;
+    consecutiveFailures: number;
+    lastTickAt?: string;
+    lastTickStats?: {
+      scannedFiles: number;
+      scannedLines: number;
+      replayed: number;
+      skipped: number;
+      errors: number;
+    };
+    lastError?: { message: string; at: string };
+  };
 }
 
 /** Supported git operation names. */

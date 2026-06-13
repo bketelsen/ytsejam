@@ -23,7 +23,9 @@ import { createSkillTool } from "./tools/skills.ts";
 import { WorkdirStore, resolveWorkdir } from "./workdirs.ts";
 import { ArchiveStore } from "./archive-store.ts";
 import { loadContextFiles } from "./context-files.ts";
+import { MemorySystem } from "ltm";
 import * as memory from "./memory/index.ts";
+import { LtmReconciler } from "./memory/bridge/ltm-reconciler.ts";
 
 const config = loadConfig();
 
@@ -115,6 +117,62 @@ await taskManager.recoverInterrupted();
 await scheduler.rebuildIndex();
 await scheduler.catchUp();
 scheduler.start();
+
+// LTM bridge: open store, construct reconciler, attach, start.
+// Failures here must NOT block boot -- LTM is best-effort; the bridge is a
+// safety net, not load-bearing. We catch + warn and continue with cog-only.
+let ltm: MemorySystem | null = null;
+let reconciler: LtmReconciler | null = null;
+try {
+  const ltmStoreDir =
+    process.env.LTM_STORE_DIR ?? path.join(config.dataDir, "ltm");
+  ltm = MemorySystem.open({ storeDir: ltmStoreDir });
+  const intervalEnv = Number(process.env.LTM_RECONCILE_INTERVAL_MS);
+  const ctorOpts: ConstructorParameters<typeof LtmReconciler>[0] = {
+    ltm,
+    dataDir: config.dataDir,
+  };
+  if (Number.isFinite(intervalEnv) && intervalEnv > 0) {
+    ctorOpts.intervalMs = intervalEnv;
+  }
+  reconciler = new LtmReconciler(ctorOpts);
+  memory.attachLtm(ltm);
+  memory.attachReconciler(reconciler);
+  reconciler.start();
+  console.log(`[memory] LTM bridge attached, store=${ltmStoreDir}`);
+} catch (err) {
+  console.warn(
+    `[memory] LTM bridge init failed (continuing cog-only): ${(err as Error).message}`,
+  );
+}
+
+// LTM bridge shutdown: drain the reconciler, detach, close the LTM store.
+// Use once() so duplicate signals don't re-run. Does NOT call process.exit
+// -- let the process exit naturally once all handles drain.
+const shutdownLtm = async (signal: string): Promise<void> => {
+  if (!reconciler && !ltm) return;
+  console.log(`[memory] ${signal} received, draining LTM bridge`);
+  try {
+    if (reconciler) await reconciler.stop();
+  } catch (err) {
+    console.warn(
+      `[memory] reconciler.stop() error: ${(err as Error).message}`,
+    );
+  }
+  memory.attachReconciler(null);
+  memory.attachLtm(null);
+  try {
+    if (ltm) ltm.close();
+  } catch (err) {
+    console.warn(
+      `[memory] ltm.close() error: ${(err as Error).message}`,
+    );
+  }
+  reconciler = null;
+  ltm = null;
+};
+process.once("SIGTERM", () => void shutdownLtm("SIGTERM"));
+process.once("SIGINT", () => void shutdownLtm("SIGINT"));
 
 try {
   const h = await memory.health();
