@@ -386,3 +386,265 @@ the bubble, the full timestamp is in the tooltip, and the copy button
 copies the human-facing text of that message. Tool JSON is intentionally
 not copied by that button; if you need it, open the tool card and select
 the details directly.
+
+## §3 How I actually use it — the opinions
+
+You saw the surface in §2. §3 is the less-neutral part: how I actually
+run the thing, and the habits that keep it useful instead of theatrical.
+
+### §3.1 The north star: ytsejam is a harness, not a chat app
+
+ytsejam is a harness for using tools well. Chat is the foreground; the
+work is what the agent does with bash, files, web, delegate, schedule,
+and memory.
+
+If you find yourself treating it like a chatbot, you are using it wrong.
+
+▸ *Skip if you don't care about the north star.*
+
+A chat app optimizes for the next reply. ytsejam optimizes for the work
+around the reply: reading the repo before editing it, checking a file
+instead of guessing, leaving a transcript, handing long work to a
+subagent, waking up next Monday, and carrying forward enough memory that
+the next session is not day zero.
+
+Most chat apps do not have real work persistence: no owned cwd, shell,
+durable JSONL transcript, scheduled prompts, background workers, or
+maintained cross-session memory. They are good at conversation. ytsejam
+is trying to be good at letting an agent *do* things while you can still
+audit what happened.
+
+So the main object is not the message bubble. The main object is the
+harness: model routing, tools, skills, delegation, schedules, memory, and
+transcripts wrapped into one loop. The UI stays small because the send
+button is not the point. The point is whether the agent can see the right
+context, use the right tool, and leave behind a trail you can resume.
+
+This is also the hot-memory principle for ytsejam itself: ytsejam is the
+final shape of the harness, not a snapshot of this month's interesting
+agent wrapper. New parts are judged by whether they make *this* harness
+better, not whether they mimic the next product demo.
+
+Read §2 as the map of what exists. Read §3 as the reason those parts
+exist in that shape.
+
+### §3.2 The harness-check
+
+Every new feature, skill, and tool gets one question: does this make the
+harness better at letting the agent use tools, or is it just another
+shiny thing to maintain?
+
+Skills are cheap. Helper-heavy skills cost more. Server-side TypeScript
+is expensive. Bias hard in that order.
+
+▸ *Skip if you don't care about feature discipline.*
+
+The cheapest durable improvement is usually a skill: a markdown playbook
+that changes behavior without making the server more complicated. A
+helper-heavy skill is the next step up: scripts, templates, generated
+artifacts, or data-dir conventions. Sometimes that is right, but now you
+have more moving parts and more ways for the workflow to rot.
+
+Server code is the expensive move. Anything in `server/src/` means type
+surfaces, tests, deployment, restart behavior, compatibility, and future
+maintenance. It may be exactly right. It just has to earn the cost.
+
+The gate I use is blunt: **Justify-server-change gate.** If a plan
+touches `server/src/`, add an extra step where you name what this lets
+the harness *do* that a skill could not do. Not what it makes prettier.
+Not what would be neat. What it enables the agent to do with tools,
+memory, schedules, sessions, or delegation that was otherwise blocked.
+
+Good answers sound like: expose a safe tool surface; preserve a transcript
+edge case; make scheduled prompts reliable; give subagents bounded
+cancellation; remove a manual step from recurring unattended work. Weak
+answers sound like: another app has this; the UI would be nicer; the
+model might like it. Those can become skills, docs, prompts, or memory
+patterns. They do not automatically earn server code.
+
+The same check applies to substrate-swap urges. New harness candidates
+show up constantly. Evaluate them as components inside ytsejam first: a
+better browser tool, model route, search primitive, or local worker. Do
+not start by replacing the substrate; that throws away the boring
+accumulated shape that makes the harness useful.
+
+This is not anti-change. It is pro-compounding. Skills compound because
+they are cheap. Memory compounds because it is durable. Server changes
+compound only when they improve the harness instead of feeding the urge
+to rebuild it.
+
+### §3.3 The operating cadence
+
+Steady state is deliberately boring: weekly `/housekeeping`, then
+`/reflect` in the same session; monthly `/evolve`; `/foresight` weekly
+or when you actually want a nudge.
+
+The anti-pattern is running every skill every day. Theatrical. Does not
+work.
+
+▸ *Skip if you don't care about cadence opinions.*
+
+Memory maintenance needs signal, and signal takes time to accumulate. Run
+`/reflect` every day in normal life and you mostly ask it to mine noise:
+one-off notes, half-finished thoughts, and clusters that have not had
+time to prove they are real.
+
+That is why the weekly pair exists. `/housekeeping` cleans first: done
+items, archive candidates, stale temporal hints, indexes. Then `/reflect`
+looks at the cleaned state and asks what patterns survived. Same session
+matters because the second step should see what the first just changed.
+
+The idle window matters too. Consolidation is useful after the system has
+had time to be boring: observations accumulate, threads repeat, action
+items get done, and then the pipeline has something real to compress.
+Force it daily and you starve it of the signal it is supposed to find.
+
+Monthly `/evolve` audits the memory architecture itself: domains, routing,
+file shape, and accumulated drag. That is not a daily question. Run it
+constantly and you invite churn in the thing that should make everything
+else stable.
+
+`/foresight` is lighter. I like it weekly, or on demand when I am stuck,
+changing domains, or about to plan a new push. Treat it as one forward-
+looking nudge, not as an oracle.
+
+There is one caveat: heavy work bursts are different. In a shipping burst,
+research blitz, or multi-day implementation push, the rate can go higher
+because observation volume is higher. Full burst-cadence rules in
+[MEMORY.md §2.2](MEMORY.md#22-the-burst-cadence-caveat). The cadence rule
+here is the steady state; the burst is the exception.
+
+So: boring weekly pair, boring monthly audit, occasional foresight. The
+point is not to perform maintenance. The point is to let memory get
+better without turning memory into the job.
+
+### §3.4 What NOT to ask it to do
+
+Here is the honest list: do not throw everything at ytsejam just because
+it can talk back confidently. Use it for narrow, verifiable,
+asynchronous, deferred work.
+
+The boundary is what makes it useful. If the task cannot tolerate a
+transcript, delay, or verification step, it probably does not belong
+here.
+
+▸ *Skip if you don't care about the uncomfortable safety list.*
+
+Do not ask it to handle anything where you would be embarrassed to share
+the transcript. ytsejam transcript-logs what you ask. That is a feature
+for auditability, but if the record would be a problem, do not put it in
+the record.
+
+Do not ask it to handle time-critical work. The agent is not always
+running. Schedules fire only when the service is up. Background tasks
+can queue, fail, time out, or wait behind other work. There is no SLA. If
+a missed minute matters, use a system designed for missed minutes.
+
+Do not ask it to make decisions where wrong answers hurt: medical,
+legal, financial, safety-critical, or anything adjacent. The model can
+sound calm and certain while being wrong. It will confidently lie. Use it
+to organize questions, summarize documents you verify, or prepare a
+checklist for a professional conversation. Do not outsource the decision.
+
+Do not ask it for real-time data it cannot fetch. If the web tools can
+reach a source, the agent can cite and inspect that source. If the data
+requires a live feed, privileged API, current market tick, private
+portal, or human-only context it does not have, it will either fail or
+make something up unless you constrain it hard.
+
+Do not ask it to do work you cannot verify yourself. This is the silent
+error trap. In domains you do not understand, you cannot tell a correct
+result from a plausible or subtly broken one. Use ytsejam to learn,
+scaffold, draft, search, compare, and produce artifacts you can inspect.
+Do not use it as your only judge.
+
+Be careful with destructive operations too. If work deletes files,
+rewrites history, cancels services, moves money, changes access, or
+sends messages as you, stage it first and inspect the plan. The
+transcript is an audit trail, not a force field.
+
+The positive version is simple: ytsejam is excellent at work that is
+asynchronous, inspectable, bounded, and recoverable. Research this and
+cite sources. Audit this repo and report. Draft the plan. Run the test
+and show me the exit code. Sweep memory. Prepare tomorrow's prompt.
+Those are the shapes where the harness earns its keep.
+
+### §3.5 Self-modification footnote
+
+ytsejam is the substrate the agent runs on. Source edits are safe because
+they do not affect the live process until rebuild plus restart, but a
+deploy kills the live session.
+
+Cutover is deliberate. Brian restarts the harness; the harness does not
+casually restart itself mid-conversation.
+
+▸ *Skip if you don't care about self-hosting the substrate.*
+
+This shape is inherited from the predecessor. omnius had the same basic
+pattern: the agent could edit the code for the thing it was running on,
+but edits were inert until the human chose the cutover. That is a
+settled operating pattern, not a ytsejam quirk.
+
+The safe boundary matters for development work. A worktree-isolated
+subagent can edit `server/src/` all day and nothing happens to the live
+service. The change has to be reviewed, merged, deployed, and picked up
+by a restart before the running assistant changes behavior.
+
+That means source-level self-modification is less spooky than it sounds.
+The live process is built from whatever was deployed at its last start.
+The repo can move ahead of it; the worktree can move ahead of main. The
+assistant does not suddenly become the code it just wrote.
+
+A concrete example: I just rebased onto main with a Phase 6 change, but
+I am still talking to the live process built from last week's main. It
+will pick up my change only after the next rebuild, deploy, and restart.
+
+The dangerous command is not "edit the source." The dangerous command is
+"restart the service I am currently using" without meaning to cut over.
+If a task needs deploy, make it explicit, expect the live session to die,
+and let Brian decide when that interruption is worth it.
+
+## §4 Glossary + further reading
+
+- **AGENTS.md** — Repo-local instructions for AI agents, auto-loaded from the working directory ancestor chain when context files are enabled.
+- **archive (session)** — A reversible hide operation for a session; the JSONL transcript remains the source of truth.
+- **bootc/nbc** — The atomic OS image/update path used by Snow Linux workflows; see the `snow-nbc` skill in [§2.5](#25-skills--the-catalog).
+- **brainstorm (skill)** — The dev-workflow skill for exploring requirements and design before implementation.
+- **CLAUDE.md** — Another repo-local context file name ytsejam can auto-load alongside `AGENTS.md`.
+- **cog memory** — ytsejam's markdown-backed persistent memory system; use [MEMORY.md](MEMORY.md) for depth.
+- **compaction** — The process of summarizing earlier context when a long session gets too large to keep in the model window.
+- **cwd / working directory** — The per-session directory that relative file, search, and shell tools resolve against; see [§2.2](#22-working-directories).
+- **delegate** — The tool that starts a background subagent task and reports back into the parent session.
+- **develop (skill)** — The dev-workflow skill that executes an implementation plan task-by-task with review gates.
+- **domain (memory)** — A folder and routing unit in cog memory, such as `personal`, `work`, `infra`, or `projects/ytsejam`.
+- **foresight** — The memory-pipeline skill that produces one cross-domain forward-looking nudge.
+- **gate.sh** — A project's verification script, usually run before commit, merge, or handoff.
+- **glacier** — The read-only archive tier for old memory material that should remain searchable without staying hot or warm.
+- **harness** — The whole loop that lets the agent use models, tools, files, memory, schedules, and subagents as one system.
+- **hot memory / warm memory / glacier** — The three memory tiers: always-loaded working set, on-demand domain files, and read-only archive.
+- **housekeeping** — The weekly memory-maintenance skill that prunes, archives, sweeps stale markers, and rebuilds indexes.
+- **idle window (memory pipeline)** — The quiet stretch between work bursts where accumulated observations become useful consolidation signal.
+- **JSONL** — Newline-delimited JSON; ytsejam stores session transcripts this way so they are append-only and grep-able.
+- **persona** — The global assistant instructions edited in Settings and applied from the next turn.
+- **pi-harness** — The broader local-agent harness lineage ytsejam belongs to, centered on tool use, memory, and durable transcripts.
+- **plan (doc)** — A task breakdown document, usually under `docs/plans/`, that turns an approved design into implementable steps.
+- **reflect (skill)** — The weekly consolidation skill that mines cleaned memory for durable patterns.
+- **schedule** — A one-shot or recurring future prompt delivered into a session when the service is running.
+- **session** — A durable conversation thread with its own transcript, model choice, working directory, and state.
+- **skill** — A markdown playbook the agent loads on demand; see [§2.5](#25-skills--the-catalog) for the catalog.
+- **snosi** — Snow Linux's image/update ecosystem as used by the Snow OS skills.
+- **snowloaded** — Optional Snow Linux system-extension software managed by Snow workflows such as `snow-updex`.
+- **ssot (SSOT)** — Single source of truth: the discipline that one fact lives in one canonical place and other files link to it.
+- **subagent** — A background worker with its own transcript, started by `delegate`, used for work that should not block the main chat.
+- **task (delegated)** — A bounded unit of background work run by a subagent and reported back to the parent session.
+- **tour (this doc)** — The §2 walkthrough of ytsejam's visible surface: sessions through the web UI.
+- **transcript** — The append-only JSONL record of a session or subagent task.
+- **warm memory** — Domain memory loaded on demand, such as observations, action items, entities, indexes, threads, and wiki pages.
+- **ytsejam** — This self-hosted personal AI assistant harness.
+- **YTSEJAM_*** — Environment-variable convention for ytsejam server configuration, such as models, data paths, context files, task limits, and memory paths.
+
+### Further reading
+
+1. [MEMORY.md](MEMORY.md) — the memory reference; use it when you need depth on memory.
+2. [docs/agents/OVERVIEW.md](agents/OVERVIEW.md) — the architecture map; use it when you need to understand what's wired where.
+3. [docs/agents/skills.md](agents/skills.md) — the skill-runtime reference; use it when you want to write your own.
