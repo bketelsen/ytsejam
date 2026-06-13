@@ -51,6 +51,10 @@ test("useApp tracks ltmState + ltmLastError and runs a polling effect", () => {
   assert.match(useApp, /setLtmState\(["']unknown["']\)/);
   // poll interval wired up
   assert.match(useApp, /setInterval\([^,]+,\s*LTM_POLL_MS\)/);
+  // in-flight cancellation guard around state sets (catches post-unmount writes
+  // / stale-overwrite regressions if a future refactor deletes the guard)
+  assert.match(useApp, /if\s*\(\s*cancelled\s*\)\s*return/);
+  assert.match(useApp, /if\s*\(\s*!cancelled\s*\)/);
   // cleanup
   assert.match(useApp, /clearInterval/);
 });
