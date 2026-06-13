@@ -323,7 +323,8 @@ describe("strong-cue recall end to end (RECALL 5)", () => {
 
     // Rehearsal: repeated asks stretch the half-life until it re-crosses the floor.
     // With strength=0.7, age≈690 days, half-life=180: needs ~5 recalls.
-    // The initial retrieve already fired recall 1; 8 more loops → 9 total → above floor.
+    // The initial retrieve already fired recall 1; 8 more loops → 9 total → above
+    // floor (padded for margin over the ~5 minimum — don't "tighten" the loop).
     for (let i = 0; i < 8; i++) await mem.retrieve("Tell me about my sibling.");
     expect(mem.profile().attributes.some((f) => f.predicate === "rel_sister")).toBe(true);
     mem.close();

@@ -199,7 +199,9 @@ export interface PromotedFact {
   timestamp: string;
   /** The fact's strength. */
   salience: number;
-  /** Always 0 — promoted items are never access-bumped. */
+  /** Always 0 — promoted items are never access-bumped. (Rehearsal for a
+   *  stale promotion bumps recallCount on the underlying SemanticFact, not
+   *  this synthetic item's accessCount.) */
   accessCount: number;
   /** Set when the fact was promoted from the dormant (below-floor) profile
    *  section by a direct slot question — consumers should phrase it as

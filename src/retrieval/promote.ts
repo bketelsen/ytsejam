@@ -122,7 +122,9 @@ export function promoteFacts(query: string, profile: ProfileSummary): PromotedFa
   // they are the query's SOLE match: "What's my dog called?" matches
   // rel_dog + name, and promoting the stale user-name there displaced real
   // answers (measured: long-band MRR 0.88 → 0.81). "What is my name?"
-  // matches name alone and still recalls.
+  // matches name alone and still recalls. Known blind spot, accepted as
+  // rare: a compound query naming two generic predicates ("my name and
+  // role?") recalls neither from dormancy — above-floor facts still answer.
   const GENERIC_PREDICATES = new Set(["name", "role"]);
   const covered = new Set(aboveFloor.map((f) => f.predicate));
   const dormantPicks: SemanticFact[] = [];
