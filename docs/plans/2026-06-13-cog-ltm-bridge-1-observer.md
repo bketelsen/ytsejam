@@ -397,7 +397,7 @@ describe("mirrorToLtm", () => {
     } as unknown as MemorySystem;
     const r = await mirrorToLtm(
       fakeLtm,
-      { text: "x", timestamp: "2026-06-13T00:00:00.000Z", tags: [] },
+      { text: "x", timestamp: "2026-06-13T00:00:00.000Z", tags: ["bug"] },
       "cog:x/observations.md#deadbeef",
     );
     expect(r.ok).toBe(false);
@@ -431,8 +431,8 @@ export async function mirrorToLtm(
   try {
     await ltm.recordObservation({
       text: parsed.text,
-      timestamp: new Date(parsed.timestamp),
-      tags: parsed.tags.length > 0 ? parsed.tags : undefined,
+      timestamp: parsed.timestamp,
+      tags: parsed.tags,
       origin,
       salience: SALIENCE_COG_OBSERVATION,
     });
