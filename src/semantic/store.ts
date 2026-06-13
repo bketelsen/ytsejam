@@ -47,9 +47,14 @@ const FACT_HALF_LIFE_DAYS: Record<FactKind, number> = {
 };
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Half-life multiplier per dormant recall (mirrors episodic accessBonus). */
+const RECALL_BONUS = 0.5;
+
 export function effectiveStrength(fact: SemanticFact, now: string): number {
   const age = Math.max(0, Date.parse(now) - Date.parse(fact.lastSeenAt)) / DAY_MS;
-  return fact.strength * Math.pow(2, -age / FACT_HALF_LIFE_DAYS[fact.kind]);
+  const halfLife =
+    FACT_HALF_LIFE_DAYS[fact.kind] * (1 + RECALL_BONUS * (fact.recallCount ?? 0));
+  return fact.strength * Math.pow(2, -age / halfLife);
 }
 
 export class SemanticStore {

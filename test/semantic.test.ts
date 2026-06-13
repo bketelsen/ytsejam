@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { extractEntities, extractFacts } from "../src/semantic/extract.ts";
-import { SemanticStore } from "../src/semantic/store.ts";
-import type { Turn } from "../src/types.ts";
+import { effectiveStrength, SemanticStore } from "../src/semantic/store.ts";
+import type { SemanticFact, Turn } from "../src/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ltm-test-"));
@@ -200,5 +200,40 @@ describe("semantic store belief dynamics", () => {
     expect(store.activeFacts().some((f) => f.objectNorm.includes("dark roast"))).toBe(false);
     const raw = fs.readFileSync(path.join(dir, "facts.jsonl"), "utf8");
     expect(raw).not.toContain("dark roast");
+  });
+});
+
+describe("rehearsal-aware effective strength (RECALL 1)", () => {
+  const fact: SemanticFact = {
+    id: "fact-attribute-works_at-initech-p",
+    kind: "attribute",
+    predicate: "works_at",
+    object: "Initech",
+    objectNorm: "initech",
+    polarity: 1,
+    strength: 0.7,
+    mentionCount: 1,
+    firstSeenAt: "2026-01-01T00:00:00.000Z",
+    lastSeenAt: "2026-01-01T00:00:00.000Z",
+    sources: [{ sessionId: "s1", entryId: "e1" }],
+    state: "active",
+  };
+  // 270 days later: 0.7 * 2^(-270/180) ≈ 0.247 — below the 0.3 floor.
+  const now = "2026-09-28T00:00:00.000Z";
+
+  it("recallCount stretches the disuse half-life", () => {
+    const dormant = effectiveStrength(fact, now);
+    expect(dormant).toBeLessThan(0.3);
+    // recallCount 2 → half-life 180 * (1 + 0.5*2) = 360d → 0.7 * 2^(-0.75) ≈ 0.416
+    const rehearsed = effectiveStrength({ ...fact, recallCount: 2 }, now);
+    expect(rehearsed).toBeGreaterThan(0.3);
+    expect(rehearsed).toBeGreaterThan(dormant);
+  });
+
+  it("recallCount undefined behaves as zero", () => {
+    expect(effectiveStrength(fact, now)).toBeCloseTo(
+      effectiveStrength({ ...fact, recallCount: 0 }, now),
+      12,
+    );
   });
 });

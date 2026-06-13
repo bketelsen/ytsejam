@@ -118,6 +118,13 @@ export interface SemanticFact {
   /** Belief strength in (0, 1]; reinforced by repetition, decays with disuse. */
   strength: number;
   mentionCount: number;
+  /**
+   * Times this fact was recalled from dormancy by a direct slot question
+   * (strong-cue recall). Rehearsal: stretches the disuse half-life the same
+   * way accessCount does for episodic records. Optional — absent on facts
+   * written before this field existed.
+   */
+  recallCount?: number;
   firstSeenAt: string;
   lastSeenAt: string;
   /** Every turn that asserted this fact. Drives redaction propagation. */
@@ -194,6 +201,10 @@ export interface PromotedFact {
   salience: number;
   /** Always 0 — promoted items are never access-bumped. */
   accessCount: number;
+  /** Set when the fact was promoted from the dormant (below-floor) profile
+   *  section by a direct slot question — consumers should phrase it as
+   *  historical ("you told me on <date>"), not current. */
+  stale?: boolean;
   // No `state` field, deliberately: promoted items are always "active" and
   // are never consolidated, redacted, or persisted.
 }
@@ -214,6 +225,9 @@ export interface RetrievedMemory {
   record: EpisodicRecord | PromotedFact;
   score: number;
   breakdown: ScoreBreakdown;
+  /** Set when this item was recalled past decay: a dormant promoted fact or
+   *  a resurrected consolidated record. */
+  stale?: boolean;
 }
 
 export interface ProfileSummary {
@@ -319,6 +333,12 @@ export interface LtmConfig {
   maxChunkChars: number;
   /** Recency scoring half-life in days. */
   recencyHalfLifeDays: number;
+  /**
+   * Z-score (over the candidate pool's cosines) a consolidated record must
+   * reach to be resurrected by a semantic match. Calibrated against the
+   * eval (Task RECALL 9); pools with ~zero variance never resurrect.
+   */
+  resurrectZ: number;
 }
 
 /** Deep-partial patch shape accepted by MemorySystem.open. */
@@ -330,6 +350,7 @@ export interface LtmConfigPatch {
   mmrLambda?: number;
   maxChunkChars?: number;
   recencyHalfLifeDays?: number;
+  resurrectZ?: number;
 }
 
 export function mergeConfig(patch: LtmConfigPatch = {}): LtmConfig {
@@ -341,6 +362,7 @@ export function mergeConfig(patch: LtmConfigPatch = {}): LtmConfig {
     mmrLambda: patch.mmrLambda ?? DEFAULT_CONFIG.mmrLambda,
     maxChunkChars: patch.maxChunkChars ?? DEFAULT_CONFIG.maxChunkChars,
     recencyHalfLifeDays: patch.recencyHalfLifeDays ?? DEFAULT_CONFIG.recencyHalfLifeDays,
+    resurrectZ: patch.resurrectZ ?? DEFAULT_CONFIG.resurrectZ,
   };
 }
 
@@ -354,4 +376,5 @@ export const DEFAULT_CONFIG: LtmConfig = {
   mmrLambda: 0.7,
   maxChunkChars: 1500,
   recencyHalfLifeDays: 21,
+  resurrectZ: 2.5,
 };
