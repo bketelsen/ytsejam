@@ -385,6 +385,7 @@ describe("formatDevLogLine", () => {
     expect(line).toMatch(/ctx ~947112→~184309 tokens/);
     expect(line).toMatch(/summary 4821 tokens/);
     expect(line).toMatch(/Trigger: above 920000 budget/);
+    expect(line).toMatch(/ via=idle$/);
   });
 
   it("adds subagent prefix when subagentTaskId is present", () => {
