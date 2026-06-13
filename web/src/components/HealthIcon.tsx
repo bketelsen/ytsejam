@@ -1,7 +1,6 @@
 import { Plug, Brain } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-
-export type HealthState = "unknown" | "ok" | "bad";
+import type { HealthState } from "../lib/types";
 
 const COLOR: Record<HealthState, string> = {
   unknown: "text-muted-foreground",

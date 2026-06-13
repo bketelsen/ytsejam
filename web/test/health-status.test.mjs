@@ -28,8 +28,18 @@ test("ws.ts onStatus signature is unchanged (still passes boolean)", () => {
   assert.match(ws, /onStatus:\s*\(\s*connected:\s*boolean\s*\)\s*=>\s*void/);
 });
 
-test("useApp declares the HealthState union and the LTM threshold + poll interval constants", () => {
-  assert.match(useApp, /HealthState\s*=\s*["']unknown["']\s*\|\s*["']ok["']\s*\|\s*["']bad["']/);
+test("types.ts owns the HealthState union (single source of truth — issue #117)", () => {
+  // The component (HealthIcon) and the hook (useApp) used to declare HealthState
+  // independently; both now import from here so adding a fourth state takes one
+  // edit, not two. health-icon.test.mjs + the useApp import assertion below
+  // verify both consumers actually consume from lib/types.
+  assert.match(types, /export\s+type\s+HealthState\s*=\s*["']unknown["']\s*\|\s*["']ok["']\s*\|\s*["']bad["']/);
+});
+
+test("useApp imports HealthState from ./lib/types and declares the LTM threshold + poll interval constants", () => {
+  assert.match(useApp, /import\s+type\s*\{[^}]*\bHealthState\b[^}]*\}\s*from\s*["']\.\/lib\/types["']/);
+  // Local re-declaration must be gone.
+  assert.doesNotMatch(useApp, /export\s+type\s+HealthState\b/);
   assert.match(useApp, /const\s+LTM_UNHEALTHY_THRESHOLD\s*=\s*3/);
   assert.match(useApp, /const\s+LTM_POLL_MS\s*=\s*10_?000/);
 });

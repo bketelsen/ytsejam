@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { client } from "./lib/api";
 import { connectWs } from "./lib/ws";
-import type { ChatMessage, ServerEvent, SessionRow, TaskRow } from "./lib/types";
-
-export type HealthState = "unknown" | "ok" | "bad";
+import type { ChatMessage, HealthState, ServerEvent, SessionRow, TaskRow } from "./lib/types";
 
 const LTM_UNHEALTHY_THRESHOLD = 3;
 const LTM_POLL_MS = 10_000;

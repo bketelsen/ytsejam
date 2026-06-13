@@ -26,6 +26,12 @@ export interface LtmHealth {
   lastError?: { message: string; at: string };
 }
 
+// The tri-state outline used by both icons in the chat header (Plug for WebSocket,
+// Brain for LTM) and tracked by useApp. Owned here so the hook and the component
+// share a single source of truth — adding a fourth state (e.g. "degraded") needs
+// only one edit, not two. (Issue #117.)
+export type HealthState = "unknown" | "ok" | "bad";
+
 export interface ContentBlock {
   type: string; // "text" | "thinking" | "toolCall" | "image" | ...
   text?: string;
