@@ -3,15 +3,24 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { append, git, health, list, move, outline, patch, read, search, stats, write } from "../../src/memory/index.ts";
 
 let root = "";
+let warnSpy: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "ytsejam-store-"));
   process.env.YTSEJAM_MEMORY_DIR = root;
+  // Suppress auto-commit `fatal: not a git repository` warnings: this suite
+  // runs in non-git tmp dirs, so the now-wired hook always fails and emits a
+  // (correctly swallowed) console.warn. Hiding it here keeps the suite output
+  // clean without weakening any assertion — this file tests store primitives,
+  // not commit cadence (the auto-commit suite covers that in a git-init'd root).
+  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 afterEach(async () => {
+  warnSpy?.mockRestore();
+  warnSpy = null;
   delete process.env.YTSEJAM_MEMORY_DIR;
   if (root) await rm(root, { recursive: true, force: true });
 });
