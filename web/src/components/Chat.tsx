@@ -21,6 +21,7 @@ export function Chat({
   messages,
   streaming,
   running,
+  compacting,
   tasks,
   cwd,
   onCwdChange,
@@ -31,6 +32,7 @@ export function Chat({
   messages: ChatMessage[];
   streaming: ChatMessage | null;
   running: boolean;
+  compacting: boolean;
   tasks: Record<string, TaskRow>;
   cwd: string | undefined;
   onCwdChange: (cwd: string | undefined) => void;
@@ -82,6 +84,13 @@ export function Chat({
           <Menu />
         </Button>
       </header>
+      {compacting && (
+        <div className="flex items-center justify-center border-b border-border px-2 py-1">
+          <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-xs text-warning animate-pulse">
+            compacting…
+          </span>
+        </div>
+      )}
       <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto max-w-4xl space-y-3 p-4">
           {messages.length === 0 && !streaming && (

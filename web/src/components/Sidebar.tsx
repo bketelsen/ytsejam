@@ -89,8 +89,13 @@ export function Sidebar({
             }`}
           >
             <div className="flex items-center gap-2">
-              {s.running && <span className="size-2 shrink-0 animate-pulse rounded-full bg-success" />}
-              {s.unread && !s.running && <span className="size-2 shrink-0 rounded-full bg-primary" />}
+              {s.compacting ? (
+                <span className="size-2 shrink-0 animate-pulse rounded-full bg-warning" />
+              ) : s.running ? (
+                <span className="size-2 shrink-0 animate-pulse rounded-full bg-success" />
+              ) : s.unread ? (
+                <span className="size-2 shrink-0 rounded-full bg-primary" />
+              ) : null}
               <span className="flex-1 truncate text-sm">{s.title ?? "New session"}</span>
               <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>
               <button

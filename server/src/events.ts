@@ -5,11 +5,13 @@ import type { ScheduleRow } from "./schedules.ts";
 
 export type ServerEvent =
   | { type: "agent"; sessionId: string; event: AgentEvent }
-  | { type: "session_meta"; session: SessionRow & { running: boolean } }
+  | { type: "session_meta"; session: SessionRow & { running: boolean; compacting: boolean } }
   | { type: "session_archived"; sessionId: string }
   | { type: "session_unarchived"; sessionId: string }
   | { type: "task"; task: TaskRow }
-  | { type: "schedule"; schedule: ScheduleRow };
+  | { type: "schedule"; schedule: ScheduleRow }
+  | { type: "compaction_start"; sessionId: string; trigger: "proactive" | "reactive" }
+  | { type: "compaction_end"; sessionId: string; status: "succeeded" | "surrendered" | "failed" };
 
 export class EventBus {
   private listeners = new Set<(event: ServerEvent) => void>();

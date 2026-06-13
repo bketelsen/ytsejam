@@ -110,6 +110,7 @@ interface OpenSession {
   session: Session<JsonlSessionMetadata>;
   harness: AgentHarness;
   running: boolean;
+  compacting: boolean;
   /** rename requested while running; flushed to JSONL on agent_end (JSONL is SSOT) */
   pendingTitle?: string;
   compaction?: CompactionWiringState;
@@ -237,6 +238,7 @@ export class AgentManager {
       session,
       harness,
       running: false,
+      compacting: false,
     };
 
     // Catch + swallow: a compaction-bookkeeping bug must not kill the user's
@@ -320,37 +322,45 @@ export class AgentManager {
         // The retry uses setTimeout(0) to leave the awaited listener settlement
         // before calling prompt(), avoiding pi's reentrancy guard.
         opened.compaction.lastCompactionDetails = undefined;
-        const result = await runCompactionIfPending(
-          toOpenedForCompaction({
-            session: opened.session,
-            metadata: opened.metadata,
-            harness: opened.harness,
-            compaction: opened.compaction,
-          }),
-          this.repo,
-        );
-        if (result.fired) {
-          await this.recordCompactionEvent(
-            opened,
-            result,
-            opened.compaction.lastCompactionDetails,
+
+        this.markCompactionStart(opened, "reactive");
+        let endStatus: "succeeded" | "surrendered" | "failed" = "failed";
+        try {
+          const result = await runCompactionIfPending(
+            toOpenedForCompaction({
+              session: opened.session,
+              metadata: opened.metadata,
+              harness: opened.harness,
+              compaction: opened.compaction,
+            }),
+            this.repo,
           );
-          opened.compaction.lastCompactionDetails = undefined;
-        }
-        if (!result.succeeded) {
-          await this.emitCompactionSurrender(opened);
-        } else {
-          setTimeout(() => {
-            if (this.open.get(opened.id) !== opened) return; // closed or deleted
-            opened.running = true;
-            opened.harness.prompt(REACTIVE_RETRY_PROMPT).catch((err) => {
-              console.error(
-                `reactive retry prompt failed for session ${opened.id}`,
-                err,
-              );
-              opened.running = false;
-            });
-          }, 0);
+          if (result.fired) {
+            await this.recordCompactionEvent(
+              opened,
+              result,
+              opened.compaction.lastCompactionDetails,
+            );
+            opened.compaction.lastCompactionDetails = undefined;
+          }
+          endStatus = result.succeeded ? "succeeded" : "surrendered";
+          if (!result.succeeded) {
+            await this.emitCompactionSurrender(opened);
+          } else {
+            setTimeout(() => {
+              if (this.open.get(opened.id) !== opened) return; // closed or deleted
+              opened.running = true;
+              opened.harness.prompt(REACTIVE_RETRY_PROMPT).catch((err) => {
+                console.error(
+                  `reactive retry prompt failed for session ${opened.id}`,
+                  err,
+                );
+                opened.running = false;
+              });
+            }, 0);
+          }
+        } finally {
+          this.markCompactionEnd(opened, endStatus);
         }
       }
     }
@@ -405,28 +415,36 @@ export class AgentManager {
   ): Promise<boolean> {
     if (!opened.compaction?.pendingCompaction) return true;
     opened.compaction.lastCompactionDetails = undefined;
-    const result = await runCompactionIfPending(
-      toOpenedForCompaction({
-        session: opened.session,
-        metadata: opened.metadata,
-        harness: opened.harness,
-        compaction: opened.compaction,
-      }),
-      this.repo,
-    );
-    if (result.fired) {
-      await this.recordCompactionEvent(
-        opened,
-        result,
-        opened.compaction.lastCompactionDetails,
+
+    this.markCompactionStart(opened, "proactive");
+    let endStatus: "succeeded" | "surrendered" | "failed" = "failed";
+    try {
+      const result = await runCompactionIfPending(
+        toOpenedForCompaction({
+          session: opened.session,
+          metadata: opened.metadata,
+          harness: opened.harness,
+          compaction: opened.compaction,
+        }),
+        this.repo,
       );
-      opened.compaction.lastCompactionDetails = undefined;
+      if (result.fired) {
+        await this.recordCompactionEvent(
+          opened,
+          result,
+          opened.compaction.lastCompactionDetails,
+        );
+        opened.compaction.lastCompactionDetails = undefined;
+      }
+      endStatus = result.surrendered ? "surrendered" : "succeeded";
+      if (result.surrendered) {
+        await this.emitCompactionSurrender(opened);
+        return false;
+      }
+      return true;
+    } finally {
+      this.markCompactionEnd(opened, endStatus);
     }
-    if (result.surrendered) {
-      await this.emitCompactionSurrender(opened);
-      return false;
-    }
-    return true;
   }
 
   private recordMessageEnd(opened: OpenSession, message: AgentMessage): void {
@@ -602,6 +620,10 @@ export class AgentManager {
     return this.open.get(id)?.running ?? false;
   }
 
+  isCompacting(id: string): boolean {
+    return this.open.get(id)?.compacting ?? false;
+  }
+
   async getMessages(id: string): Promise<AgentMessage[]> {
     const opened = await this.getOrOpen(id);
     return (await opened.session.buildContext()).messages;
@@ -742,12 +764,44 @@ export class AgentManager {
     }
   }
 
+  private markCompactionStart(
+    opened: OpenSession,
+    trigger: "proactive" | "reactive",
+  ): void {
+    if (opened.compacting) return;
+    opened.compacting = true;
+    this.opts.bus.emit({
+      type: "compaction_start",
+      sessionId: opened.id,
+      trigger,
+    });
+    this.emitMeta(opened.id);
+  }
+
+  private markCompactionEnd(
+    opened: OpenSession,
+    status: "succeeded" | "surrendered" | "failed",
+  ): void {
+    if (!opened.compacting) return;
+    opened.compacting = false;
+    this.opts.bus.emit({
+      type: "compaction_end",
+      sessionId: opened.id,
+      status,
+    });
+    this.emitMeta(opened.id);
+  }
+
   private emitMeta(id: string): void {
     const row = this.opts.indexer.getSession(id);
     if (row) {
       this.opts.bus.emit({
         type: "session_meta",
-        session: { ...row, running: this.isRunning(id) },
+        session: {
+          ...row,
+          running: this.isRunning(id),
+          compacting: this.isCompacting(id),
+        },
       });
     }
   }

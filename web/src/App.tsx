@@ -60,6 +60,7 @@ function Main() {
         messages={app.messages}
         streaming={app.streaming}
         running={app.sessions.find((s) => s.id === app.currentId)?.running ?? false}
+        compacting={app.sessions.find((s) => s.id === app.currentId)?.compacting ?? false}
         tasks={app.tasks}
         cwd={app.currentCwd}
         onCwdChange={app.setCurrentCwd}

@@ -62,6 +62,18 @@ export function useApp() {
       return;
     }
     if (event.type === "schedule") return; // Settings refetches on open
+    if (event.type === "compaction_start") {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === event.sessionId ? { ...s, compacting: true } : s)),
+      );
+      return;
+    }
+    if (event.type === "compaction_end") {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === event.sessionId ? { ...s, compacting: false } : s)),
+      );
+      return;
+    }
     // agent events
     if (event.sessionId !== currentIdRef.current) {
       if (event.event.type === "agent_start" || event.event.type === "agent_end") {

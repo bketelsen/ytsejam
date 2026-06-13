@@ -88,14 +88,18 @@ export function createApp(deps: AppDeps) {
     const includeArchived = c.req.query("archived") === "1";
     const sessions = indexer
       .listSessions({ includeArchived })
-      .map((s) => ({ ...s, running: manager.isRunning(s.id) }));
+      .map((s) => ({
+        ...s,
+        running: manager.isRunning(s.id),
+        compacting: manager.isCompacting(s.id),
+      }));
     return c.json({ sessions });
   });
 
   app.post("/api/sessions", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const session = await manager.createSession(body.model);
-    return c.json({ session: { ...session, running: false } });
+    return c.json({ session: { ...session, running: false, compacting: false } });
   });
 
   app.get("/api/sessions/:id", async (c) => {
@@ -104,7 +108,12 @@ export function createApp(deps: AppDeps) {
     if (!row) return c.json({ error: "not found" }, 404);
     const messages = await manager.getMessages(id);
     return c.json({
-      session: { ...row, running: manager.isRunning(id), cwd: manager.resolveWorkdir(id) },
+      session: {
+        ...row,
+        running: manager.isRunning(id),
+        compacting: manager.isCompacting(id),
+        cwd: manager.resolveWorkdir(id),
+      },
       messages,
     });
   });
