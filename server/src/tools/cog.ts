@@ -165,6 +165,32 @@ export function createCogTools(): AgentTool<any>[] {
       parameters: appendParams,
       execute: async (_id, p) => {
         const { path, text, section } = p as { path: string; text: string; section?: string };
+
+        // Route observations.md writes through recordObservation so the
+        // LTM bridge mirrors live writes. Non-observation files and section-
+        // targeted writes use the unchanged memory.append path.
+        if (path.endsWith("/observations.md") && !section) {
+          const { recordObservation } = await import("../memory/index.ts");
+          const { parseObservationLine } = await import("../memory/bridge/ltm-observer.ts");
+          const domainPath = path.slice(0, -"/observations.md".length);
+          const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+          for (const line of lines) {
+            const parsed = parseObservationLine(line);
+            if (!parsed) {
+              throw new Error(
+                `cog_append: malformed observation line for ${path}: ${JSON.stringify(line)}`,
+              );
+            }
+            await recordObservation({
+              domainPath,
+              text: parsed.text,
+              tags: parsed.tags,
+              timestamp: new Date(parsed.timestamp),
+            });
+          }
+          return jsonResult({ ok: true });
+        }
+
         const r = await memory.append(path, text, { section });
         return jsonResult(r);
       },
