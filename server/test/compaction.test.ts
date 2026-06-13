@@ -373,6 +373,7 @@ describe("formatDevLogLine", () => {
     succeeded: true,
     backupPath:
       "/tmp/ytsejam-test-data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000",
+    entryPoint: "idle",
   };
 
   it("formats a single line for proactive main-session compaction", () => {
@@ -406,6 +407,58 @@ describe("formatDevLogLine", () => {
   it("includes FAILED marker when succeeded=false", () => {
     const e = { ...baseEvent, succeeded: false };
     expect(formatDevLogLine(e)).toMatch(/FAILED/);
+  });
+
+  it("CompactionEvent carries an entryPoint field and serializes to snake_case", () => {
+    const e: CompactionEvent = {
+      timestamp: new Date("2026-06-13T12:00:00Z"),
+      sessionId: "sess-1",
+      subagentTaskId: null,
+      trigger: "proactive",
+      entryPoint: "inner_loop",
+      reason: "ctx-window-crossed",
+      model: "anthropic/claude-opus-4-8",
+      contextWindow: 200000,
+      reserveTokens: 4096,
+      keepRecentTokens: 16384,
+      tokensBeforeEstimated: 195000,
+      tokensAfterEstimated: 80000,
+      summaryTokens: 4000,
+      firstKeptEntryId: "entry-42",
+      filesRead: [],
+      filesModified: [],
+      compactionDurationMs: 1234,
+      succeeded: true,
+      backupPath: "/tmp/backup",
+    };
+    const record = serializeJsonRecord(e);
+    expect(record.entry_point).toBe("inner_loop");
+  });
+
+  it("formatDevLogLine appends via=<entryPoint>", () => {
+    const e: CompactionEvent = {
+      timestamp: new Date("2026-06-13T12:00:00Z"),
+      sessionId: "sess-1",
+      subagentTaskId: null,
+      trigger: "proactive",
+      entryPoint: "inner_loop",
+      reason: "ctx-window-crossed",
+      model: "anthropic/claude-opus-4-8",
+      contextWindow: 200000,
+      reserveTokens: 4096,
+      keepRecentTokens: 16384,
+      tokensBeforeEstimated: 195000,
+      tokensAfterEstimated: 80000,
+      summaryTokens: 4000,
+      firstKeptEntryId: "entry-42",
+      filesRead: [],
+      filesModified: [],
+      compactionDurationMs: 1234,
+      succeeded: true,
+      backupPath: "/tmp/backup",
+    };
+    const line = formatDevLogLine(e);
+    expect(line).toContain("via=inner_loop");
   });
 });
 
@@ -635,6 +688,7 @@ describe("serializeJsonRecord", () => {
       compactionDurationMs: 100,
       succeeded: true,
       backupPath: "/tmp/x",
+      entryPoint: "idle",
     };
     const json = serializeJsonRecord(e);
     const parsed = JSON.parse(JSON.stringify(json));
