@@ -35,6 +35,7 @@ import type {
   Session,
 } from "@earendil-works/pi-agent-core";
 import {
+  AgentHarness as AgentHarnessCtor,
   compact,
   prepareCompaction,
 } from "@earendil-works/pi-agent-core";
@@ -1104,6 +1105,201 @@ describe("buildSurrenderAgentMessage", () => {
       totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     });
+  });
+});
+
+describe("inner-loop context handler", () => {
+  let faux: ReturnType<typeof setupFaux>;
+  let originalCompactionEnabled: string | undefined;
+  let contextHandler: ((event: any) => any) | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalCompactionEnabled = process.env.YTSEJAM_COMPACTION_ENABLED;
+    delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    faux = setupFaux();
+    contextHandler = undefined;
+  });
+
+  afterEach(() => {
+    if (originalCompactionEnabled === undefined) {
+      delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    } else {
+      process.env.YTSEJAM_COMPACTION_ENABLED = originalCompactionEnabled;
+    }
+    faux.unregister();
+    vi.restoreAllMocks();
+  });
+
+  const pending = () => ({
+    trigger: "proactive" as const,
+    reason: "test",
+    tokensBefore: 100,
+    budget: 50_000,
+  });
+
+  const userMsg = (text: string): AgentMessage =>
+    ({ role: "user", content: [{ type: "text", text }] }) as AgentMessage;
+
+  const branchEntries = () => [
+    {
+      type: "message",
+      id: "entry-1",
+      parentId: null,
+      timestamp: "2026-06-13T00:00:00.000Z",
+      message: userMsg("hi"),
+    },
+  ];
+
+  const setupWired = async () => {
+    const onSpy = vi.spyOn(AgentHarnessCtor.prototype, "on");
+    onSpy.mockImplementation(function (this: AgentHarness, type: any, handler: any) {
+      if (type === "context") contextHandler = handler;
+      return () => {};
+    });
+
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+
+    expect(contextHandler).toBeDefined();
+    return {
+      manager,
+      opened,
+      handler: contextHandler!,
+    };
+  };
+
+  it("returns undefined when opened.compaction is undefined (kill-switch boot)", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction = undefined;
+
+    const getBranch = vi.spyOn(opened.session, "getBranch");
+    const runPending = vi.spyOn(
+      manager as any,
+      "runPendingInlineCompactionInLoop",
+    );
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(runPending).not.toHaveBeenCalled();
+    expect(getBranch).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined when pendingCompaction is null (cheap no-op, getBranch NOT called)", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = null;
+
+    const getBranch = vi.spyOn(opened.session, "getBranch");
+    const runPending = vi.spyOn(
+      manager as any,
+      "runPendingInlineCompactionInLoop",
+    );
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(getBranch).not.toHaveBeenCalled();
+    expect(runPending).not.toHaveBeenCalled();
+  });
+
+  it("returns {messages: newMessages} on happy compaction", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = pending();
+
+    const entries = branchEntries();
+    const getBranch = vi
+      .spyOn(opened.session, "getBranch")
+      .mockResolvedValueOnce(entries as any);
+    const newMessages = [
+      {
+        role: "compactionSummary",
+        summary: "summarized",
+        tokensBefore: 100,
+        timestamp: "2026-06-13T00:00:01.000Z",
+      },
+    ] as unknown as AgentMessage[];
+    const runPending = vi
+      .spyOn(manager as any, "runPendingInlineCompactionInLoop")
+      .mockResolvedValueOnce({
+        ok: true,
+        newMessages,
+        surrendered: false,
+      });
+
+    const original = [userMsg("original")];
+    const result = await handler({ type: "context", messages: original });
+
+    expect(result).toEqual({ messages: newMessages });
+    expect(result.messages).toBe(newMessages);
+    expect(getBranch).toHaveBeenCalledOnce();
+    expect(runPending).toHaveBeenCalledOnce();
+    expect(runPending).toHaveBeenCalledWith(opened, entries, "inner_loop");
+  });
+
+  it("returns event.messages + surrender notice when orchestrator surrenders", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = pending();
+
+    vi.spyOn(opened.session, "getBranch").mockResolvedValueOnce(
+      branchEntries() as any,
+    );
+    vi.spyOn(manager as any, "runPendingInlineCompactionInLoop").mockResolvedValueOnce({
+      ok: false,
+      surrendered: true,
+    });
+
+    const msg1 = userMsg("one");
+    const msg2 = userMsg("two");
+    const result = await handler({ type: "context", messages: [msg1, msg2] });
+
+    expect(result.messages).toHaveLength(3);
+    expect(result.messages[0]).toBe(msg1);
+    expect(result.messages[1]).toBe(msg2);
+    const notice = result.messages[2] as AssistantMessage;
+    expect(notice.role).toBe("assistant");
+    expect(notice.content).toEqual([
+      {
+        type: "text",
+        text: buildSurrenderMessage(0, opened.harness.getModel().contextWindow),
+      },
+    ]);
+    expect(notice.stopReason).toBe("stop");
+    expect(notice.api).toBe(opened.harness.getModel().api);
+    expect(notice.provider).toBe(opened.harness.getModel().provider);
+    expect(notice.model).toBe(opened.harness.getModel().id);
+    expect(notice.usage).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+  });
+
+  it("returns undefined on any thrown error (defensive catch logs to console.error)", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = pending();
+
+    vi.spyOn(opened.session, "getBranch").mockResolvedValueOnce(
+      branchEntries() as any,
+    );
+    vi.spyOn(manager as any, "runPendingInlineCompactionInLoop").mockRejectedValueOnce(
+      new Error("boom"),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(consoleError).toHaveBeenCalledOnce();
+    expect(consoleError.mock.calls[0]?.[0]).toContain(
+      "[compaction] inner-loop hook failed for session",
+    );
   });
 });
 

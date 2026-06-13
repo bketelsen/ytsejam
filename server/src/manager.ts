@@ -255,6 +255,44 @@ export class AgentManager {
       ),
     );
 
+    // Inner-loop proactive compaction: fires once per turn before the LLM call.
+    // Uses pi-agent-core's pure compaction functions (via runInlineCompactionInLoop)
+    // to bypass harness.compact()'s phase==="idle" guard. Issue #70 PR 2.
+    //
+    // Blanket try/catch is MANDATORY: hook errors propagate via normalizeHookError
+    // and abort the autonomous run. Any failure must degrade to "preserve original
+    // context, fall back to reactive backstop at agent_end."
+    harness.on("context", async (event) => {
+      try {
+        // Kill-switch: compaction disabled at boot
+        if (!opened.compaction) return undefined;
+        // Cheap no-op: nothing pending → don't even fetch the branch
+        if (!opened.compaction.pendingCompaction) return undefined;
+        // Fetch the current branch (the messages pi would send to the LLM)
+        const branchEntries = await opened.session.getBranch();
+        const result = await this.runPendingInlineCompactionInLoop(
+          opened,
+          branchEntries,
+          "inner_loop",
+        );
+        if (result.ok && result.newMessages) {
+          return { messages: result.newMessages };
+        }
+        if (result.surrendered) {
+          return {
+            messages: [...event.messages, buildSurrenderAgentMessage(opened, 0)],
+          };
+        }
+        return undefined;
+      } catch (err) {
+        console.error(
+          `[compaction] inner-loop hook failed for session ${opened.metadata.id}:`,
+          err,
+        );
+        return undefined;
+      }
+    });
+
     // Compaction wiring (no-op if YTSEJAM_COMPACTION_ENABLED=false at boot)
     if (compactionEnabled()) {
       opened.compaction = {
