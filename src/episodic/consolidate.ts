@@ -94,6 +94,9 @@ export async function consolidate(
   const cutoff = Date.parse(now) - config.olderThanDays * 24 * 60 * 60 * 1000;
   const bySession = new Map<string, EpisodicRecord[]>();
   for (const r of store.active()) {
+    // Only conversational turns fold. Consolidated summaries are already
+    // folded; observations (SEAM 4) are deliberate, externally authored
+    // notes — they are never consolidated regardless of retention.
     if (r.kind !== "turn") continue;
     if (Date.parse(r.timestamp) > cutoff) continue;
     if (retention(r, now, decay) >= config.retentionFloor) continue;

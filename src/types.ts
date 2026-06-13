@@ -298,7 +298,13 @@ export type RedactionSelector =
   | { recordId: string }
   | { sessionId: string }
   | { entity: string }
-  | { pattern: string };
+  | { pattern: string }
+  /** Records whose `origin` starts with this prefix (SEAM 5) — e.g.
+   *  "cog:personal/observations.md" for a file-level cascade, or
+   *  "cog:personal/" for a whole domain. Extracted facts cascade through
+   *  the existing source path (an observation's fact source carries the
+   *  same origin as its sessionId). */
+  | { originPrefix: string };
 
 export interface RedactionResult {
   episodicRedacted: number;
@@ -314,7 +320,7 @@ export interface RedactionResult {
  */
 export interface RedactionEvent {
   at: string;
-  selector: { type: "recordId" | "sessionId" | "entity" | "pattern"; ref: string };
+  selector: { type: "recordId" | "sessionId" | "entity" | "pattern" | "originPrefix"; ref: string };
   result: RedactionResult;
 }
 

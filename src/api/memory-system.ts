@@ -531,6 +531,9 @@ export class MemorySystem {
       const norm = selector.entity.toLowerCase();
       return records.filter((r) => r.text.toLowerCase().includes(norm));
     }
+    if ("originPrefix" in selector) {
+      return records.filter((r) => r.origin?.startsWith(selector.originPrefix));
+    }
     const re = new RegExp(selector.pattern, "i");
     return records.filter((r) => re.test(r.text));
   }
@@ -560,5 +563,8 @@ function sanitizeSelector(selector: RedactionSelector): RedactionEvent["selector
   if ("recordId" in selector) return { type: "recordId", ref: selector.recordId };
   if ("sessionId" in selector) return { type: "sessionId", ref: selector.sessionId };
   if ("entity" in selector) return { type: "entity", ref: digest(selector.entity.toLowerCase()) };
+  // An origin prefix is a file/domain pointer, not the forgotten content —
+  // safe to keep verbatim, like recordId/sessionId.
+  if ("originPrefix" in selector) return { type: "originPrefix", ref: selector.originPrefix };
   return { type: "pattern", ref: digest(selector.pattern) };
 }

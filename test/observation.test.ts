@@ -78,3 +78,51 @@ describe("recordObservation (SEAM 4)", () => {
     mem.close();
   });
 });
+
+describe("observation redaction + consolidation exemption (SEAM 5)", () => {
+  it("originPrefix redaction tombstones observations and cascades to their facts", async () => {
+    const mem = openMem();
+    await mem.recordObservation({
+      text: "I work at Initech.",
+      timestamp: "2026-05-01T00:00:00.000Z",
+      origin: "cog:personal/observations.md#2026-05-01:aaa111",
+    });
+    await mem.recordObservation({
+      text: "ytsejam deploy moved to forgejo.",
+      timestamp: "2026-05-02T00:00:00.000Z",
+      origin: "cog:projects/ytsejam/dev-log.md#2026-05-02:bbb222",
+    });
+
+    const res = await mem.redact({ originPrefix: "cog:personal/" });
+    expect(res.episodicRedacted).toBe(1);
+    expect(res.factsRedacted).toBeGreaterThanOrEqual(1); // works_at cascaded
+
+    // The personal observation and its fact are gone; the ytsejam one survives.
+    const { items } = await mem.retrieve("where do I work", { dryRun: true });
+    expect(items.every((i) => !i.record.text.includes("Initech"))).toBe(true);
+    expect(mem.listFacts().some((f) => f.predicate === "works_at" && f.state === "active")).toBe(false);
+    expect(mem.listEpisodic().some((r) => r.text.includes("forgejo"))).toBe(true);
+    mem.close();
+  });
+
+  it("the audit trail keeps the origin prefix verbatim (a pointer, not content)", async () => {
+    const mem = openMem();
+    await mem.recordObservation({ text: "note", timestamp: "2026-05-01T00:00:00.000Z", origin: "cog:work/x.md#d:1" });
+    await mem.redact({ originPrefix: "cog:work/" });
+    const last = mem.auditTrail().at(-1)!;
+    expect(last.selector).toEqual({ type: "originPrefix", ref: "cog:work/" });
+    mem.close();
+  });
+
+  it("consolidation never folds observation records (SEAM 5)", async () => {
+    const mem = openMem();
+    // A long-decayed observation: old timestamp, but slow half-life keeps it
+    // alive; even if it dipped below the floor, kind!=="turn" exempts it.
+    await mem.recordObservation({ text: "ancient deliberate note", timestamp: "2022-01-01T00:00:00.000Z" });
+    const { created, folded } = await mem.consolidate();
+    expect(created).toBe(0);
+    expect(folded).toBe(0);
+    expect(mem.listEpisodic().some((r) => r.kind === "observation" && r.state === "active")).toBe(true);
+    mem.close();
+  });
+});
