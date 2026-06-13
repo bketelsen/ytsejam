@@ -90,57 +90,76 @@ git commit -m "feat(server): add GET /api/memory/health endpoint"
 
 ## Task 2: Web — `HealthIcon` component
 
+**Test convention note:** the web project has NO vitest / @testing-library / jsdom. Tests run via
+`node test/run.mjs` (node's native test runner, `.test.mjs` files) and use **source-text regex
+audits**, not rendered-DOM tests. The model is `web/test/compaction-pill.test.mjs` — it reads
+component source files with `readFileSync` and asserts shape with `assert.match`. We MUST match
+this convention; do not add vitest or testing-library devDeps. Layout/rendering correctness is
+verified by the manual smoke in Task 4 (cog pattern: "build-green + source-audit + no-layout-shift
+CSS proof are necessary-not-sufficient; complete requires a human eye on the real device").
+
 **Files:**
 - Create: `web/src/components/HealthIcon.tsx`
-- Test: `web/src/components/HealthIcon.test.tsx` (create)
+- Test: `web/test/health-icon.test.mjs` (create)
+- Modify: `web/test/run.mjs` (add `import "./health-icon.test.mjs";`)
 
 ### Step 1: Write the failing test
 
-```tsx
-import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
-import { HealthIcon } from "./HealthIcon";
+```js
+// web/test/health-icon.test.mjs
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
 
-describe("HealthIcon", () => {
-  it("renders a Plug icon for kind='ws'", () => {
-    render(<HealthIcon kind="ws" state="ok" title="WS healthy" />);
-    const el = screen.getByRole("status");
-    expect(el.querySelector("svg")).toBeTruthy();
-    expect(el.getAttribute("data-state")).toBe("ok");
-    expect(el.getAttribute("aria-label")).toBe("WS healthy");
-    expect(el.getAttribute("title")).toBe("WS healthy");
-  });
+const root = new URL("..", import.meta.url).pathname;
+const src = readFileSync(join(root, "src/components/HealthIcon.tsx"), "utf8");
 
-  it("renders a Brain icon for kind='ltm'", () => {
-    render(<HealthIcon kind="ltm" state="bad" title="LTM down" />);
-    const el = screen.getByRole("status");
-    expect(el.querySelector("svg")).toBeTruthy();
-    expect(el.getAttribute("data-state")).toBe("bad");
-  });
+test("HealthIcon exports a HealthState union with unknown | ok | bad", () => {
+  assert.match(src, /export\s+type\s+HealthState\s*=\s*["']unknown["']\s*\|\s*["']ok["']\s*\|\s*["']bad["']/);
+});
 
-  it.each([
-    ["unknown", "text-muted-foreground"],
-    ["ok",      "text-success"],
-    ["bad",     "text-destructive"],
-  ] as const)("applies %s color class", (state, cls) => {
-    render(<HealthIcon kind="ws" state={state} title="t" />);
-    expect(screen.getByRole("status").className).toContain(cls);
-  });
+test("HealthIcon imports Plug and Brain from lucide-react", () => {
+  assert.match(src, /import\s*\{[^}]*\bPlug\b[^}]*\}\s*from\s*["']lucide-react["']/);
+  assert.match(src, /import\s*\{[^}]*\bBrain\b[^}]*\}\s*from\s*["']lucide-react["']/);
+});
+
+test("HealthIcon maps states to color classes (unknown → muted-foreground, ok → success, bad → destructive)", () => {
+  assert.match(src, /unknown:\s*["']text-muted-foreground["']/);
+  assert.match(src, /ok:\s*["']text-success["']/);
+  assert.match(src, /bad:\s*["']text-destructive["']/);
+});
+
+test("HealthIcon picks the icon by kind (ws → Plug, ltm → Brain)", () => {
+  assert.match(src, /ws:\s*Plug/);
+  assert.match(src, /ltm:\s*Brain/);
+});
+
+test("HealthIcon renders role='status' with title, aria-label, and data-state from props", () => {
+  assert.match(src, /role=\{?["']status["']/);
+  assert.match(src, /title=\{title\}/);
+  assert.match(src, /aria-label=\{title\}/);
+  assert.match(src, /data-state=\{state\}/);
+});
+
+test("HealthIcon uses border-current so the ring color follows the text-* class", () => {
+  assert.match(src, /border\s+border-current/);
+});
+
+test("HealthIcon accepts kind, state, title props with the expected types", () => {
+  assert.match(src, /kind:\s*["']ws["']\s*\|\s*["']ltm["']/);
+  assert.match(src, /state:\s*HealthState/);
+  assert.match(src, /title:\s*string/);
 });
 ```
-
-If `text-success` is not a valid Tailwind class in this project (check
-`web/src/index.css` + `tailwind.config.*` if present), substitute the actual green token used
-by `compacting…` pill (`text-warning` is in use, suggesting `text-success` likely exists; if
-not, use `text-emerald-500` and align the test).
 
 ### Step 2: Run test to verify it fails
 
 ```
-cd web && env -u NODE_ENV npx vitest run src/components/HealthIcon.test.tsx
+cd web && env -u NODE_ENV node test/health-icon.test.mjs
 ```
 
-Expected: module-not-found.
+Expected: ENOENT on `src/components/HealthIcon.tsx`.
 
 ### Step 3: Implement the component
 
@@ -177,10 +196,29 @@ export function HealthIcon({
 }
 ```
 
-### Step 4: Run test to verify it passes
+(Verified during planning: `text-success`, `text-destructive`, and `text-muted-foreground` are
+all valid Tailwind utilities in this project — `--success` is defined in `web/src/index.css`,
+and `text-success` is already used at `web/src/components/TaskCard.tsx`.)
+
+### Step 4: Wire into the test runner + verify it passes
+
+Add the new test file to `web/test/run.mjs`:
+
+```js
+// add to the import block in run.mjs, alphabetically (between compaction-pill and message-...):
+import "./health-icon.test.mjs";
+```
+
+Run targeted:
 
 ```
-cd web && env -u NODE_ENV npx vitest run src/components/HealthIcon.test.tsx
+cd web && env -u NODE_ENV node test/health-icon.test.mjs
+```
+
+Then the full suite (the gate runs this):
+
+```
+cd web && env -u NODE_ENV node test/run.mjs
 ```
 
 All cases pass.
@@ -188,13 +226,19 @@ All cases pass.
 ### Step 5: Commit
 
 ```bash
-git add web/src/components/HealthIcon.tsx web/src/components/HealthIcon.test.tsx
+git add web/src/components/HealthIcon.tsx web/test/health-icon.test.mjs web/test/run.mjs
 git commit -m "feat(web): add HealthIcon component (Plug/Brain, tri-state outline)"
 ```
 
 ---
 
-## Task 3: Web — wire state into `useApp` and render in `App.tsx`
+## Task 3: Web — wire state into `useApp`, render in `App.tsx`, lift `Chat` header
+
+**Test convention reminder:** same as Task 2 — source-text audits via `node:test`. No vitest,
+no rendered-DOM tests, no `renderHook`. We assert on the SHAPE of the code (presence of state,
+the polling effect, type updates, JSX wiring). The 10s-poll → tri-state branch logic gets
+verified by extracting the constants + asserting the relevant call sites; behavioral correctness
+is confirmed by the manual smoke in Task 4.
 
 **Files:**
 - Modify: `web/src/useApp.ts` (rename `connected` → `wsState`; add `ltmState` + `ltmLastError`
@@ -203,156 +247,126 @@ git commit -m "feat(web): add HealthIcon component (Plug/Brain, tri-state outlin
   boolean) => void`)
 - Modify: `web/src/lib/types.ts` (add `LtmHealth` type alias mirroring
   `server/src/memory/types.ts`'s `HealthResult["ltm"]`)
-- Modify: `web/src/components/Chat.tsx` (lift `<header>` out of `md:hidden`; add `ml-auto`
-  icon strip slot)
+- Modify: `web/src/lib/api.ts` (add `getMemoryHealth()` to the `client` object so the polling
+  effect uses the existing typed-fetch helper)
+- Modify: `web/src/components/Chat.tsx` (lift `<header>` out of `md:hidden`; add `headerRight`
+  prop slot)
 - Modify: `web/src/App.tsx` (build `wsTitle` / `ltmTitle`; pass icons into the new slot)
-- Test: `web/src/useApp.health.test.ts` (create)
+- Create: `web/test/health-status.test.mjs`
+- Modify: `web/test/run.mjs` (add `import "./health-status.test.mjs";`)
 
-### Step 1: Write the failing test (`useApp.health.test.ts`)
+### Step 1: Write the failing test
 
-Use `vitest` + `@testing-library/react`'s `renderHook` with timer mocks:
+```js
+// web/test/health-status.test.mjs
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
 
-```ts
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
-import { useApp } from "./useApp";
+const root = new URL("..", import.meta.url).pathname;
+const useApp = readFileSync(join(root, "src/useApp.ts"), "utf8");
+const ws     = readFileSync(join(root, "src/lib/ws.ts"), "utf8");
+const types  = readFileSync(join(root, "src/lib/types.ts"), "utf8");
+const api    = readFileSync(join(root, "src/lib/api.ts"), "utf8");
+const chat   = readFileSync(join(root, "src/components/Chat.tsx"), "utf8");
+const app    = readFileSync(join(root, "src/App.tsx"), "utf8");
 
-describe("useApp ltm health polling", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    // Stub other useApp dependencies (sessions fetch, ws) per existing test patterns —
-    // copy from any pre-existing useApp test or App test, otherwise stub fetch globally.
-  });
-  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+test("types.ts exports LtmHealth with reachable, consecutiveFailures, and optional lastError", () => {
+  assert.match(types, /export\s+interface\s+LtmHealth\s*\{/);
+  assert.match(types, /reachable:\s*boolean/);
+  assert.match(types, /consecutiveFailures:\s*number/);
+  assert.match(types, /lastError\?:\s*\{\s*message:\s*string;\s*at:\s*string;?\s*\}/);
+});
 
-  it("starts at 'unknown'", () => {
-    const { result } = renderHook(() => useApp());
-    expect(result.current.ltmState).toBe("unknown");
-    expect(result.current.wsState).toBe("unknown");
-  });
+test("api.ts adds client.getMemoryHealth returning { ltm: LtmHealth | null }", () => {
+  assert.match(api, /getMemoryHealth\s*:\s*\(\s*\)\s*=>/);
+  assert.match(api, /\/api\/memory\/health/);
+  assert.match(api, /\{\s*ltm:\s*LtmHealth\s*\|\s*null\s*\}/);
+});
 
-  it("flips to 'ok' on healthy poll", async () => {
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/api/memory/health"))
-        return new Response(JSON.stringify({ ltm: { reachable: true, consecutiveFailures: 0 } }), { status: 200 });
-      return new Response("[]", { status: 200 });
-    }) as never;
-    const { result } = renderHook(() => useApp());
-    await waitFor(() => expect(result.current.ltmState).toBe("ok"));
-  });
+test("ws.ts onStatus signature is unchanged (still passes boolean)", () => {
+  assert.match(ws, /onStatus:\s*\(\s*connected:\s*boolean\s*\)\s*=>\s*void/);
+});
 
-  it("flips to 'bad' on consecutiveFailures >= 3", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ ltm: { reachable: true, consecutiveFailures: 3 } }), { status: 200 })
-    ) as never;
-    const { result } = renderHook(() => useApp());
-    await waitFor(() => expect(result.current.ltmState).toBe("bad"));
-  });
+test("useApp declares the HealthState union and the LTM threshold + poll interval constants", () => {
+  assert.match(useApp, /HealthState\s*=\s*["']unknown["']\s*\|\s*["']ok["']\s*\|\s*["']bad["']/);
+  assert.match(useApp, /const\s+LTM_UNHEALTHY_THRESHOLD\s*=\s*3/);
+  assert.match(useApp, /const\s+LTM_POLL_MS\s*=\s*10_?000/);
+});
 
-  it("flips to 'bad' on reachable=false", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ ltm: { reachable: false, consecutiveFailures: 0 } }), { status: 200 })
-    ) as never;
-    const { result } = renderHook(() => useApp());
-    await waitFor(() => expect(result.current.ltmState).toBe("bad"));
-  });
+test("useApp tracks wsState (replaces the old boolean `connected`) and seeds it to 'unknown'", () => {
+  assert.match(useApp, /useState<HealthState>\(["']unknown["']\)/);
+  assert.match(useApp, /setWsState\(c\s*\?\s*["']ok["']\s*:\s*["']bad["']\)/);
+  // The old `setConnected` callback wiring must be gone.
+  assert.doesNotMatch(useApp, /setConnected/);
+});
 
-  it("stays 'unknown' on fetch error", async () => {
-    globalThis.fetch = vi.fn(async () => { throw new Error("network"); }) as never;
-    const { result } = renderHook(() => useApp());
-    await act(async () => { vi.advanceTimersByTime(10_001); });
-    expect(result.current.ltmState).toBe("unknown");
-  });
+test("useApp tracks ltmState + ltmLastError and runs a polling effect", () => {
+  assert.match(useApp, /\[ltmState,\s*setLtmState\]/);
+  assert.match(useApp, /\[ltmLastError,\s*setLtmLastError\]/);
+  // tri-state derivation: reachable=false OR consecutiveFailures >= threshold => bad
+  assert.match(useApp, /!\s*[A-Za-z_$][A-Za-z0-9_$]*\.reachable/);
+  assert.match(useApp, /consecutiveFailures\s*>=\s*LTM_UNHEALTHY_THRESHOLD/);
+  // null branch -> unknown
+  assert.match(useApp, /setLtmState\(["']unknown["']\)/);
+  // poll interval wired up
+  assert.match(useApp, /setInterval\([^,]+,\s*LTM_POLL_MS\)/);
+  // cleanup
+  assert.match(useApp, /clearInterval/);
+});
 
-  it("returns to 'unknown' when ltm is null", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ ltm: null }), { status: 200 })
-    ) as never;
-    const { result } = renderHook(() => useApp());
-    await act(async () => { vi.advanceTimersByTime(10_001); });
-    expect(result.current.ltmState).toBe("unknown");
-  });
+test("useApp return value exposes wsState, ltmState, ltmLastError (and drops `connected`)", () => {
+  // The returned object literal must list the three new fields.
+  assert.match(useApp, /\bwsState\b/);
+  assert.match(useApp, /\bltmState\b/);
+  assert.match(useApp, /\bltmLastError\b/);
+  // The old boolean is gone from the return statement.
+  assert.doesNotMatch(useApp, /^\s*connected,?\s*$/m);
+});
+
+test("Chat declares a headerRight prop and renders it in an always-visible header strip", () => {
+  assert.match(chat, /headerRight\?\:\s*React\.ReactNode/);
+  // The <header> element no longer hides at desktop (md:hidden was removed from <header>).
+  const headerOpen = chat.match(/<header\b[^>]*>/);
+  assert.ok(headerOpen, "Chat must still render a <header>");
+  assert.doesNotMatch(headerOpen[0], /md:hidden/);
+  // Burger button keeps md:hidden so it stays mobile-only.
+  assert.match(
+    chat,
+    /<Button[^>]*onClick=\{onMenuClick\}[^>]*className=["'][^"']*\bmd:hidden\b[^"']*["']/
+  );
+  // headerRight slot rendered ml-auto
+  assert.match(chat, /\{headerRight\s*&&\s*<div\s+className=["'][^"']*\bml-auto\b/);
+});
+
+test("App.tsx renders both HealthIcons and passes them via headerRight", () => {
+  assert.match(app, /import\s*\{\s*HealthIcon\s*\}\s*from\s*["']\.\/components\/HealthIcon["']/);
+  assert.match(app, /<HealthIcon\s+kind=["']ws["']/);
+  assert.match(app, /<HealthIcon\s+kind=["']ltm["']/);
+  assert.match(app, /headerRight=\{/);
+  // Tooltip strings present in App.tsx
+  assert.match(app, /WebSocket:\s*connecting/);
+  assert.match(app, /WebSocket:\s*connected/);
+  assert.match(app, /WebSocket:\s*disconnected/);
+  assert.match(app, /LTM:\s*status unknown/);
+  assert.match(app, /LTM:\s*healthy/);
 });
 ```
-
-If `useApp` does many other side effects on mount that fight the test, stub them at module
-boundary (e.g. mock `./lib/ws`, mock `./lib/api`) — match whatever existing useApp / App
-tests do. Do NOT redesign `useApp` to make it testable; the polling effect should be the only
-new I/O.
 
 ### Step 2: Run test to verify it fails
 
 ```
-cd web && env -u NODE_ENV npx vitest run src/useApp.health.test.ts
+cd web && env -u NODE_ENV node test/health-status.test.mjs
 ```
 
-Expected: `ltmState`/`wsState` undefined on the hook result.
+Expected: most cases fail (none of the new code exists yet); the `ws.ts onStatus` test should
+pass (no change to that file).
 
-### Step 3: Promote `connected` → `wsState` in `useApp`
+### Step 3: Add `LtmHealth` to `web/src/lib/types.ts`
 
-```ts
-// at top of useApp.ts
-export type HealthState = "unknown" | "ok" | "bad";
-
-const LTM_UNHEALTHY_THRESHOLD = 3;
-const LTM_POLL_MS = 10_000;
-
-// inside useApp:
-const [wsState, setWsState] = useState<HealthState>("unknown");
-// ...
-wsRef.current = connectWs({
-  onEvent,
-  onStatus: (c) => setWsState(c ? "ok" : "bad"),
-});
-// (delete the old `connected` useState; nothing reads it)
-```
-
-### Step 4: Add LTM polling effect + lastError
-
-```ts
-const [ltmState, setLtmState] = useState<HealthState>("unknown");
-const [ltmLastError, setLtmLastError] = useState<string | undefined>(undefined);
-
-useEffect(() => {
-  let cancelled = false;
-  async function tick() {
-    try {
-      const r = await api<{ ltm: LtmHealth | null }>("/api/memory/health");
-      if (cancelled) return;
-      if (!r.ltm) { setLtmState("unknown"); setLtmLastError(undefined); return; }
-      const bad = !r.ltm.reachable || r.ltm.consecutiveFailures >= LTM_UNHEALTHY_THRESHOLD;
-      setLtmState(bad ? "bad" : "ok");
-      setLtmLastError(r.ltm.lastError?.message);
-    } catch {
-      if (!cancelled) setLtmState("unknown");
-    }
-  }
-  void tick();
-  const id = setInterval(tick, LTM_POLL_MS);
-  return () => { cancelled = true; clearInterval(id); };
-}, []);
-```
-
-Where `api<T>(url)` is the existing typed-fetch helper in `web/src/lib/api.ts`; use whatever
-function existing useApp code calls for GETs against `/api/...` (it already attaches the
-bearer token).
-
-Add to the return:
-```ts
-return {
-  ...,
-  wsState,
-  ltmState,
-  ltmLastError,
-};
-```
-
-Remove the old `connected` field from the return object.
-
-### Step 5: Add `LtmHealth` type to `web/src/lib/types.ts`
-
-Mirror the server's `HealthResult["ltm"]` shape (copy the field set; do NOT import server
-types — the web build cannot reach `server/`):
+Mirror the server's `HealthResult["ltm"]` shape (copy the field set; do NOT import server types
+— the web build cannot reach `server/`):
 
 ```ts
 export interface LtmHealth {
@@ -367,16 +381,99 @@ export interface LtmHealth {
 }
 ```
 
-### Step 6: Lift the header in `Chat.tsx`
+### Step 4: Add `getMemoryHealth` to `web/src/lib/api.ts`
 
-Remove `md:hidden` from the `<header>`. Add `md:hidden` to the burger button. Add a slot for
-the right-side strip via a new prop `headerRight?: React.ReactNode`:
+The `api<T>(path)` helper is module-private. Add a client method that calls it:
+
+```ts
+import type { ..., LtmHealth } from "./types"; // extend the existing import line
+
+// ... inside `export const client = { ... }`, alongside getPersona / getModels:
+  getMemoryHealth: () => api<{ ltm: LtmHealth | null }>("/api/memory/health"),
+```
+
+### Step 5: Promote `connected` → `wsState` in `web/src/useApp.ts`
+
+At the top of the file (under existing imports):
+
+```ts
+export type HealthState = "unknown" | "ok" | "bad";
+
+const LTM_UNHEALTHY_THRESHOLD = 3;
+const LTM_POLL_MS = 10_000;
+```
+
+Replace the `connected` state hook + WS wiring:
+
+```ts
+// delete: const [connected, setConnected] = useState(false);
+const [wsState, setWsState] = useState<HealthState>("unknown");
+// ...
+wsRef.current = connectWs({
+  onEvent,
+  onStatus: (c) => setWsState(c ? "ok" : "bad"),
+});
+```
+
+### Step 6: Add LTM polling effect + `lastError`
+
+In `useApp`, add the state hooks + effect:
+
+```ts
+const [ltmState, setLtmState] = useState<HealthState>("unknown");
+const [ltmLastError, setLtmLastError] = useState<string | undefined>(undefined);
+
+useEffect(() => {
+  let cancelled = false;
+  async function tick() {
+    try {
+      const r = await client.getMemoryHealth();
+      if (cancelled) return;
+      if (!r.ltm) {
+        setLtmState("unknown");
+        setLtmLastError(undefined);
+        return;
+      }
+      const bad = !r.ltm.reachable || r.ltm.consecutiveFailures >= LTM_UNHEALTHY_THRESHOLD;
+      setLtmState(bad ? "bad" : "ok");
+      setLtmLastError(r.ltm.lastError?.message);
+    } catch {
+      if (!cancelled) setLtmState("unknown");
+    }
+  }
+  void tick();
+  const id = setInterval(tick, LTM_POLL_MS);
+  return () => { cancelled = true; clearInterval(id); };
+}, []);
+```
+
+(`client` is the exported object from `./lib/api`; verify the existing `import { ... } from
+"./lib/api"` in `useApp.ts` already includes `client`, and add it if not.)
+
+Update the returned object literal: drop `connected`, add the three new fields:
+
+```ts
+return {
+  // ... existing fields except `connected`
+  wsState,
+  ltmState,
+  ltmLastError,
+};
+```
+
+If any existing call site reads `app.connected` (grep first — current audit says none does),
+update it; if none exists, the rename is free.
+
+### Step 7: Lift the header in `web/src/components/Chat.tsx`
+
+Today's `<header>` has `md:hidden`. Remove that, and add `md:hidden` to the burger button so it
+stays mobile-only. Add a `headerRight` prop:
 
 ```tsx
-// new prop
+// add to ChatProps:
 headerRight?: React.ReactNode;
 
-// inside the component:
+// in the JSX, replace the existing <header> block with:
 <header className="flex items-center gap-2 border-b border-border px-2 py-1.5">
   <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open sessions"
           className="md:hidden">
@@ -386,12 +483,16 @@ headerRight?: React.ReactNode;
 </header>
 ```
 
-### Step 7: Render icons in `App.tsx`
+(If the existing component doesn't already import `React` for `React.ReactNode`, either add
+`import type { ReactNode } from "react"` and use `ReactNode`, or import `React` — match the
+file's existing style.)
+
+### Step 8: Render the icons in `web/src/App.tsx`
 
 ```tsx
 import { HealthIcon } from "./components/HealthIcon";
 
-// inside Main():
+// inside Main(), build the tooltip strings:
 const wsTitle =
   app.wsState === "unknown" ? "WebSocket: connecting…" :
   app.wsState === "ok"      ? "WebSocket: connected"   :
@@ -401,6 +502,7 @@ const ltmTitle =
   app.ltmState === "ok"      ? "LTM: healthy"        :
                                `LTM: ${app.ltmLastError ?? "unhealthy"}`;
 
+// pass headerRight to <Chat>:
 <Chat
   ...
   headerRight={
@@ -412,20 +514,29 @@ const ltmTitle =
 />
 ```
 
-### Step 8: Run all tests + gate
+### Step 9: Wire the new test into the runner + run the full suite
+
+Add to `web/test/run.mjs`:
+
+```js
+import "./health-status.test.mjs";
+```
+
+Then:
 
 ```
 cd /tmp/feat-92-health-icons && env -u NODE_ENV bash scripts/gate.sh
 ```
 
-Expected: full PASS, including the three new test files.
+Expected: full PASS. The gate log must mention both `health-icon` and `health-status` test
+execution.
 
-### Step 9: Commit
+### Step 10: Commit
 
 ```bash
-git add web/src/useApp.ts web/src/lib/ws.ts web/src/lib/types.ts \
+git add web/src/useApp.ts web/src/lib/types.ts web/src/lib/api.ts \
         web/src/components/Chat.tsx web/src/App.tsx \
-        web/src/useApp.health.test.ts
+        web/test/health-status.test.mjs web/test/run.mjs
 git commit -m "feat(web): surface WS + LTM health icons in chat header"
 ```
 
