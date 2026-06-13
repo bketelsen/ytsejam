@@ -257,11 +257,12 @@ export class SemanticStore {
    * Rehearsal: a dormant fact was recalled by a direct slot question.
    * In-memory count always updates; the log snapshot is appended only at
    * powers of two, mirroring EpisodicStore.bumpAccess — recall counts are a
-   * decay heuristic, not accounting.
+   * decay heuristic, not accounting. Unlike bumpAccess, this does not
+   * advance lastSeenAt — recall is rehearsal, not a fresh user assertion.
    */
   recordRecall(id: string): void {
     const fact = this.facts.get(id);
-    if (!fact || fact.state !== "active") return;
+    if (!fact || fact.state !== "active" || fact.supersededBy) return;
     const updated = { ...fact, recallCount: (fact.recallCount ?? 0) + 1 };
     this.facts.set(id, updated);
     const c = updated.recallCount;

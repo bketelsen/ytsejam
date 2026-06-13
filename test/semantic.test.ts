@@ -285,4 +285,19 @@ describe("recordRecall rehearsal persistence (RECALL 3)", () => {
     const store = SemanticStore.open(tmpDir());
     store.recordRecall("no-such-fact"); // must not throw
   });
+
+  it("is a no-op for a superseded fact (RECALL 3)", () => {
+    const store = SemanticStore.open(tmpDir());
+    // "name" is a single-valued slot: the second ingest supersedes the first.
+    store.ingestTurn(turn("My name is Brian.", { entryId: "e1", timestamp: "2026-01-01T00:00:00.000Z" }));
+    store.ingestTurn(turn("My name is Bob.", { entryId: "e2", timestamp: "2026-02-01T00:00:00.000Z" }));
+
+    const superseded = store.allFacts().find((f) => f.predicate === "name" && f.supersededBy);
+    expect(superseded).toBeDefined();
+
+    const countBefore = superseded!.recallCount ?? 0;
+    store.recordRecall(superseded!.id);
+    const countAfter = store.allFacts().find((f) => f.id === superseded!.id)!.recallCount ?? 0;
+    expect(countAfter).toBe(countBefore);
+  });
 });
