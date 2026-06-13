@@ -35,7 +35,7 @@ function makeDeps(dataDir: string): AppDeps {
       dataDir,
       authToken: "test-token",
       defaultModel: "faux/faux",
-      webDistDir: "/tmp/nonexistent",
+      webDistDir: dataDir,
       generateTitles: false,
       piAuthPath: join(dataDir, "no-auth.json"),
       subagentModel: "faux/faux",
