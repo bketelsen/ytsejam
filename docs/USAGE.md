@@ -194,8 +194,8 @@ ytsejam teaches repeatable workflows — design, develop, review, memory
 maintenance, browser work — without adding server code.
 
 Invoke one explicitly with `/name`, or just describe the task and let
-trigger words route it. This table is the source of truth for installed
-skill descriptions.
+trigger words route it. This table mirrors the installed skill set —
+regenerate it from `~/.ytsejam/data/skills/` when skills change.
 
 ▸ *Skip if you don't care about the skill catalog.*
 
