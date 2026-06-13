@@ -473,125 +473,133 @@ Refs docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md (Task 3)."
 
 ---
 
-## Task 4: `recordObservation()` method on the memory module + `attachLtm()`
+## Task 4: `recordObservation()` + `attachLtm()` on the memory namespace
 
 **Files:**
-- Modify: `server/src/memory/index.ts` (add methods, ~50 LOC)
-- Modify: `server/src/memory/types.ts` if a new option type is needed
+- Modify: `server/src/memory/index.ts` (add 2 module-level exports + state)
 - Test: `server/test/memory/record-observation.test.ts` (new)
 
 ### Step 1: Write the failing tests
 
+Tests use the existing namespace-style memory module directly. Test setup configures the memory root via `process.env.YTSEJAM_MEMORY_DIR` (matching `server/test/memory/auto-commit.test.ts`) and initializes git so the store's auto-commit path is safe. There is no `openMemory { dataDir }` factory or instance to close; `attachLtm(null)` is the detach/reset pattern for module-level bridge state.
+
 ```ts
-// server/test/memory/record-observation.test.ts
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { MemorySystem } from "ltm";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openMemory } from "../../src/memory/index.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { MemorySystem } from "ltm";
+import {
+  attachLtm,
+  recordObservation,
+} from "../../src/memory/index.ts";
+
+let memRoot = "";
+let ltmDir = "";
+
+async function setupMemRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "ytsejam-recobs-"));
+  process.env.YTSEJAM_MEMORY_DIR = root;
+  // git init so auto-commit doesn't crash
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: root });
+  execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: root });
+  return root;
+}
+
+beforeEach(async () => {
+  memRoot = await setupMemRoot();
+  ltmDir = await mkdtemp(join(tmpdir(), "ltm-recobs-"));
+});
+
+afterEach(async () => {
+  attachLtm(null);
+  delete process.env.YTSEJAM_MEMORY_DIR;
+  if (memRoot) await rm(memRoot, { recursive: true, force: true });
+  if (ltmDir) await rm(ltmDir, { recursive: true, force: true });
+});
 
 describe("memory.recordObservation", () => {
-  let dataDir: string;
-  let ltmDir: string;
-
-  beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "memory-recobs-"));
-    ltmDir = await mkdtemp(join(tmpdir(), "ltm-recobs-"));
-  });
-  afterEach(async () => {
-    await rm(dataDir, { recursive: true, force: true });
-    await rm(ltmDir, { recursive: true, force: true });
-  });
-
-  it("appends the formatted line to <domain>/observations.md", async () => {
-    const memory = await openMemory({ dataDir });
-    const ltm = await MemorySystem.open({ storeDir: ltmDir });
-    memory.attachLtm(ltm);
+  it("appends the formatted line to <domain>/observations.md and mirrors to LTM", async () => {
+    const ltm = MemorySystem.open({ storeDir: ltmDir });
+    attachLtm(ltm);
     try {
-      const r = await memory.recordObservation({
+      const r = await recordObservation({
         domainPath: "personal",
         text: "feeling great",
         tags: ["mood"],
         timestamp: new Date("2026-06-13T12:00:00Z"),
       });
-      expect(r.cog.ok).toBe(true);
+      expect(r.cog).toEqual({ ok: true, line: "- 2026-06-13 [mood]: feeling great" });
       expect(r.ltm).toEqual({ ok: true });
-      const file = await readFile(join(dataDir, "personal", "observations.md"), "utf8");
+      const file = await readFile(join(memRoot, "personal", "observations.md"), "utf8");
       expect(file).toContain("- 2026-06-13 [mood]: feeling great");
     } finally {
-      memory.close();
       ltm.close();
     }
   });
 
   it("rejects untagged observations (tags mandatory per cog SSOT)", async () => {
-    const memory = await openMemory({ dataDir });
-    try {
-      await expect(
-        memory.recordObservation({ domainPath: "personal", text: "needs tags" }),
-      ).rejects.toThrow(/tags are mandatory/);
-    } finally {
-      memory.close();
-    }
+    await expect(
+      recordObservation({ domainPath: "personal", text: "needs tags" } as unknown as Parameters<typeof recordObservation>[0]),
+    ).rejects.toThrow(/tags are mandatory/);
+  });
+
+  it("rejects empty tags array (tags mandatory per cog SSOT)", async () => {
+    await expect(
+      recordObservation({ domainPath: "personal", text: "needs tags", tags: [] }),
+    ).rejects.toThrow(/tags are mandatory/);
   });
 
   it("defaults timestamp to now when omitted", async () => {
-    const memory = await openMemory({ dataDir });
-    const ltm = await MemorySystem.open({ storeDir: ltmDir });
-    memory.attachLtm(ltm);
+    const ltm = MemorySystem.open({ storeDir: ltmDir });
+    attachLtm(ltm);
     try {
       const today = new Date().toISOString().slice(0, 10);
-      await memory.recordObservation({
+      await recordObservation({
         domainPath: "personal",
         text: "now-ish",
         tags: ["time"],
       });
-      const file = await readFile(join(dataDir, "personal", "observations.md"), "utf8");
-      expect(file).toContain(`- ${today}`);
+      const file = await readFile(join(memRoot, "personal", "observations.md"), "utf8");
+      expect(file).toContain(`- ${today} [time]: now-ish`);
     } finally {
-      memory.close();
       ltm.close();
     }
   });
 
   it("cog write succeeds even when LTM throws", async () => {
-    const memory = await openMemory({ dataDir });
     const fakeLtm = {
       recordObservation: async () => {
         throw new Error("ltm exploded");
       },
     } as unknown as MemorySystem;
-    memory.attachLtm(fakeLtm);
-    try {
-      const r = await memory.recordObservation({
-        domainPath: "personal",
-        text: "still gets written",
-        tags: ["resilience"],
-      });
-      expect(r.cog.ok).toBe(true);
-      expect(r.ltm.ok).toBe(false);
-      const file = await readFile(join(dataDir, "personal", "observations.md"), "utf8");
-      expect(file).toContain("still gets written");
-    } finally {
-      memory.close();
+    attachLtm(fakeLtm);
+    const r = await recordObservation({
+      domainPath: "personal",
+      text: "still gets written",
+      tags: ["resilience"],
+    });
+    expect(r.cog.ok).toBe(true);
+    expect(r.ltm.ok).toBe(false);
+    if (!r.ltm.ok) {
+      expect(r.ltm.error).toBeInstanceOf(Error);
+      expect(r.ltm.error.message).toBe("ltm exploded");
     }
+    const file = await readFile(join(memRoot, "personal", "observations.md"), "utf8");
+    expect(file).toContain("still gets written");
   });
 
   it("works without attachLtm (cog-only mode)", async () => {
-    const memory = await openMemory({ dataDir });
-    try {
-      const r = await memory.recordObservation({
-        domainPath: "personal",
-        text: "cog only",
-        tags: ["cog"],
-      });
-      expect(r.cog.ok).toBe(true);
-      // ltm reports a clean "not configured" shape, not an error
-      expect(r.ltm).toEqual({ ok: true, skipped: "ltm-not-attached" });
-    } finally {
-      memory.close();
-    }
+    const r = await recordObservation({
+      domainPath: "personal",
+      text: "cog only",
+      tags: ["cog"],
+    });
+    expect(r.cog.ok).toBe(true);
+    expect(r.ltm).toEqual({ ok: true, skipped: "ltm-not-attached" });
   });
 });
 ```
@@ -599,11 +607,11 @@ describe("memory.recordObservation", () => {
 ### Step 2: Run tests to verify they fail
 
 Run: `env -u NODE_ENV npm test --workspace server -- record-observation`
-Expected: FAIL — `memory.attachLtm` / `memory.recordObservation` undefined.
+Expected: FAIL — `attachLtm` / `recordObservation` not exported from `index.ts`.
 
-### Step 3: Implement on the memory module
+### Step 3: Implement on the memory namespace
 
-In `server/src/memory/index.ts`, add (after the existing `append()`):
+In `server/src/memory/index.ts`, add imports near the top with the other imports, then add the module-level bridge state and exports after the existing `append()` function. `tags` is required at the TypeScript type level; the runtime throw is defensive for untyped callers and mirrors the cog SSOT validator/parser invariant. The implementation calls `store.append(...)` directly to write `<domainPath>/observations.md`.
 
 ```ts
 import type { MemorySystem } from "ltm";
@@ -611,18 +619,32 @@ import {
   parseObservationLine,
   computeOrigin,
   mirrorToLtm,
-} from "./bridge/ltm-observer.js";
+} from "./bridge/ltm-observer.ts";
+
+// -- ltm bridge -----------------------------------------------------------
 
 let attachedLtm: MemorySystem | null = null;
 
+/**
+ * Attach (or detach via null) an LTM MemorySystem to receive mirrored
+ * observation writes. Module-level state is intentional: the memory
+ * namespace itself is process-global (paths.ts configures via
+ * YTSEJAM_MEMORY_DIR env), and attachLtm follows that pattern.
+ */
 export function attachLtm(ltm: MemorySystem | null): void {
   attachedLtm = ltm;
 }
 
+/**
+ * First-class observation recording: formats the canonical line,
+ * appends to <domainPath>/observations.md (SSOT), then best-effort
+ * mirrors to attached LTM. Cog write succeeds even when LTM throws
+ * or is not attached.
+ */
 export async function recordObservation(args: {
   domainPath: string;
   text: string;
-  tags?: string[];
+  tags: string[];
   timestamp?: Date;
 }): Promise<{
   cog: { ok: true; line: string };
@@ -631,17 +653,17 @@ export async function recordObservation(args: {
     | { ok: true; skipped: "ltm-not-attached" }
     | { ok: false; error: Error };
 }> {
-  const ts = args.timestamp ?? new Date();
-  const date = ts.toISOString().slice(0, 10);
   if (!args.tags || args.tags.length === 0) {
     throw new Error(
       "recordObservation: tags are mandatory (cog SSOT validator requires [...]). Pass at least one tag.",
     );
   }
+  const ts = args.timestamp ?? new Date();
+  const date = ts.toISOString().slice(0, 10);
   const line = `- ${date} [${args.tags.join(",")}]: ${args.text}`;
 
   const path = `${args.domainPath}/observations.md`;
-  await append(path, line + "\n");
+  await store.append(path, line + "\n");
   const cog = { ok: true as const, line };
 
   if (!attachedLtm) {
@@ -649,12 +671,15 @@ export async function recordObservation(args: {
   }
   const parsed = parseObservationLine(line);
   if (!parsed) {
-    // shouldn't happen since we just formatted it, but defensive
+    // Should be unreachable since we just formatted it ourselves,
+    // but defend rather than crash.
     return {
       cog,
       ltm: {
         ok: false,
-        error: new Error(`internal: failed to re-parse own formatted line: ${line}`),
+        error: new Error(
+          `internal: failed to re-parse own formatted line: ${line}`,
+        ),
       },
     };
   }
@@ -670,14 +695,16 @@ export async function recordObservation(args: {
 ```
 
 Implementer notes:
-- Module-level `attachedLtm` keeps the bridge wiring out of every caller. If the memory module is class-based instead of namespace-style, attach to the class instance.
-- `append()` is the existing function — reuse, don't bypass.
+- `server/src/memory/index.ts` is namespace-style, not class/instance-based; do not introduce `openMemory { dataDir }` or `memory.close()`.
+- Module-level `attachedLtm` is intentional and consistent with the rest of the memory namespace, which is process-global and configured via `YTSEJAM_MEMORY_DIR` in `store/paths.ts`.
+- Use `attachLtm(null)` to detach/reset LTM bridge state between tests or during shutdown.
+- `tags: string[]` is required for typed callers. Keep the runtime guard anyway for JavaScript/untyped callers and casted tests.
 - The `skipped` shape (when no LTM attached) lets the reconciler / tests distinguish "no LTM" from "LTM said yes" without an error.
 
 ### Step 4: Run tests to verify they pass
 
 Run: `env -u NODE_ENV npm test --workspace server -- record-observation`
-Expected: PASS (5/5).
+Expected: PASS (6/6).
 
 ### Step 5: Run full gate
 
@@ -689,11 +716,24 @@ Expected: PASSED.
 ```bash
 git add server/src/memory/index.ts \
         server/test/memory/record-observation.test.ts
-git commit -m "feat(memory): first-class recordObservation() API
+git commit -m "feat(memory): first-class recordObservation() + attachLtm() API
 
-Formats the canonical line, appends to <domain>/observations.md (SSOT),
-then best-effort mirrors to LTM via the bridge. Cog write succeeds even
-when LTM throws or is not attached. attachLtm() wires the bridge.
+Module-level recordObservation formats the canonical line, appends to
+<domainPath>/observations.md (cog SSOT), then best-effort mirrors to
+attached LTM. Cog write succeeds even when LTM throws or is not
+attached.
+
+attachLtm(ltm) wires the bridge; attachLtm(null) detaches.
+Module-level state matches the rest of the memory namespace, which is
+itself process-global (configured via YTSEJAM_MEMORY_DIR env per
+store/paths.ts).
+
+Throws on empty tags at runtime to mirror Task 1's parser invariant
+and the cog SSOT validator in store/append.ts:7.
+
+Tests cover: real LTM mirror round-trip, untagged-rejects, empty-tags-
+rejects, default-now timestamp, LTM-throws-cog-still-writes, no-LTM-
+attached cog-only mode. 6 tests.
 
 Refs docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md (Task 4)."
 ```
@@ -1173,7 +1213,7 @@ Refs docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md (Task 6)."
 ## Task 7: Lifecycle wiring on server boot
 
 **Files:**
-- Modify: `server/src/index.ts` (or whichever file is the server entrypoint — discover via `grep -rE "openMemory" server/src/`)
+- Modify: `server/src/index.ts` (or whichever file is the server entrypoint — discover via `grep -rE "memoryRoot|YTSEJAM_MEMORY_DIR|attachLtm" server/src/`)
 - Modify: `server/src/memory/index.ts` (export `getReconciler()` for the health endpoint, optional)
 
 ### Step 1: Audit the boot path
@@ -1181,15 +1221,15 @@ Refs docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md (Task 6)."
 Run:
 
 ```bash
-grep -rnE "openMemory|memory\.open" server/src/
+grep -rnE "memoryRoot|YTSEJAM_MEMORY_DIR|attachLtm" server/src/
 grep -rnE "createServer|listen\(" server/src/
 ```
 
-Identify: (a) where `openMemory()` is called, (b) where the server starts listening, (c) where shutdown handlers register.
+Identify: (a) where the memory namespace/dataDir is configured, (b) where the server starts listening, (c) where shutdown handlers register.
 
 ### Step 2: Add LTM open + reconciler construction + attach
 
-In the boot file, after `const memory = await openMemory(...)`:
+In the boot file, after the memory namespace/dataDir is configured:
 
 ```ts
 import { MemorySystem } from "ltm";
@@ -1217,7 +1257,7 @@ Wherever existing `SIGTERM` / `SIGINT` handlers live, add (in order — reconcil
 
 ```ts
 await reconciler.stop();
-memory.close();
+memory.attachLtm(null);
 ltm.close();
 ```
 
@@ -1227,7 +1267,7 @@ If there's no existing handler, register one:
 const shutdown = async (signal: string) => {
   console.info(`[server] ${signal} received, shutting down`);
   await reconciler.stop();
-  memory.close();
+  memory.attachLtm(null);
   ltm.close();
   process.exit(0);
 };
@@ -1264,7 +1304,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LtmReconciler } from "../../src/memory/bridge/ltm-reconciler.js";
-import { openMemory, attachReconciler, health } from "../../src/memory/index.js";
+import * as memory from "../../src/memory/index.js";
 
 describe("server-style memory + reconciler lifecycle", () => {
   let dirs: string[] = [];
@@ -1278,7 +1318,7 @@ describe("server-style memory + reconciler lifecycle", () => {
     const ltmDir = await mkdtemp(join(tmpdir(), "lc-ltm-"));
     dirs.push(dataDir, ltmDir);
 
-    const memory = await openMemory({ dataDir });
+    process.env.YTSEJAM_MEMORY_DIR = dataDir;
     const ltm = await MemorySystem.open({ storeDir: ltmDir });
     const reconciler = new LtmReconciler({
       ltm,
@@ -1286,15 +1326,16 @@ describe("server-style memory + reconciler lifecycle", () => {
       intervalMs: 60_000,
     });
     memory.attachLtm(ltm);
-    attachReconciler(reconciler);
+    memory.attachReconciler(reconciler);
     reconciler.start();
 
-    const h = health();
+    const h = memory.health();
     expect(h.ltm).toMatchObject({ reachable: true });
 
     await reconciler.stop();
-    memory.close();
+    memory.attachLtm(null);
     ltm.close();
+    delete process.env.YTSEJAM_MEMORY_DIR;
   });
 });
 ```
