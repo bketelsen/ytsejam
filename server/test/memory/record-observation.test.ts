@@ -24,6 +24,9 @@ async function setupMemRoot(): Promise<string> {
 }
 
 beforeEach(async () => {
+  attachLtm(null); // belt-and-suspenders: defends against a prior test that
+  // attached + threw before its afterEach ran. Test 6 (cog-only) needs the
+  // module-level state to start null regardless of prior-test cleanliness.
   memRoot = await setupMemRoot();
   ltmDir = await mkdtemp(join(tmpdir(), "ltm-recobs-"));
 });
@@ -58,13 +61,13 @@ describe("memory.recordObservation", () => {
   it("rejects untagged observations (tags mandatory per cog SSOT)", async () => {
     await expect(
       recordObservation({ domainPath: "personal", text: "needs tags" } as unknown as Parameters<typeof recordObservation>[0]),
-    ).rejects.toThrow(/tags are mandatory/);
+    ).rejects.toThrow(/at least one tag/);
   });
 
   it("rejects empty tags array (tags mandatory per cog SSOT)", async () => {
     await expect(
       recordObservation({ domainPath: "personal", text: "needs tags", tags: [] }),
-    ).rejects.toThrow(/tags are mandatory/);
+    ).rejects.toThrow(/at least one tag/);
   });
 
   it("defaults timestamp to now when omitted", async () => {
@@ -114,5 +117,25 @@ describe("memory.recordObservation", () => {
     });
     expect(r.cog.ok).toBe(true);
     expect(r.ltm).toEqual({ ok: true, skipped: "ltm-not-attached" });
+  });
+
+  it("rejects text containing newlines (would silently split into multiple cog lines)", async () => {
+    await expect(
+      recordObservation({
+        domainPath: "personal",
+        text: "line one\n- 2026-06-13 [smuggled]: line two",
+        tags: ["safety"],
+      }),
+    ).rejects.toThrow(/may not contain newlines/);
+  });
+
+  it("rejects text containing a bare CR", async () => {
+    await expect(
+      recordObservation({
+        domainPath: "personal",
+        text: "before\rafter",
+        tags: ["safety"],
+      }),
+    ).rejects.toThrow(/may not contain newlines/);
   });
 });

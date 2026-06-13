@@ -34,6 +34,10 @@ That invariant preserves the "extract to npm package on day N+1" property.
 - `domain/` — manifest loading, controller path validation, domain-id rejection.
 - `consolidated/` — RPC-equivalent envelopes (`sessionBrief`,
   `housekeepingScan`, audits, indexes, and summaries).
+- `bridge/` — cog↔LTM bridge helpers (`ltm-observer.ts`: observation-line
+  parser + content-addressed origin + best-effort `mirrorToLtm`). Used by
+  `recordObservation()` / `attachLtm()` on the public surface to mirror
+  cog observation writes into LTM as `kind: "observation"` records.
 - `server/test/memory/` — memory module tests.
 
 ## Auto-commit cadence

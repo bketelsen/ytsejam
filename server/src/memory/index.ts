@@ -110,8 +110,15 @@ export async function recordObservation(args: {
     | { ok: false; error: Error };
 }> {
   if (!args.tags || args.tags.length === 0) {
+    throw new Error("recordObservation requires at least one tag");
+  }
+  // Reject embedded newlines/CR in text up front. Otherwise a multi-line
+  // text formats as multiple cog observation lines (the SSOT validator
+  // accepts each independently), but the bridge's single-line parser only
+  // sees the first → silent cog/LTM divergence (cog writes N, LTM writes 0).
+  if (/[\r\n]/.test(args.text)) {
     throw new Error(
-      "recordObservation: tags are mandatory (cog SSOT validator requires [...]). Pass at least one tag.",
+      "recordObservation: text may not contain newlines (would split into multiple cog observations)",
     );
   }
   const ts = args.timestamp ?? new Date();
