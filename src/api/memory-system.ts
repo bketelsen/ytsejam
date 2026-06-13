@@ -200,10 +200,12 @@ export class MemorySystem {
     // Slot-aware promotion: profile facts the query addresses surface ahead
     // of episodic items (composeContext puts the profile first anyway, and
     // a slot answer beats a lexical near-miss). Synthetic records — never
-    // persisted, never access-bumped.
+    // persisted. Episodic accessCount is never bumped for facts; stale dormant
+    // facts instead get a rehearsal bump via semantic.recordRecall (below).
     const promoted = promoteFacts(query, profile).map((record): RetrievedMemory => ({
       record,
       score: 1,
+      ...(record.stale ? { stale: true } : {}),
       breakdown: {
         vector: 0,
         lexical: 0,
@@ -221,7 +223,14 @@ export class MemorySystem {
     );
     if (!opts.dryRun) {
       for (const item of items) {
-        if (item.record.kind !== "fact") this.episodic.bumpAccess(item.record.id, now);
+        if (item.record.kind === "fact") {
+          // Dormant facts recalled by a direct slot question count as rehearsal:
+          // bumps recallCount which stretches the fact's decay half-life,
+          // eventually pushing it back above the profile floor.
+          if (item.stale) this.semantic.recordRecall(item.record.fact.id);
+        } else {
+          this.episodic.bumpAccess(item.record.id, now);
+        }
       }
     }
     this.trace(query, k, now, items);

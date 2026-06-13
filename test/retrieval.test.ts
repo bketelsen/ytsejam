@@ -271,4 +271,65 @@ describe("dormant promotion (RECALL 4)", () => {
       expect(out.map((p) => p.fact.predicate)).toContain("works_on");
     }
   });
+
+  it("caps at MAX_PROMOTED with stale picks last", () => {
+    const above = [
+      fact({ kind: "attribute", predicate: "rel_sister", object: "Alice" }),
+      fact({ kind: "attribute", predicate: "rel_dog", object: "Biscuit" }),
+    ];
+    const dormant = [
+      fact({ kind: "attribute", predicate: "lives_in", object: "Boulder" }),
+      fact({ kind: "attribute", predicate: "works_at", object: "Initech" }),
+    ];
+    const out = promoteFacts("Where does my sister live with her dog and where is she employed?", {
+      ...emptyProfile, attributes: above, dormant,
+    });
+    expect(out).toHaveLength(3);
+    expect(out.filter((p) => p.stale)).toHaveLength(1);
+    expect(out[2].stale).toBe(true); // stale fills remaining slots only
+  });
+});
+
+describe("strong-cue recall end to end (RECALL 5)", () => {
+  it("a slot question recalls a dormant fact as stale and rehearses it back above floor", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 24, turnsPerSession: 12, intervalDays: 30, seed: 7 });
+    const mem = MemorySystem.open({
+      storeDir: path.join(work, "store"),
+      now: () => truth.horizonEnd,
+      config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
+    });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+
+    // The sister attribute has decayed below the 0.3 attribute floor at the
+    // 24-month horizon (the medium-band eval condition).
+    const before = mem.profile();
+    expect(before.attributes.some((f) => f.predicate === "rel_sister")).toBe(false);
+    expect(before.dormant.some((f) => f.predicate === "rel_sister")).toBe(true);
+
+    const result = await mem.retrieve("Tell me about my sibling.");
+    const promoted = result.items.find((i) => i.record.kind === "fact" && i.record.fact.predicate === "rel_sister");
+    expect(promoted).toBeDefined();
+    expect(promoted!.stale).toBe(true);
+    expect(promoted!.record.text).toContain("Alice");
+    expect(promoted!.record.text).toContain("(last mentioned");
+
+    // Rehearsal: repeated asks stretch the half-life until it re-crosses the floor.
+    // With strength=0.7, age≈690 days, half-life=180: needs ~5 recalls.
+    // The initial retrieve already fired recall 1; 8 more loops → 9 total → above floor.
+    for (let i = 0; i < 8; i++) await mem.retrieve("Tell me about my sibling.");
+    expect(mem.profile().attributes.some((f) => f.predicate === "rel_sister")).toBe(true);
+    mem.close();
+  });
+
+  it("dryRun never rehearses", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 24, turnsPerSession: 12, intervalDays: 30, seed: 7 });
+    const mem = MemorySystem.open({ storeDir: path.join(work, "store"), now: () => truth.horizonEnd });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+    await mem.retrieve("Tell me about my sibling.", { dryRun: true });
+    const fact = mem.listFacts().find((f) => f.predicate === "rel_sister");
+    expect(fact?.recallCount ?? 0).toBe(0);
+    mem.close();
+  });
 });
