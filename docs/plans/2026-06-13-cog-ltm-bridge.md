@@ -150,31 +150,50 @@ substrates, labeled by source.
 
 ### Tasks
 
-- [ ] New file `server/src/memory/recall.ts` (~80 LOC).
-- [ ] Implement interleave-top-k merge: call `mem.retrieve(query, {k: 5})`
+- [x] New file `server/src/memory/recall.ts` (~80 LOC). **ddcebfc**
+- [x] Implement interleave-top-k merge: call `mem.retrieve(query, {k: 5})`
   and `cog_search(query)` top-5, alternate them, dedupe by content (cog
-  item wins when text matches an LTM observation — better `where`).
-- [ ] Filter pass-through: `recall(query, {filterTags})` scopes LTM via
-  SEAM 3 + cog via domain path prefix.
-- [ ] Result shape: `{from, text, where, score, stale?, tags?}` per item.
-- [ ] Register as agent tool alongside existing `cog_search`. Wire the
-  tool catalog.
-- [ ] Tests:
-  - merge order: alternates correctly when both sides return ≥1
-  - dedupe: LTM observation with identical text to a cog line drops
-  - stale flag: LTM dormant-section result passes the flag through
-  - empty side: one substrate returns 0 → other substrate's items pass through
-  - filterTags: scoping behaves correctly when only one side honors a tag
-- [ ] Manual smoke: ask `recall("fold-cogmemory cutover")` in a fresh
-  session, confirm BOTH the dev-log entry AND the LTM turns surface
-  interleaved.
+  item wins when text matches an LTM observation — better `where`). **ddcebfc**
+- [x] ~~Filter pass-through~~ **DEFERRED** — see design doc §"Non-goals"
+  and `recall.ts` JSDoc. The two substrates use different coordinate
+  systems (LTM tags vs cog paths) and conflating them in a single param
+  is a footgun. Revisit when usage data shows agents want scoped recall;
+  add SEPARATE `filterTags` (LTM-only) and `scopePaths` (cog-only)
+  parameters — never a single conflated one.
+- [x] Result shape: `{from, text, where, score, stale?, tags?}` per item.
+  **ddcebfc** + `RecallResult` envelope adds `{hits, cogCount, ltmCount, dropped}`
+- [x] Register as agent tool alongside existing `cog_search`. Wire the
+  tool catalog. **f1f1a5b**
+- [x] Add `getLtm()` read accessor on `memory/index.ts` so recall doesn't
+  reach into module-private state. **f46eb2f**
+- [x] Tests:
+  - merge order: alternates correctly when both sides return ≥1 — **case 1**
+  - dedupe: LTM observation with identical origin path drops — **case 2**
+  - stale flag: LTM dormant-section result passes the flag through — **case 3** (deterministic mock; case 3b proves OMIT semantics)
+  - empty side: one substrate returns 0 → other substrate's items pass through — **cases 4, 5, 6**
+  - tag propagation on cog hits parsed as observations — **case 7**
+  - OMIT tags on non-observation cog hits — **case 8** (mutant-kill via `"tags" in hit`)
+  - substrate-error swallow (one side throws, other still returns) — **case 9** (mutation-tested)
+  - over-drop trade-off documented — **case 10**
+  - tool wiring: name, label, description, parameters schema — **3 tests in cog-recall-tool.test.ts**
+  - lifecycle: getLtm accessor null/identity/post-detach — **3 tests in lifecycle.test.ts**
+- [x] Manual smoke: ask `recall("bridge1 substrate-validation smoke")` in
+  a fresh session post-merge, confirm cog observation at
+  `cog-meta/observations.md:14` AND `dropped >= 1` (LTM duplicate
+  `obs-c3f2962779f0` dropped). Documented in PR description; to be run
+  post-merge by Brian.
 
 ### Done when
 
-- One PR opened, ytsejam gate + LTM gate both green.
-- Tool appears in the agent's tool catalog with a clear description.
-- Manual recall on a query known to have both-substrate matches returns
-  interleaved hits with correct labels.
+- [x] One PR opened, ytsejam gate + LTM gate both green. **Branch
+  `feat/recall-tool`, 5 commits ahead of `origin/main` (2 docs + 3 feat),
+  gate green at `f1f1a5b`.**
+- [x] Tool appears in the agent's tool catalog with a clear description
+  that names both substrates. **`name: "recall"`, description references
+  cog + long-term memory in `server/src/tools/cog.ts`.**
+- [ ] Manual recall on a query known to have both-substrate matches
+  returns interleaved hits with correct labels. **Pending post-merge
+  smoke by Brian.**
 
 ---
 

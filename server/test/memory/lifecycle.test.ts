@@ -119,3 +119,37 @@ describe("memory + reconciler lifecycle", () => {
     expect("ltm" in h2).toBe(false);
   });
 });
+
+describe("getLtm read accessor", () => {
+  it("returns null when no LTM is attached", () => {
+    // belt-and-suspenders: another test may have left state dirty
+    memory.attachLtm(null);
+    expect(memory.getLtm()).toBeNull();
+  });
+
+  it("returns the attached MemorySystem instance", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "ltm-getltm-"));
+    const ltm = MemorySystem.open({ storeDir });
+    try {
+      memory.attachLtm(ltm);
+      expect(memory.getLtm()).toBe(ltm); // identity, not just equality
+    } finally {
+      memory.attachLtm(null);
+      ltm.close();
+      await rm(storeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null after detach", async () => {
+    const storeDir = await mkdtemp(join(tmpdir(), "ltm-getltm-"));
+    const ltm = MemorySystem.open({ storeDir });
+    try {
+      memory.attachLtm(ltm);
+      memory.attachLtm(null);
+      expect(memory.getLtm()).toBeNull();
+    } finally {
+      ltm.close();
+      await rm(storeDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -181,3 +181,40 @@ writes against that spec.
 
 Cog's DNA is bash + grep + LLM, not a service. Port semantics, not Go LOC. If
 the equivalent Go was 400 lines for one regex sweep, the TypeScript is 40.
+
+## `recall(query)` — unified cross-substrate recall
+
+A single async function that queries BOTH cog full-text search and LTM
+semantic retrieve, normalizing results into one labeled shape and deduping
+by origin.
+
+```ts
+import { recall } from "./recall.ts";
+
+const result = await recall("bridge1 substrate validation");
+// {
+//   hits: [
+//     { from: "cog", text: "...", where: "cog-meta/observations.md:14", score: 1.0, tags: [...] },
+//     { from: "ltm", text: "...", where: "ltm:obs-abc123", score: 0.87 },
+//     ...
+//   ],
+//   cogCount: 3,      // total cog grep matches (before top-5 truncation)
+//   ltmCount: 5,      // LTM items before dedupe
+//   dropped: 2,       // LTM hits dropped on origin path match
+// }
+```
+
+**Ordering:** strict alternation: `cog[0], ltm[0], cog[1], ltm[1], ...`. When
+one substrate runs out, the other's remainder follows. Score is
+informational (cog=1.0, LTM=native retrieve score), NOT used for ordering.
+
+**Dedupe:** origin-based using path prefix. When an LTM record's
+`origin` starts with `cog:<path>` and a cog hit exists at `<path>:<line>`,
+the LTM hit drops. Conservative: this can over-drop when cog+LTM hold
+different content from the same file. Trade-off accepted — see design doc.
+
+**Filter parameter:** intentionally not in this version. See JSDoc on
+`recall.ts` for the deferral rationale.
+
+**Surface:** registered as agent tool `recall` in `createCogTools()`
+(`server/src/tools/cog.ts`).

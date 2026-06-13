@@ -91,6 +91,15 @@ export function attachLtm(ltm: MemorySystem | null): void {
   attachedLtm = ltm;
 }
 
+/**
+ * Read-side accessor for the attached LTM MemorySystem. Returns null when
+ * none is attached. Symmetric with attachLtm; needed by recall() so the
+ * recall module doesn't need access to the module-private attachedLtm.
+ */
+export function getLtm(): MemorySystem | null {
+  return attachedLtm;
+}
+
 // Type-only structural reference to LtmReconciler -- avoids a cycle if
 // memory/index.ts is imported by bridge code in the future.
 type ReconcilerLike = {

@@ -24,6 +24,7 @@ describe("createCogTools", () => {
       "cog_patch",
       "cog_outline",
       "cog_search",
+      "recall",
       "cog_list",
       "cog_move",
       "cog_rpc",
