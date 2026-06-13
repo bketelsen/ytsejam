@@ -96,6 +96,7 @@ export class Retriever {
     k: number,
     now: string,
     includeConsolidated = false,
+    filterTags?: string[],
   ): Promise<RetrievedMemory[]> {
     const { store, embedder, graph, config } = this.deps;
     const queryVector = await embedder.embed(query);
@@ -151,6 +152,15 @@ export class Retriever {
       const record = store.get(id);
       if (!record || !record.text) continue;
       if (record.state === "redacted") continue;
+      // Tag scoping (SEAM 3): a filter means "search the tagged subset" —
+      // untagged records are excluded while one is set. "infra" matches
+      // "infra" and "infra:net" (tag-segment prefix), not "infrastructure".
+      if (
+        filterTags &&
+        !record.tags?.some((t) => filterTags.some((f) => t === f || t.startsWith(`${f}:`)))
+      ) {
+        continue;
+      }
       let stale = false;
       if (record.state === "consolidated" && !includeConsolidated) {
         // Only a clear semantic outlier reaches past consolidation; flat or

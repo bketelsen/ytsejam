@@ -195,7 +195,13 @@ export class MemorySystem {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
     const profile = this.semantic.profile(now, this.config.profile);
-    const ranked = await this.retriever.rank(query, k, now, opts.includeConsolidated ?? false);
+    const ranked = await this.retriever.rank(
+      query,
+      k,
+      now,
+      opts.includeConsolidated ?? false,
+      opts.filterTags,
+    );
 
     // Slot-aware promotion: profile facts the query addresses surface ahead
     // of episodic items (composeContext puts the profile first anyway, and

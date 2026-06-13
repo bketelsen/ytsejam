@@ -462,3 +462,39 @@ describe("vector resurrection of consolidated records (RECALL 7)", () => {
     expect(out.some((i) => i.record.id === "old-b")).toBe(true);
   });
 });
+
+describe("tag filtering (SEAM 3)", () => {
+  const records = [
+    { ...turnRecord("t-infra", 0.9, "active", "2026-05-30T00:00:00.000Z"), tags: ["infra:net"] },
+    { ...turnRecord("t-personal", 0.85, "active", "2026-05-30T00:00:00.000Z"), tags: ["personal"] },
+    turnRecord("t-untagged", 0.8, "active", "2026-05-30T00:00:00.000Z"),
+  ];
+
+  it("no filter returns tagged and untagged records alike", async () => {
+    const { retriever } = buildRetriever(records);
+    const out = await retriever.rank("anything", 10, NOW);
+    expect(out.map((i) => i.record.id).sort()).toEqual(["t-infra", "t-personal", "t-untagged"]);
+  });
+
+  it("filterTags scopes to prefix-matching tags; untagged records are excluded", async () => {
+    const { retriever } = buildRetriever(records);
+    const infra = await retriever.rank("anything", 10, NOW, false, ["infra"]);
+    expect(infra.map((i) => i.record.id)).toEqual(["t-infra"]); // "infra" prefix-matches "infra:net"
+    const exact = await retriever.rank("anything", 10, NOW, false, ["personal"]);
+    expect(exact.map((i) => i.record.id)).toEqual(["t-personal"]);
+    // "inf" is not a tag-segment prefix of "infra:net" — no match.
+    const none = await retriever.rank("anything", 10, NOW, false, ["inf"]);
+    expect(none).toEqual([]);
+  });
+
+  it("filterTags flows through MemorySystem.retrieve", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 3, turnsPerSession: 6, seed: 11 });
+    const mem = MemorySystem.open({ storeDir: path.join(work, "store"), now: () => truth.horizonEnd });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+    // Session-ingested turns carry no tags, so a filter excludes them all.
+    const { items } = await mem.retrieve("What's my dog called?", { filterTags: ["infra"], dryRun: true });
+    expect(items.every((i) => i.record.kind === "fact")).toBe(true); // promoted facts are unaffected by tag scoping
+    mem.close();
+  });
+});

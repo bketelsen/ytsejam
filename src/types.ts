@@ -90,6 +90,13 @@ export interface EpisodicRecord {
   state: RecordState;
   /** Unit-norm embedding; absent on tombstones. */
   embedding?: number[];
+  /**
+   * Domain tags (SEAM 3), e.g. "projects:ytsejam" — carried from external
+   * sources (cog observation tags) as denormalized metadata; retrieve()
+   * can scope to a tagged subset via RetrieveOptions.filterTags. Absent on
+   * session-ingested turns.
+   */
+  tags?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +269,14 @@ export interface RetrieveOptions {
   includeConsolidated?: boolean;
   /** When true, retrieval does not bump accessCount. Default false. */
   dryRun?: boolean;
+  /**
+   * Scope episodic results to records with a matching tag (SEAM 3).
+   * A filter "infra" matches tags "infra" and "infra:net" (tag-segment
+   * prefix). Untagged records are excluded while a filter is set —
+   * filtering means "search the tagged subset". Promoted profile facts
+   * are not tag-scoped. Default: no filtering.
+   */
+  filterTags?: string[];
 }
 
 // ---------------------------------------------------------------------------
