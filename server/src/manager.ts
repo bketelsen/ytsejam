@@ -8,6 +8,7 @@ import {
   type AgentTool,
   type JsonlSessionMetadata,
   type Session,
+  type SessionTreeEntry,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
@@ -28,7 +29,7 @@ import {
   appendDevLogLine,
   appendSessionCompactionJsonl,
   buildCompactionEvent,
-  buildSurrenderMessage,
+  buildSurrenderAgentMessage,
   classifyOverflow,
   compactionEnabled,
   computeReserveTokens,
@@ -37,6 +38,7 @@ import {
   formatDevLogLine,
   REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
+  runInlineCompactionInLoop,
   serializeJsonRecord,
   toOpenedForCompaction,
   type CompactionEntryPoint,
@@ -253,6 +255,44 @@ export class AgentManager {
       ),
     );
 
+    // Inner-loop proactive compaction: fires once per turn before the LLM call.
+    // Uses pi-agent-core's pure compaction functions (via runInlineCompactionInLoop)
+    // to bypass harness.compact()'s phase==="idle" guard. Issue #70 PR 2.
+    //
+    // Blanket try/catch is MANDATORY: hook errors propagate via normalizeHookError
+    // and abort the autonomous run. Any failure must degrade to "preserve original
+    // context, fall back to reactive backstop at agent_end."
+    harness.on("context", async (event) => {
+      try {
+        // Kill-switch: compaction disabled at boot
+        if (!opened.compaction) return undefined;
+        // Cheap no-op: nothing pending → don't even fetch the branch
+        if (!opened.compaction.pendingCompaction) return undefined;
+        // Fetch the current branch (the messages pi would send to the LLM)
+        const branchEntries = await opened.session.getBranch();
+        const result = await this.runPendingInlineCompactionInLoop(
+          opened,
+          branchEntries,
+          "inner_loop",
+        );
+        if (result.ok && result.newMessages) {
+          return { messages: result.newMessages };
+        }
+        if (result.surrendered) {
+          return {
+            messages: [...event.messages, buildSurrenderAgentMessage(opened, 0)],
+          };
+        }
+        return undefined;
+      } catch (err) {
+        console.error(
+          `[compaction] inner-loop hook failed for session ${opened.metadata.id}:`,
+          err,
+        );
+        return undefined;
+      }
+    });
+
     // Compaction wiring (no-op if YTSEJAM_COMPACTION_ENABLED=false at boot)
     if (compactionEnabled()) {
       opened.compaction = {
@@ -451,6 +491,75 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Inner-loop pending-compaction wrapper. Symmetric to `runPendingCompactionAtIdle`
+   * but uses `runInlineCompactionInLoop` (pure functions, no phase guard) instead of
+   * `runCompactionIfPending` (harness.compact() wrapper).
+   *
+   * Called from the `context` hook handler (registered in Task 4) — the only safe
+   * site to invoke inline compaction from `phase==="turn"`.
+   *
+   * Returns a discriminated result:
+   * - `{ ok: true, newMessages: [...] }` → happy path; caller returns `{ messages: newMessages }` from the hook
+   * - `{ ok: false, surrendered: true }` → caller appends surrender notice to event.messages
+   * - `{ ok: true, newMessages: undefined }` → no-op (nothing pending); caller returns `undefined`
+   *
+   * NOTE: the inline path does NOT populate `opened.compaction.lastCompactionDetails`
+   * (pi's `session_before_compact` hook is not invoked by the pure-function path),
+   * so observability for inline compactions has reduced detail (no filesRead/filesModified
+   * in the dev-log entry; firstKeptEntryId comes from result.compactionEntryId where available).
+   */
+  private async runPendingInlineCompactionInLoop(
+    opened: OpenSession,
+    branchEntries: SessionTreeEntry[],
+    entryPoint: CompactionEntryPoint,
+  ): Promise<{ ok: boolean; newMessages?: AgentMessage[]; surrendered: boolean }> {
+    if (!opened.compaction?.pendingCompaction) {
+      return { ok: true, surrendered: false };
+    }
+
+    this.markCompactionStart(opened, "proactive");
+    let endStatus: "succeeded" | "surrendered" | "failed" = "failed";
+    try {
+      const result = await runInlineCompactionInLoop(
+        toOpenedForCompaction({
+          session: opened.session,
+          metadata: opened.metadata,
+          harness: opened.harness,
+          compaction: opened.compaction,
+        }),
+        branchEntries,
+        this.repo,
+      );
+      if (result.fired) {
+        // Synthesize a minimal compactionEntry from the inline result's
+        // compactionEntryId; the inline path does NOT populate
+        // opened.compaction.lastCompactionDetails (no session_before_compact hook).
+        const syntheticEntry = result.compactionEntryId
+          ? { firstKeptEntryId: result.compactionEntryId }
+          : undefined;
+        await this.recordCompactionEvent(
+          opened,
+          result,
+          syntheticEntry,
+          entryPoint,
+        );
+      }
+      endStatus = result.surrendered ? "surrendered" : "succeeded";
+      if (result.surrendered) {
+        await this.emitCompactionSurrender(opened);
+        return { ok: false, surrendered: true };
+      }
+      return {
+        ok: !!result.succeeded,
+        newMessages: result.newMessages,
+        surrendered: false,
+      };
+    } finally {
+      this.markCompactionEnd(opened, endStatus);
+    }
+  }
+
   private recordMessageEnd(opened: OpenSession, message: AgentMessage): void {
     const preview = previewOf(message);
     if (preview) {
@@ -467,7 +576,6 @@ export class AgentManager {
   }
 
   private async emitCompactionSurrender(opened: OpenSession): Promise<void> {
-    const model = opened.harness.getModel();
     let tokens = 0;
     try {
       tokens = estimateContextTokens(
@@ -476,24 +584,7 @@ export class AgentManager {
     } catch {
       // Best-effort diagnostic only.
     }
-    const text = buildSurrenderMessage(tokens, model.contextWindow);
-    const message = {
-      role: "assistant",
-      content: [{ type: "text", text }],
-      stopReason: "stop",
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      timestamp: Date.now(),
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    } as AgentMessage;
+    const message = buildSurrenderAgentMessage(opened, tokens);
     await opened.harness.appendMessage(message);
     this.recordMessageEnd(opened, message);
     this.opts.bus.emit({

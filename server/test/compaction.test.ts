@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   mkdtemp,
   mkdir,
@@ -10,6 +10,23 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model, AssistantMessage } from "@earendil-works/pi-ai";
+
+vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@earendil-works/pi-agent-core")>();
+  return {
+    ...actual,
+    compact: vi.fn(),
+    prepareCompaction: vi.fn(),
+  };
+});
+vi.mock("../src/compaction.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/compaction.ts")>();
+  return {
+    ...actual,
+    runInlineCompactionInLoop: vi.fn(actual.runInlineCompactionInLoop),
+  };
+});
 import type {
   AgentHarness,
   AgentMessage,
@@ -18,6 +35,13 @@ import type {
   Session,
 } from "@earendil-works/pi-agent-core";
 import {
+  AgentHarness as AgentHarnessCtor,
+  compact,
+  prepareCompaction,
+} from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
+
+import {
   computeReserveTokens,
   buildSettings,
   decideCompaction,
@@ -25,6 +49,7 @@ import {
   classifyOverflow,
   CUSTOM_INSTRUCTIONS,
   buildSurrenderMessage,
+  buildSurrenderAgentMessage,
   buildCompactionEvent,
   formatDevLogLine,
   serializeJsonRecord,
@@ -35,11 +60,18 @@ import {
   pruneOldBackups,
   verifySessionLoadable,
   runCompactionIfPending,
+  runInlineCompactionInLoop,
   toOpenedForCompaction,
   type CompactionEvent,
   type CompactionWiringState,
   type OpenedForCompaction,
 } from "../src/compaction.ts";
+import { EventBus } from "../src/events.ts";
+import { Indexer } from "../src/indexer.ts";
+import { PersonaStore } from "../src/persona.ts";
+import { PiAuthStore } from "../src/pi-auth.ts";
+import { TaskManager } from "../src/task-manager.ts";
+import { TaskStore } from "../src/tasks.ts";
 
 const fauxModel = (cw: number, mt: number): Model<any> =>
   ({
@@ -1044,5 +1076,949 @@ describe("runCompactionIfPending", () => {
     expect(r.fired).toBe(true);
     expect(r.succeeded).toBe(false);
     expect(r.error).toBeDefined();
+  });
+});
+
+describe("buildSurrenderAgentMessage", () => {
+  it("returns an AgentMessage matching the canonical surrender shape", () => {
+    const opened = {
+      harness: {
+        getModel: () => ({
+          id: "fake-model",
+          contextWindow: 1_000_000,
+          api: "fake-api",
+          provider: "fake-provider",
+        }),
+      },
+    } as unknown as Parameters<typeof buildSurrenderAgentMessage>[0];
+
+    const msg = buildSurrenderAgentMessage(opened, 0) as AssistantMessage;
+
+    expect(msg.role).toBe("assistant");
+    expect(msg.content).toEqual([
+      { type: "text", text: buildSurrenderMessage(0, 1_000_000) },
+    ]);
+    expect(msg.stopReason).toBe("stop");
+    expect(msg.api).toBe("fake-api");
+    expect(msg.provider).toBe("fake-provider");
+    expect(msg.model).toBe("fake-model");
+    expect(typeof msg.timestamp).toBe("number");
+    expect(msg.usage).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+  });
+});
+
+describe("inner-loop context handler", () => {
+  let faux: ReturnType<typeof setupFaux>;
+  let originalCompactionEnabled: string | undefined;
+  let contextHandler: ((event: any) => any) | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalCompactionEnabled = process.env.YTSEJAM_COMPACTION_ENABLED;
+    delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    faux = setupFaux();
+    contextHandler = undefined;
+  });
+
+  afterEach(() => {
+    if (originalCompactionEnabled === undefined) {
+      delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    } else {
+      process.env.YTSEJAM_COMPACTION_ENABLED = originalCompactionEnabled;
+    }
+    faux.unregister();
+    vi.restoreAllMocks();
+  });
+
+  const pending = () => ({
+    trigger: "proactive" as const,
+    reason: "test",
+    tokensBefore: 100,
+    budget: 50_000,
+  });
+
+  const userMsg = (text: string): AgentMessage =>
+    ({ role: "user", content: [{ type: "text", text }] }) as AgentMessage;
+
+  const branchEntries = () => [
+    {
+      type: "message",
+      id: "entry-1",
+      parentId: null,
+      timestamp: "2026-06-13T00:00:00.000Z",
+      message: userMsg("hi"),
+    },
+  ];
+
+  const setupWired = async () => {
+    const onSpy = vi.spyOn(AgentHarnessCtor.prototype, "on");
+    onSpy.mockImplementation(function (this: AgentHarness, type: any, handler: any) {
+      if (type === "context") contextHandler = handler;
+      return () => {};
+    });
+
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+
+    expect(contextHandler).toBeDefined();
+    return {
+      manager,
+      opened,
+      handler: contextHandler!,
+    };
+  };
+
+  it("returns undefined when opened.compaction is undefined (kill-switch boot)", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction = undefined;
+
+    const getBranch = vi.spyOn(opened.session, "getBranch");
+    const runPending = vi.spyOn(
+      manager as any,
+      "runPendingInlineCompactionInLoop",
+    );
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(runPending).not.toHaveBeenCalled();
+    expect(getBranch).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined when pendingCompaction is null (cheap no-op, getBranch NOT called)", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = null;
+
+    const getBranch = vi.spyOn(opened.session, "getBranch");
+    const runPending = vi.spyOn(
+      manager as any,
+      "runPendingInlineCompactionInLoop",
+    );
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(getBranch).not.toHaveBeenCalled();
+    expect(runPending).not.toHaveBeenCalled();
+  });
+
+  it("returns {messages: newMessages} on happy compaction", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = pending();
+
+    const entries = branchEntries();
+    const getBranch = vi
+      .spyOn(opened.session, "getBranch")
+      .mockResolvedValueOnce(entries as any);
+    const newMessages = [
+      {
+        role: "compactionSummary",
+        summary: "summarized",
+        tokensBefore: 100,
+        timestamp: "2026-06-13T00:00:01.000Z",
+      },
+    ] as unknown as AgentMessage[];
+    const runPending = vi
+      .spyOn(manager as any, "runPendingInlineCompactionInLoop")
+      .mockResolvedValueOnce({
+        ok: true,
+        newMessages,
+        surrendered: false,
+      });
+
+    const original = [userMsg("original")];
+    const result = await handler({ type: "context", messages: original });
+
+    expect(result).toEqual({ messages: newMessages });
+    expect(result.messages).toBe(newMessages);
+    expect(getBranch).toHaveBeenCalledOnce();
+    expect(runPending).toHaveBeenCalledOnce();
+    expect(runPending).toHaveBeenCalledWith(opened, entries, "inner_loop");
+  });
+
+  it("returns event.messages + surrender notice when orchestrator surrenders", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = pending();
+
+    vi.spyOn(opened.session, "getBranch").mockResolvedValueOnce(
+      branchEntries() as any,
+    );
+    vi.spyOn(manager as any, "runPendingInlineCompactionInLoop").mockResolvedValueOnce({
+      ok: false,
+      surrendered: true,
+    });
+
+    const msg1 = userMsg("one");
+    const msg2 = userMsg("two");
+    const result = await handler({ type: "context", messages: [msg1, msg2] });
+
+    expect(result.messages).toHaveLength(3);
+    expect(result.messages[0]).toBe(msg1);
+    expect(result.messages[1]).toBe(msg2);
+    const notice = result.messages[2] as AssistantMessage;
+    expect(notice.role).toBe("assistant");
+    expect(notice.content).toEqual([
+      {
+        type: "text",
+        text: buildSurrenderMessage(0, opened.harness.getModel().contextWindow),
+      },
+    ]);
+    expect(notice.stopReason).toBe("stop");
+    expect(notice.api).toBe(opened.harness.getModel().api);
+    expect(notice.provider).toBe(opened.harness.getModel().provider);
+    expect(notice.model).toBe(opened.harness.getModel().id);
+    expect(notice.usage).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
+  });
+
+  it("returns undefined on any thrown error (defensive catch logs to console.error)", async () => {
+    const { manager, opened, handler } = await setupWired();
+    opened.compaction.pendingCompaction = pending();
+
+    vi.spyOn(opened.session, "getBranch").mockResolvedValueOnce(
+      branchEntries() as any,
+    );
+    vi.spyOn(manager as any, "runPendingInlineCompactionInLoop").mockRejectedValueOnce(
+      new Error("boom"),
+    );
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(consoleError).toHaveBeenCalledOnce();
+    expect(consoleError.mock.calls[0]?.[0]).toContain(
+      "[compaction] inner-loop hook failed for session",
+    );
+  });
+});
+
+describe("AgentManager.runPendingInlineCompactionInLoop", () => {
+  let faux: ReturnType<typeof setupFaux>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    faux = setupFaux();
+  });
+
+  afterEach(() => {
+    faux.unregister();
+  });
+
+  const pending = () => ({
+    trigger: "proactive" as const,
+    reason: "test",
+    tokensBefore: 100,
+    budget: 50_000,
+  });
+
+  const branchEntries = () => [
+    {
+      type: "message",
+      id: "entry-1",
+      parentId: null,
+      timestamp: "2026-06-13T00:00:00.000Z",
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    },
+  ];
+
+  it("happy path: emits markCompactionStart + markCompactionEnd('succeeded') + recordCompactionEvent and returns newMessages", async () => {
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+    opened.compaction.pendingCompaction = pending();
+
+    const newMessages = [
+      {
+        role: "compactionSummary",
+        summary: "X",
+        tokensBefore: 100,
+        timestamp: "2026-06-13T00:00:01.000Z",
+      },
+    ] as unknown as AgentMessage[];
+    const inlineResult = {
+      fired: true,
+      succeeded: true,
+      newMessages,
+      compactionEntryId: "ce-1",
+      durationMs: 10,
+      pending: pending(),
+    };
+    vi.mocked(runInlineCompactionInLoop).mockResolvedValueOnce(inlineResult);
+
+    const markStart = vi.spyOn(manager as any, "markCompactionStart");
+    const markEnd = vi.spyOn(manager as any, "markCompactionEnd");
+    const recordEvent = vi
+      .spyOn(manager as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(manager as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const result = await (manager as any).runPendingInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      "inner_loop",
+    );
+
+    expect(markStart).toHaveBeenCalledOnce();
+    expect(markStart).toHaveBeenCalledWith(opened, "proactive");
+    expect(markEnd).toHaveBeenCalledOnce();
+    expect(markEnd).toHaveBeenCalledWith(opened, "succeeded");
+    expect(recordEvent).toHaveBeenCalledOnce();
+    expect(recordEvent).toHaveBeenCalledWith(
+      opened,
+      inlineResult,
+      { firstKeptEntryId: "ce-1" },
+      "inner_loop",
+    );
+    expect(emitSurrender).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.surrendered).toBe(false);
+    expect(result.newMessages).toBe(newMessages);
+  });
+
+  it("surrender path: emits markCompactionEnd('surrendered') + recordCompactionEvent + emitCompactionSurrender, returns surrendered", async () => {
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+    opened.compaction.pendingCompaction = pending();
+
+    const inlineResult = {
+      fired: true,
+      succeeded: false,
+      surrendered: true,
+      error: new Error("verify failed"),
+      durationMs: 10,
+      backupPath: "/tmp/foo.bak",
+      pending: pending(),
+    };
+    vi.mocked(runInlineCompactionInLoop).mockResolvedValueOnce(inlineResult);
+
+    const markStart = vi.spyOn(manager as any, "markCompactionStart");
+    const markEnd = vi.spyOn(manager as any, "markCompactionEnd");
+    const recordEvent = vi
+      .spyOn(manager as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(manager as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const result = await (manager as any).runPendingInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      "inner_loop",
+    );
+
+    expect(markStart).toHaveBeenCalledOnce();
+    expect(markStart).toHaveBeenCalledWith(opened, "proactive");
+    expect(markEnd).toHaveBeenCalledOnce();
+    expect(markEnd).toHaveBeenCalledWith(opened, "surrendered");
+    expect(recordEvent).toHaveBeenCalledOnce();
+    expect(emitSurrender).toHaveBeenCalledOnce();
+    expect(emitSurrender).toHaveBeenCalledWith(opened);
+    expect(result.ok).toBe(false);
+    expect(result.surrendered).toBe(true);
+    expect(result.newMessages).toBeUndefined();
+  });
+
+  it("no-op when opened.compaction.pendingCompaction is null: no pill, no telemetry, returns {ok:true, surrendered:false}", async () => {
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+    opened.compaction.pendingCompaction = null;
+
+    const markStart = vi.spyOn(manager as any, "markCompactionStart");
+    const markEnd = vi.spyOn(manager as any, "markCompactionEnd");
+    const recordEvent = vi
+      .spyOn(manager as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(manager as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const result = await (manager as any).runPendingInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      "inner_loop",
+    );
+
+    expect(markStart).not.toHaveBeenCalled();
+    expect(markEnd).not.toHaveBeenCalled();
+    expect(recordEvent).not.toHaveBeenCalled();
+    expect(emitSurrender).not.toHaveBeenCalled();
+    expect(runInlineCompactionInLoop).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.surrendered).toBe(false);
+    expect(result.newMessages).toBeUndefined();
+  });
+});
+
+describe("runInlineCompactionInLoop", () => {
+  let tmp: string;
+  let sessionFilePath: string;
+  let originalContent: string;
+
+  beforeEach(async () => {
+    vi.mocked(prepareCompaction).mockReset();
+    vi.mocked(compact).mockReset();
+
+    tmp = await mkdtemp(join(tmpdir(), "inline-orchestrator-test-"));
+    const sessionDir = join(tmp, "sessions", "--chat--");
+    await mkdir(sessionDir, { recursive: true });
+    sessionFilePath = join(
+      sessionDir,
+      "2026-06-13T00-00-00-000Z_inline-test.jsonl",
+    );
+    originalContent = "original session content\n";
+    await writeFile(sessionFilePath, originalContent);
+  });
+
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const pending = () => ({
+    trigger: "proactive" as const,
+    reason: "inline test",
+    tokensBefore: 900_000,
+    budget: 800_000,
+  });
+
+  const branchEntries = () => [
+    {
+      type: "message",
+      id: "entry-before",
+      parentId: null,
+      timestamp: "2026-06-13T00:00:00.000Z",
+      message: { role: "user", content: [{ type: "text", text: "old" }] },
+    },
+    {
+      type: "message",
+      id: "entry-X",
+      parentId: "entry-before",
+      timestamp: "2026-06-13T00:00:01.000Z",
+      message: { role: "user", content: [{ type: "text", text: "kept" }] },
+    },
+    {
+      type: "message",
+      id: "entry-Y",
+      parentId: "entry-X",
+      timestamp: "2026-06-13T00:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "kept assistant" }],
+        stopReason: "stop",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "test-model",
+      },
+    },
+  ] as any[];
+
+  const preparation = () => ({
+    firstKeptEntryId: "entry-X",
+    messagesToSummarize: [],
+    turnPrefixMessages: [],
+    isSplitTurn: false,
+    tokensBefore: 100,
+    fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
+    settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 20000 },
+  });
+
+  const makeOpened = (appendImpl?: (...args: any[]) => Promise<string>) => {
+    const appendCompaction = vi.fn(
+      appendImpl ??
+        (async () => {
+          await writeFile(sessionFilePath, "appended compaction\n");
+          return "compaction-entry-1";
+        }),
+    );
+    return {
+      session: {
+        metadata: {
+          id: "inline-test",
+          cwd: "chat",
+          path: sessionFilePath,
+          createdAt: "2026-06-13T00:00:00.000Z",
+        } as JsonlSessionMetadata,
+        appendCompaction,
+      } as unknown as Session<JsonlSessionMetadata> & {
+        metadata: JsonlSessionMetadata;
+      },
+      harness: {
+        getModel: () => fauxModel(1_000_000, 64_000),
+        getApiKeyAndHeaders: async () => ({
+          apiKey: "test-api-key",
+          headers: { "x-test": "1" },
+        }),
+        getThinkingLevel: () => "off",
+      } as unknown as AgentHarness,
+      compaction: { pendingCompaction: pending(), reactiveRetryAttempted: false },
+    } satisfies OpenedForCompaction;
+  };
+
+  const okRepo = { open: async () => ({}) } as unknown as JsonlSessionRepo;
+  const failingRepo = {
+    open: async () => {
+      throw new Error("corrupt");
+    },
+  } as unknown as JsonlSessionRepo;
+
+  it("happy path: writes appendCompaction(..., fromHook:true) and returns newMessages", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: true,
+      value: {
+        summary: "SUM",
+        firstKeptEntryId: "entry-X",
+        tokensBefore: 100,
+        details: { readFiles: [], modifiedFiles: [] },
+      },
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(true);
+    expect(opened.session.appendCompaction).toHaveBeenCalledWith(
+      "SUM",
+      "entry-X",
+      100,
+      { readFiles: [], modifiedFiles: [] },
+      true,
+    );
+    expect(result.compactionEntryId).toBe("compaction-entry-1");
+    expect(result.newMessages).toHaveLength(3);
+    expect(result.newMessages?.[0]).toMatchObject({
+      role: "compactionSummary",
+      summary: "SUM",
+      tokensBefore: 100,
+    });
+    expect(result.newMessages?.[1]).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "kept" }],
+    });
+    expect(result.newMessages?.[2]).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "kept assistant" }],
+    });
+    expect(opened.compaction.pendingCompaction).toBeNull();
+  });
+
+  it("no-op when prepareCompaction returns undefined", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({ ok: true, value: undefined });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(false);
+    expect(opened.session.appendCompaction).not.toHaveBeenCalled();
+    expect(vi.mocked(compact)).not.toHaveBeenCalled();
+  });
+
+  it("error when prepareCompaction returns Result.err", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: false,
+      error: new Error("prep failed") as any,
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.error?.message).toBe("prep failed");
+    expect(opened.session.appendCompaction).not.toHaveBeenCalled();
+  });
+
+  it("error when compact() returns Result.err", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: false,
+      error: new Error("compact failed") as any,
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.error?.message).toBe("compact failed");
+    expect(opened.session.appendCompaction).not.toHaveBeenCalled();
+  });
+
+  it("surrender when appendCompaction throws (backup restored)", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: true,
+      value: {
+        summary: "SUM",
+        firstKeptEntryId: "entry-X",
+        tokensBefore: 100,
+        details: {},
+      },
+    });
+    const opened = makeOpened(async () => {
+      await writeFile(sessionFilePath, "partial corrupt write\n");
+      throw new Error("append failed");
+    });
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.surrendered).toBe(true);
+    expect(result.error?.message).toBe("append failed");
+    await expect(readFile(sessionFilePath, "utf8")).resolves.toBe(
+      originalContent,
+    );
+  });
+
+  it("surrender when verifySessionLoadable fails post-write (backup restored)", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: true,
+      value: {
+        summary: "SUM",
+        firstKeptEntryId: "entry-X",
+        tokensBefore: 100,
+        details: {},
+      },
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      failingRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.surrendered).toBe(true);
+    expect(result.error?.message).toBe("corrupt");
+    await expect(readFile(sessionFilePath, "utf8")).resolves.toBe(
+      originalContent,
+    );
+  });
+});
+
+
+describe("TaskManager inner-loop context handler", () => {
+  let faux: ReturnType<typeof setupFaux>;
+  let originalCompactionEnabled: string | undefined;
+  let contextHandler: ((event: any) => any) | undefined;
+  let dataDirs: string[] = [];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalCompactionEnabled = process.env.YTSEJAM_COMPACTION_ENABLED;
+    delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    faux = setupFaux();
+    contextHandler = undefined;
+    dataDirs = [];
+  });
+
+  afterEach(async () => {
+    if (originalCompactionEnabled === undefined) {
+      delete process.env.YTSEJAM_COMPACTION_ENABLED;
+    } else {
+      process.env.YTSEJAM_COMPACTION_ENABLED = originalCompactionEnabled;
+    }
+    faux.unregister();
+    vi.restoreAllMocks();
+    await Promise.all(dataDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  const pending = () => ({
+    trigger: "proactive" as const,
+    reason: "test",
+    tokensBefore: 100,
+    budget: 50_000,
+  });
+
+  const userMsg = (text: string): AgentMessage =>
+    ({ role: "user", content: [{ type: "text", text }] }) as AgentMessage;
+
+  const branchEntries = () => [
+    {
+      type: "message",
+      id: "entry-1",
+      parentId: null,
+      timestamp: "2026-06-13T00:00:00.000Z",
+      message: userMsg("hi"),
+    },
+  ];
+
+  const waitFor = async (predicate: () => boolean, ms = 5000): Promise<void> => {
+    const start = Date.now();
+    while (!predicate()) {
+      if (Date.now() - start > ms) throw new Error("waitFor timed out");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+
+  const setupWiredTm = async () => {
+    const onSpy = vi.spyOn(AgentHarnessCtor.prototype, "on");
+    onSpy.mockImplementation(function (this: AgentHarness, type: any, handler: any) {
+      if (type === "context") contextHandler = handler;
+      return () => {};
+    });
+
+    const dataDir = await mkdtemp(join(tmpdir(), "tm-inner-loop-"));
+    dataDirs.push(dataDir);
+    const store = new TaskStore(join(dataDir, "tasks"));
+    const indexer = new Indexer(join(dataDir, "index.db"));
+    const bus = new EventBus();
+    let capturedActive: any;
+    const tm = new TaskManager({
+      dataDir,
+      store,
+      indexer,
+      bus,
+      persona: new PersonaStore(join(dataDir, "persona")),
+      authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
+      resolveModel: () => faux.getModel() as any,
+      subagentModel: "faux/faux",
+      workerTools: [],
+      concurrency: 1,
+      timeoutMs: 10_000,
+      notifyParent: async () => {},
+    });
+
+    faux.setResponses([
+      async () => {
+        const taskId = indexer.listTasks()[0]?.id;
+        capturedActive = taskId ? (tm as any).active.get(taskId) : undefined;
+        return fauxAssistantMessage("trivial-noop");
+      },
+    ]);
+
+    const row = await tm.delegate({
+      parentSessionId: "parent-1",
+      task: "noop",
+      label: "noop",
+    });
+    await waitFor(() => indexer.getTask(row.id)?.status === "completed");
+
+    expect(contextHandler).toBeDefined();
+    expect(capturedActive).toBeDefined();
+    return { tm, active: capturedActive, handler: contextHandler! };
+  };
+
+  it("returns undefined when active.compaction is undefined (kill-switch boot)", async () => {
+    const { active, handler } = await setupWiredTm();
+    active.compaction = undefined;
+
+    const getBranch = vi.spyOn(active.session, "getBranch");
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(runInlineCompactionInLoop).not.toHaveBeenCalled();
+    expect(getBranch).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined when active.compactionRunning lock is held", async () => {
+    const { active, handler } = await setupWiredTm();
+    active.compaction.pendingCompaction = pending();
+    active.compactionRunning = true;
+
+    const getBranch = vi.spyOn(active.session, "getBranch");
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(runInlineCompactionInLoop).not.toHaveBeenCalled();
+    expect(getBranch).not.toHaveBeenCalled();
+    expect(active.compactionRunning).toBe(true);
+  });
+
+  it("returns undefined when pendingCompaction is null (cheap no-op, getBranch NOT called)", async () => {
+    const { active, handler } = await setupWiredTm();
+    active.compaction.pendingCompaction = null;
+
+    const getBranch = vi.spyOn(active.session, "getBranch");
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(getBranch).not.toHaveBeenCalled();
+    expect(runInlineCompactionInLoop).not.toHaveBeenCalled();
+  });
+
+  it("returns {messages: newMessages} on happy compaction and records inner_loop telemetry", async () => {
+    const { tm, active, handler } = await setupWiredTm();
+    active.compaction.pendingCompaction = pending();
+
+    const entries = branchEntries();
+    const getBranch = vi
+      .spyOn(active.session, "getBranch")
+      .mockResolvedValueOnce(entries as any);
+    const newMessages = [
+      {
+        role: "compactionSummary",
+        summary: "summarized",
+        tokensBefore: 100,
+        timestamp: "2026-06-13T00:00:01.000Z",
+      },
+    ] as unknown as AgentMessage[];
+    const inlineResult = {
+      fired: true,
+      succeeded: true,
+      newMessages,
+      compactionEntryId: "entry-xyz",
+      durationMs: 10,
+      pending: pending(),
+    };
+    vi.mocked(runInlineCompactionInLoop).mockResolvedValueOnce(inlineResult);
+    const recordEvent = vi
+      .spyOn(tm as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(tm as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const result = await handler({ type: "context", messages: [userMsg("original")] });
+
+    expect(result).toEqual({ messages: newMessages });
+    expect(result.messages).toBe(newMessages);
+    expect(getBranch).toHaveBeenCalledOnce();
+    expect(runInlineCompactionInLoop).toHaveBeenCalledOnce();
+    expect(recordEvent).toHaveBeenCalledOnce();
+    expect(recordEvent).toHaveBeenCalledWith(
+      active,
+      inlineResult,
+      { firstKeptEntryId: "entry-xyz" },
+      "inner_loop",
+    );
+    expect(emitSurrender).not.toHaveBeenCalled();
+    expect(active.compactionRunning).toBe(false);
+  });
+
+  it("returns event.messages + surrender notice when inline compaction surrenders", async () => {
+    const { tm, active, handler } = await setupWiredTm();
+    active.compaction.pendingCompaction = pending();
+
+    vi.spyOn(active.session, "getBranch").mockResolvedValueOnce(
+      branchEntries() as any,
+    );
+    const inlineResult = {
+      fired: true,
+      succeeded: false,
+      surrendered: true,
+      error: new Error("verify failed"),
+      durationMs: 10,
+      pending: pending(),
+    };
+    vi.mocked(runInlineCompactionInLoop).mockResolvedValueOnce(inlineResult);
+    const recordEvent = vi
+      .spyOn(tm as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(tm as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const msg1 = userMsg("one");
+    const msg2 = userMsg("two");
+    const result = await handler({ type: "context", messages: [msg1, msg2] });
+
+    expect(result.messages).toHaveLength(3);
+    expect(result.messages[0]).toBe(msg1);
+    expect(result.messages[1]).toBe(msg2);
+    const notice = result.messages[2] as AssistantMessage;
+    expect(notice.role).toBe("assistant");
+    expect(notice.content).toEqual([
+      {
+        type: "text",
+        text: buildSurrenderMessage(0, active.harness.getModel().contextWindow),
+      },
+    ]);
+    expect(notice.stopReason).toBe("stop");
+    expect(notice.api).toBe(active.harness.getModel().api);
+    expect(notice.provider).toBe(active.harness.getModel().provider);
+    expect(notice.model).toBe(active.harness.getModel().id);
+    expect(recordEvent).toHaveBeenCalledOnce();
+    expect(recordEvent).toHaveBeenCalledWith(
+      active,
+      inlineResult,
+      undefined,
+      "inner_loop",
+    );
+    expect(emitSurrender).toHaveBeenCalledOnce();
+    expect(emitSurrender).toHaveBeenCalledWith(active);
+    expect(active.compactionRunning).toBe(false);
+  });
+
+  it("returns undefined on any thrown error and clears the compactionRunning lock", async () => {
+    const { active, handler } = await setupWiredTm();
+    active.compaction.pendingCompaction = pending();
+
+    vi.spyOn(active.session, "getBranch").mockResolvedValueOnce(
+      branchEntries() as any,
+    );
+    vi.mocked(runInlineCompactionInLoop).mockRejectedValueOnce(new Error("boom"));
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const result = await handler({ type: "context", messages: [] });
+
+    expect(result).toBeUndefined();
+    expect(consoleError).toHaveBeenCalledOnce();
+    expect(consoleError.mock.calls[0]?.[0]).toContain(
+      `[compaction] task-manager inner-loop hook failed for task ${active.taskId}`,
+    );
+    expect(active.compactionRunning).toBe(false);
   });
 });
