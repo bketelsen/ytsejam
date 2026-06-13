@@ -7,6 +7,7 @@ export interface SessionRow {
   unread: boolean;
   archived?: boolean;
   running: boolean;
+  compacting?: boolean;
   // Only the GET /api/sessions/:id response carries this; the list endpoint omits it.
   cwd?: string;
 }
@@ -76,4 +77,6 @@ export type ServerEvent =
   | { type: "session_archived"; sessionId: string }
   | { type: "session_unarchived"; sessionId: string }
   | { type: "task"; task: TaskRow }
-  | { type: "schedule"; schedule: ScheduleRow };
+  | { type: "schedule"; schedule: ScheduleRow }
+  | { type: "compaction_start"; sessionId: string; trigger: "proactive" | "reactive" }
+  | { type: "compaction_end"; sessionId: string; status: "succeeded" | "surrendered" | "failed" };
