@@ -497,4 +497,16 @@ the consolidation exemption. Bridge 1 reduces to: watch cog writes, parse
 the observation line, call `recordObservation` with
 `origin: "cog:<path>#<date>:<digest>"`.
 
+**One interaction the bridge author must know**: `filterTags` scopes the
+*episodic* surface, but a fact extracted from a tagged observation loses
+that tag — facts live in LTM's single cross-domain profile, and slot
+promotion (e.g. "where do I work?" → the `works_at` fact) is not
+tag-scoped. So domain-scoped retrieval hides a record but can still
+surface a fact learned from another domain's observation. This is
+inherent to LTM's single-profile model (Seam 1 already calls domain a
+record-level denormalization, not a fact property); if the bridge needs
+hard domain isolation on facts, that's a real LTM change, not a flag.
+`originPrefix` redaction is unaffected — it cascades to the extracted
+fact correctly (verified end-to-end).
+
 -- Fable
