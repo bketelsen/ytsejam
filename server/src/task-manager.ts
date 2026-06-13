@@ -25,6 +25,7 @@ import {
   appendDevLogLine,
   appendSessionCompactionJsonl,
   buildCompactionEvent,
+  buildSurrenderAgentMessage,
   buildSurrenderMessage,
   classifyOverflow,
   compactionEnabled,
@@ -34,12 +35,14 @@ import {
   formatDevLogLine,
   REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
+  runInlineCompactionInLoop,
   serializeJsonRecord,
   toOpenedForCompaction,
   type CompactionEntryPoint,
   type CompactionEvent,
   type CompactionWiringState,
   type RunCompactionResult,
+  type RunInlineCompactionResult,
 } from "./compaction.ts";
 import { memoryRoot } from "./memory/index.ts";
 
@@ -489,6 +492,71 @@ export class TaskManager {
           await this.onHarnessEvent(taskId, event);
         } catch (err) {
           console.error("[compaction] task-manager handler swallowed error:", err);
+        }
+      });
+
+      // Inner-loop proactive compaction for delegated subagent tasks: fires once
+      // per turn before the LLM call. Uses pi-agent-core's pure compaction functions
+      // (via runInlineCompactionInLoop) to bypass harness.compact()'s phase==="idle"
+      // guard. Issue #70 PR 2 — mirror of AgentManager.wire()'s same handler.
+      //
+      // Blanket try/catch is MANDATORY: hook errors propagate via normalizeHookError
+      // and would otherwise abort the autonomous task run silently.
+      //
+      // active.compactionRunning is the lock that prevents racing with the reactive
+      // agent_end orchestrator (also runs compaction). Inline runs SET the lock for
+      // the duration; the reactive path SKIPS when held. Both flip it to false in
+      // their own finally blocks.
+      harness.on("context", async (event) => {
+        try {
+          if (!active.compaction) return undefined;
+          if (active.compactionRunning) return undefined;
+          if (!active.compaction.pendingCompaction) return undefined;
+          active.compactionRunning = true;
+          try {
+            const branchEntries = await active.session.getBranch();
+            const result: RunInlineCompactionResult = await runInlineCompactionInLoop(
+              toOpenedForCompaction({
+                session: active.session,
+                metadata: active.metadata,
+                harness: active.harness,
+                compaction: active.compaction,
+              }),
+              branchEntries,
+              this.repo,
+            );
+            if (!result.fired) return undefined;
+            if (result.succeeded && result.newMessages) {
+              // Synthetic compactionEntry: inline path doesn't populate
+              // lastCompactionDetails (no session_before_compact hook in the
+              // pure-function path); pass firstKeptEntryId so dev-log retains it,
+              // other fields fall back to optional-read defaults.
+              const syntheticCompactionEntry = result.compactionEntryId
+                ? { firstKeptEntryId: result.compactionEntryId }
+                : undefined;
+              await this.recordCompactionEvent(
+                active,
+                result,
+                syntheticCompactionEntry,
+                "inner_loop",
+              );
+              return { messages: result.newMessages };
+            }
+            // surrendered or other non-success
+            await this.recordCompactionEvent(active, result, undefined, "inner_loop");
+            await this.emitCompactionSurrender(active);
+            return {
+              messages: [...event.messages, buildSurrenderAgentMessage(active, 0)],
+            };
+          } finally {
+            active.compactionRunning = false;
+          }
+        } catch (err) {
+          console.error(
+            `[compaction] task-manager inner-loop hook failed for task ${active.taskId}:`,
+            err,
+          );
+          return undefined;
         }
       });
 
