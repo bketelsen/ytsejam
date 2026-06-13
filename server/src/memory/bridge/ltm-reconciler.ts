@@ -302,11 +302,29 @@ export class LtmReconciler {
     stats.errors++;
     this.state.consecutiveFailures++;
     this.state.lastError = {
-      message: err.message,
+      message: this.sanitizeErrorMessage(err.message),
       at: new Date().toISOString(),
     };
     this.state.reachable = false;
     this.logger("warn", `tick error: ${err.message}`);
+  }
+
+  /**
+   * Strip the absolute data-dir prefix from error messages before they enter
+   * `lastError` (and thus the `/api/memory/health` wire payload). Replaces
+   * EVERY occurrence — node's filesystem errors can mention the same path
+   * twice (e.g. `ENOENT scandir <p>`, then again in the wrapped error).
+   *
+   * Storage-side sanitization (vs. projection-side) so there is exactly one
+   * producer of `lastError`; future readers / wire surfaces inherit the
+   * scrubbed value for free without each having to remember to sanitize.
+   *
+   * The endpoint is bearer-gated so the absolute path is not a secret today,
+   * but operator-facing path disclosure is a cheap audit-flag to eliminate.
+   * (Issue #118.)
+   */
+  private sanitizeErrorMessage(message: string): string {
+    return message.replaceAll(this.dataDir, "<data>");
   }
 
   private recordTick(stats: ReconcileStats): void {

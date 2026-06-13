@@ -407,4 +407,48 @@ describe("LtmReconciler", () => {
     expect(stats.replayed).toBe(1);
     expect(stats.errors).toBe(1);
   });
+
+  describe("lastError path sanitization (issue #118)", () => {
+    it("replaces the absolute dataDir with <data> in lastError.message on a real ENOENT", async () => {
+      // Don't create <dataDir>/memory at all. findObservationFiles() will throw
+      // ENOENT scandir '<dataDir>/memory' — the exact error class the issue cites.
+      reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+      const stats = await reconciler.reconcile();
+
+      expect(stats.errors).toBe(1);
+      const snap = reconciler.health();
+      expect(snap.lastError).toBeDefined();
+      const msg = snap.lastError!.message;
+      // The sanitized token must be present...
+      expect(msg).toContain("<data>");
+      // ...and the absolute dataDir must NOT leak through.
+      expect(msg).not.toContain(dataDir);
+      // Belt-and-suspenders: the relativized path tail (memory/) survives the
+      // sanitization — only the prefix was scrubbed, not the whole path.
+      expect(msg).toContain("memory");
+    });
+
+    it("replaces EVERY occurrence of dataDir (not just the first)", async () => {
+      // Synthesize an error whose message mentions dataDir twice and feed it
+      // through the same bumpTickError path used by reconcile()'s catch
+      // sites. We hit bumpTickError via the public reconcile() entry by
+      // pre-mocking findObservationFiles to throw our crafted error.
+      reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+      const crafted = new Error(
+        `ENOENT scandir '${dataDir}/memory' (was looking under ${dataDir}/memory)`,
+      );
+      // @ts-expect-error -- private member access in a test for an internal
+      // throw-path; the alternative (chmod 000 the real dir) is fragile in
+      // CI and root-bypassed locally.
+      reconciler.findObservationFiles = async () => {
+        throw crafted;
+      };
+      await reconciler.reconcile();
+
+      const msg = reconciler.health().lastError!.message;
+      expect(msg).not.toContain(dataDir);
+      // Token appears twice — once per original mention.
+      expect((msg.match(/<data>/g) || []).length).toBe(2);
+    });
+  });
 });
