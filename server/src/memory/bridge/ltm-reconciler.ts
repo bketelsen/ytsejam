@@ -230,13 +230,15 @@ export class LtmReconciler {
 
   private async findObservationFiles(): Promise<string[]> {
     const results: string[] = [];
-    const root = this.dataDir;
+    // The reconciler bridges cog memory into LTM, so walk the cog memory
+    // tree (<dataDir>/memory), not the whole data directory.
+    const root = join(this.dataDir, "memory");
     const walk = async (dir: string, depth: number): Promise<void> => {
       const entries = await readdir(dir, { withFileTypes: true });
       for (const e of entries) {
         if (e.isDirectory()) {
           // Skip dot-directories at any depth and the configured top-level
-          // skip set when we're directly under the dataDir root.
+          // skip set when we're directly under the cog memory root.
           if (e.name.startsWith(".")) continue;
           if (depth === 0 && SKIP_TOP_LEVEL.has(e.name)) continue;
           await walk(join(dir, e.name), depth + 1);
@@ -254,15 +256,16 @@ export class LtmReconciler {
 
   /**
    * Split an absolute observations.md path into (domainPath, filename).
-   * Returns null for paths that sit directly under dataDir with no domain
-   * subdir -- a layout the cog memory contract does not produce, so we
-   * skip rather than mint a garbage domainPath.
+   * Returns null for paths that sit directly under the cog memory root with
+   * no domain subdir -- a layout the cog memory contract does not produce,
+   * so we skip rather than mint a garbage domainPath.
    */
   private splitFilePath(
     file: string,
   ): { domainPath: string; filename: string } | null {
-    const rel = file.startsWith(this.dataDir + "/")
-      ? file.slice(this.dataDir.length + 1)
+    const memRoot = join(this.dataDir, "memory");
+    const rel = file.startsWith(memRoot + "/")
+      ? file.slice(memRoot.length + 1)
       : file;
     const lastSlash = rel.lastIndexOf("/");
     if (lastSlash <= 0) return null; // top-level or empty domain -> skip

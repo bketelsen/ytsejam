@@ -24,9 +24,9 @@ describe("ltmReplay CLI", () => {
   });
 
   it("replays observations into a fresh LTM, exits 0, prints JSON stats", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: cli line one\n- 2026-06-11 [b]: cli line two\n",
     );
     const code = await ltmReplay({
@@ -44,9 +44,9 @@ describe("ltmReplay CLI", () => {
   });
 
   it("exits 1 when stats.errors > 0 (malformed line)", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: good\nMALFORMED\n",
     );
     const code = await ltmReplay({
@@ -88,7 +88,8 @@ describe("ltmReplay CLI", () => {
     }
   });
 
-  it("exits 0 with no observations to replay on an empty dataDir", async () => {
+  it("exits 0 with no observations to replay on an empty memory tree", async () => {
+    await mkdir(join(dataDir, "memory"), { recursive: true });
     const code = await ltmReplay({
       dataDir,
       ltmStoreDir: ltmDir,
@@ -118,6 +119,7 @@ describe("ltmHealth CLI", () => {
   });
 
   it("prints stderr warning and a JSON stats line, exits 0 on healthy empty store", async () => {
+    await mkdir(join(dataDir, "memory"), { recursive: true });
     const out: string[] = [];
     const err: string[] = [];
     const code = await ltmHealth({
@@ -158,9 +160,9 @@ describe("ltmReplay resolution + open-failure independence", () => {
     // matching server boot's resolution. With `??` this would attempt
     // MemorySystem.open({storeDir: ""}) and fail with a cryptic LTM error.
     process.env.LTM_STORE_DIR = envLtmDir;
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: coerce-test\n",
     );
     const out: string[] = [];

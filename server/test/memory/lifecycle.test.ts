@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MemorySystem } from "ltm";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LtmReconciler } from "../../src/memory/bridge/ltm-reconciler.ts";
@@ -22,6 +22,7 @@ describe("memory + reconciler lifecycle", () => {
     execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dataDir });
     execFileSync("git", ["config", "user.name", "Test"], { cwd: dataDir });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: dataDir });
+    await mkdir(join(dataDir, "memory"), { recursive: true });
     ltmDir = await mkdtemp(join(tmpdir(), "lc-ltm-"));
     // Belt-and-suspenders: module-level attach state lives between tests in
     // the same process. afterEach resets, but if a prior test's

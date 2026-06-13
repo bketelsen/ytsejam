@@ -4,6 +4,7 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LtmReconciler } from "../../../src/memory/bridge/ltm-reconciler.ts";
+import { computeOrigin } from "../../../src/memory/bridge/ltm-observer.ts";
 
 // Inject a no-op logger in every test so the reconciler's warn/info chatter
 // (malformed-line warnings, tick errors) does not leak into the suite's
@@ -33,9 +34,9 @@ describe("LtmReconciler", () => {
   });
 
   it("replays missed lines from observations.md on reconcile()", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: line one\n- 2026-06-11 [b]: line two\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
@@ -46,9 +47,9 @@ describe("LtmReconciler", () => {
   });
 
   it("skips already-mirrored lines on subsequent reconcile (force ignores mtime cache only)", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: line one\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
@@ -59,9 +60,9 @@ describe("LtmReconciler", () => {
   });
 
   it("skips unchanged files via mtime cache when not forced", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: line one\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
@@ -72,9 +73,9 @@ describe("LtmReconciler", () => {
   });
 
   it("--force re-walks even unchanged files", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: line one\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
@@ -85,9 +86,9 @@ describe("LtmReconciler", () => {
   });
 
   it("isolates per-line errors (malformed line doesn't stop the rest)", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: good\nMALFORMED\n- 2026-06-11 [b]: also good\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
@@ -97,15 +98,35 @@ describe("LtmReconciler", () => {
   });
 
   it("walks nested domain paths (e.g. projects/ytsejam/observations.md)", async () => {
-    await mkdir(join(dataDir, "projects", "ytsejam"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "projects", "ytsejam"), { recursive: true });
     await writeFile(
-      join(dataDir, "projects", "ytsejam", "observations.md"),
+      join(dataDir, "memory", "projects", "ytsejam", "observations.md"),
       "- 2026-06-13 [shipped]: bridge 1\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
     const stats = await reconciler.reconcile();
     expect(stats.replayed).toBe(1);
     expect(stats.errors).toBe(0);
+  });
+
+  it("writes origin matching the cog domain path, not the data-dir relative path", async () => {
+    const line = "- 2026-06-13 [tag1,tag2]: test text";
+    await mkdir(join(dataDir, "memory", "cog-meta"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "cog-meta", "observations.md"),
+      `${line}\n`,
+    );
+
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    const stats = await reconciler.reconcile();
+
+    const expectedOrigin = computeOrigin("cog-meta", "observations.md", line);
+    const badOrigin = computeOrigin("memory/cog-meta", "observations.md", line);
+    expect(stats.replayed).toBe(1);
+    expect(stats.errors).toBe(0);
+    expect(ltm.hasObservation(expectedOrigin)).toBe(true);
+    expect(ltm.hasObservation(badOrigin)).toBe(false);
+    expect(expectedOrigin).toMatch(/^cog:cog-meta\/observations\.md#[0-9a-f]{12}$/);
   });
 
   it("start()/stop() timer lifecycle is idempotent and safe", async () => {
@@ -120,9 +141,9 @@ describe("LtmReconciler", () => {
   });
 
   it("health: per-line LTM failure surfaces as stats.errors but does NOT bump consecutiveFailures", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: line one\n",
     );
     const fakeLtm = {
@@ -155,7 +176,8 @@ describe("LtmReconciler", () => {
     // Now: stop, swap to good dataDir, tick — failures should clear.
     await reconciler.stop();
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
-    // Empty good dataDir scan = 0 files, 0 errors → success tick.
+    // Empty good memory tree scan = 0 files, 0 errors → success tick.
+    await mkdir(join(dataDir, "memory"), { recursive: true });
     const r = await reconciler.reconcile();
     expect(r.errors).toBe(0);
     expect(reconciler.health().consecutiveFailures).toBe(0);
@@ -163,11 +185,11 @@ describe("LtmReconciler", () => {
   });
 
   it("CRLF lines dedup against the clean live-path origin (no permanent re-replay)", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     // Write file with CRLF line endings -- the exact pathology from external
     // editors / `git checkout` with core.autocrlf=true.
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: line one\r\n- 2026-06-11 [b]: line two\r\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
@@ -185,24 +207,24 @@ describe("LtmReconciler", () => {
 
   it("skips glacier/ and dot-directories during the dataDir walk", async () => {
     // Good: a normal domain observation that SHOULD be picked up.
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: should mirror\n",
     );
     // Bad: glacier archives are out of scope. A file under glacier/ named
     // observations.md must be IGNORED. We use a malformed body so that if
     // the walker mistakenly descends, the test fails loudly with errors>0.
-    await mkdir(join(dataDir, "glacier", "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "glacier", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "glacier", "personal", "observations.md"),
+      join(dataDir, "memory", "glacier", "personal", "observations.md"),
       "---\ntype: glacier_archive\n---\n# Cold storage\n",
     );
     // Bad: dot-directories (.git, .obsidian) hold no observations and must
     // be skipped. Same loud-fail pattern: malformed content under .git.
-    await mkdir(join(dataDir, ".git", "objects"), { recursive: true });
+    await mkdir(join(dataDir, "memory", ".git", "objects"), { recursive: true });
     await writeFile(
-      join(dataDir, ".git", "objects", "observations.md"),
+      join(dataDir, "memory", ".git", "objects", "observations.md"),
       "binary-pack-like garbage\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
@@ -213,9 +235,9 @@ describe("LtmReconciler", () => {
   });
 
   it("health() returns a structurally cloned snapshot that does NOT alias internal state", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
-      join(dataDir, "personal", "observations.md"),
+      join(dataDir, "memory", "personal", "observations.md"),
       "- 2026-06-10 [a]: line one\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
