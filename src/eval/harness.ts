@@ -84,7 +84,7 @@ export interface BandSpec {
  * again under RECALL 9 for the strong-cue recall feature. Measured 20-seed
  * hash floors (seed-invariant except where noted): short r@5 1.00 / para
  * 0.75 / MRR 1.00 / F1 1.00 / stab 1.00; medium r@5 1.00 / para 0.75 /
- * MRR 0.75 / F1 0.33 / stab 0.40; long r@5 1.00 / para 0.75 / MRR 0.94 /
+ * MRR 0.75 / F1 0.33 / stab 0.40; long r@5 1.00 / para 0.75 / MRR 0.9375 /
  * F1 0.33 / stab 0.20. Calibration notes per band:
  *
  * - short: everything alive; near-perfect is the honest bar.
@@ -182,7 +182,7 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
     thresholds: {
       // RECALL 9 re-baseline (see medium band). Measured 20-seed hash floor:
-      // r@5 100% (→ 0.95), MRR min 0.9375 (→ 0.88 with 5pp headroom).
+      // r@5 100% (→ 0.95), MRR min 0.9375 (− 5pp = 0.8875, set to 0.88).
       recallAt5: 0.95,
       mrr: 0.88,
       // Paraphrase recall is no longer 0/decay-bound here either: even at the
@@ -190,7 +190,9 @@ export const BANDS: Record<EvalBand, BandSpec> = {
       // brings back consolidated episodic targets. Measured 75% flat across
       // the 20-seed hash sweep; nomic seed-min 75%, max 100%. Threshold is
       // measured-min minus 5pp. (Plain recall stays high because decay never
-      // deletes text — it only re-ranks — and resurrection re-promotes it.)
+      // deletes text — it only re-ranks — and resurrection re-promotes
+      // consolidated episodic records; dormant profile facts come back via
+      // slot recall, not resurrection.)
       paraphraseRecallAt5: 0.7,
       preferenceF1: 0.28,
       // 0% is CORRECT here, exactly parallel to identityExpected: false: a
