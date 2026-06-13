@@ -98,7 +98,7 @@ git commit -m "docs(usage): add §2 tour (sessions, tools, skills, subagents, sc
 
 - **§3.1 The north star: ytsejam is a harness, not a chat app.** Skills are cheap (markdown); server code is expensive and sticky (TypeScript, gate, deploy). As a user this means: before asking for a new feature, ask whether a skill or a memory pattern does the job. Resist (a) adding more to the server and (b) abandoning ytsejam for the next shiny thing — both killed predecessors.
 - **§3.2 The harness-check.** Before adding/asking for something new, ask: does this generalize across projects? Does it survive the next agent fad? Does it earn its place vs an existing skill? Link to the harness-check wiki topic if available; otherwise quote the gist.
-- **§3.3 The operating cadence.** Weekly: `/housekeeping` then `/reflect` in the same session (cleaned state → reflection sees it). Monthly: `/evolve`. `/foresight` weekly or on demand. **Burst caveat (one-liner with pointer):** "Weekly is the floor, not the ceiling. When you're burning a lot of tokens — a multi-day push, a research blitz — run the pair more often. See [MEMORY §1.7](MEMORY.md#§17-the-pipeline--narrative) for the signal and why." Anti-pattern: running every skill every day during a *normal week* is theatrical.
+- **§3.3 The operating cadence.** Weekly: `/housekeeping` then `/reflect` in the same session (cleaned state → reflection sees it). Monthly: `/evolve`. `/foresight` weekly or on demand. **Burst caveat (one-liner with pointer):** "Weekly is the floor, not the ceiling. When you're burning a lot of tokens — a multi-day push, a research blitz — run the pair more often. See [MEMORY §1.7](MEMORY.md#17-the-pipeline--narrative) for the signal and why." Anti-pattern: running every skill every day during a *normal week* is theatrical.
 - **§3.4 What NOT to ask it to do.** Don't ask it to restart itself if it's the live process (self-modification hazard — kills your live session mid-turn). Don't ask it to do destructive things without staging them. Don't expect it to remember a single off-hand remark forever — surface important facts so it captures them properly. Don't run pipeline skills daily in steady state.
 - **§3.5 Self-modification footnote.** Only relevant if ytsejam is your substrate (you're running the agent that's editing itself). Source edits to the repo are safe; `systemctl --user restart ytsejam` kills the live session. Normally Brian's gotcha, flagged here for any friend who decides to fork and run as their own substrate.
 
@@ -160,7 +160,7 @@ Part 1 — Concepts (≈200-300 lines):
   - On demand: `/foresight`, `/history`, `/cog`.
   - **Burst caveat (canonical sentence):** "The cadence assumes steady-state usage. When you're burning a lot of tokens — a deep multi-day push on one project, a research blitz, anything that's generating observations faster than usual — run `/housekeeping` + `/reflect` more often (every couple of days, or daily during a real burst). The signal is observation volume, not the calendar."
   - Anti-pattern: running every skill every day in a *normal week* is theatrical.
-  - Pointer: skill *catalog* — names + invocation — is in [USAGE.md §2.5](USAGE.md#§25-skills--the-catalog). This section narrates the cadence.
+  - Pointer: skill *catalog* — names + invocation — is in [USAGE.md §2.5](USAGE.md#25-skills--the-catalog). This section narrates the cadence.
 
 ### Step 2: Verify
 
@@ -201,7 +201,7 @@ Part 2 — Cookbook header: one paragraph framing — "Each entry below is a ver
   8. **Rebuild generated indexes.** When (after manual edits to many files) and how — re-run `/housekeeping`, which rebuilds the glacier index, wiki index, and link index. The agent can also call individual RPC methods (`glacier_index_compute`, `wiki_index_compute`, `link_index_compute`) on request.
 
 - **§2.2 Weekly maintenance** (≈3 tasks, ≈60 lines).
-  1. **Run the weekly cadence properly.** `/housekeeping` first (in a fresh session, ideally), then `/reflect` in the SAME session — `/reflect` needs to see the cleaned state. **Burst reminder (canonical for cookbook):** "If you're in a burst, drop the 'weekly' frame and run on volume. Any time `observations.md` is filling fast or hot-memory feels stale, run the pair. See [§1.7](#§17-the-pipeline--narrative) for the signal."
+  1. **Run the weekly cadence properly.** `/housekeeping` first (in a fresh session, ideally), then `/reflect` in the SAME session — `/reflect` needs to see the cleaned state. **Burst reminder (canonical for cookbook):** "If you're in a burst, drop the 'weekly' frame and run on volume. Any time `observations.md` is filling fast or hot-memory feels stale, run the pair. See [§1.7](#17-the-pipeline--narrative) for the signal."
   2. **Read the reflect output.** What gets promoted (new pattern in `cog-meta/patterns.md`), what gets dropped (didn't pass the cluster/coverage/synthesis gates), why each decision. The 3 gates explained at user-facing level: cluster (≥3 entries, ≥7 day span, ≥3 distinct dates, specific tag), coverage (skip if existing pattern covers it; REPLACE when new subsumes old), synthesis (one actionable line + `<!-- promoted:YYYY-MM-DD theme:tag -->` audit trail).
   3. **Handle a heating topic (spike).** ≥5 entries in <7 days = heating topic / thread candidate (not pattern-ready). What to do: consider raising a thread file with the spine Current State → Timeline → Insights. The agent can do this for you via `/reflect`'s spike-handling, or you can author it manually.
 
@@ -274,7 +274,7 @@ git commit -m "docs(memory): add Part 2 cookbook §2.1–§2.4 (day-to-day, week
   - **Glacier thresholds:** observations >50 → archive oldest; action-items >10 done → archive done.
   - **Consolidation gates summary:** cluster (≥3/≥7d/≥3 dates/specific tag), coverage (skip or REPLACE), synthesis (one actionable line + audit trail).
   - **Pipeline cadence one-liner + burst caveat one-liner.**
-  - Pointer to [USAGE §2.5](USAGE.md#§25-skills--the-catalog) for the skill catalog.
+  - Pointer to [USAGE §2.5](USAGE.md#25-skills--the-catalog) for the skill catalog.
   - Pointer to [`docs/memory/FORMAT.md`](memory/FORMAT.md) for implementer-level depth (on-disk format spec).
 
 ### Step 2: Verify
