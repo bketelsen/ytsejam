@@ -47,7 +47,7 @@ describe("ltmReplay CLI", () => {
     await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
       join(dataDir, "memory", "personal", "observations.md"),
-      "- 2026-06-10 [a]: good\nMALFORMED\n",
+      "- 2026-06-10 [a]: good\n- not-a-date [bad]: malformed\n",
     );
     const code = await ltmReplay({
       dataDir,
