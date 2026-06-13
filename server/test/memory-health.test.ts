@@ -1,13 +1,12 @@
-import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, test } from "node:test";
-import { EventBus } from "./events.ts";
-import { PiAuthStore } from "./pi-auth.ts";
-import { PersonaStore } from "./persona.ts";
-import { createApp, type AppDeps } from "./server.ts";
-import * as memory from "./memory/index.ts";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { EventBus } from "../src/events.ts";
+import { PiAuthStore } from "../src/pi-auth.ts";
+import { PersonaStore } from "../src/persona.ts";
+import { createApp, type AppDeps } from "../src/server.ts";
+import * as memory from "../src/memory/index.ts";
 
 let tmpData: string;
 let oldMemoryDir: string | undefined;
@@ -72,20 +71,20 @@ describe("GET /api/memory/health", () => {
 
     const res = await app.request("/api/memory/health", { headers: auth });
 
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { ltm: { reachable: true, consecutiveFailures: 0 } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ltm: { reachable: true, consecutiveFailures: 0 } });
   });
 
   test("returns null LTM health when no reconciler is attached", async () => {
     const res = await app.request("/api/memory/health", { headers: auth });
 
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { ltm: null });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ltm: null });
   });
 
   test("requires a bearer token", async () => {
     const res = await app.request("/api/memory/health");
 
-    assert.equal(res.status, 401);
+    expect(res.status).toBe(401);
   });
 });
