@@ -11,6 +11,19 @@ type Logger = (level: "warn" | "info", msg: string, meta?: object) => void;
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
+// Top-level entries that the reconciler must NOT walk. .git contains pack
+// files (zero observations, lots of cost on every scan). glacier holds
+// YAML-fronted archives that do not parse as raw observation lines and may
+// already be represented in LTM via LTM's own consolidation path -- crossing
+// the streams would mis-mirror cold storage as fresh observations.
+const SKIP_TOP_LEVEL = new Set<string>(["glacier"]);
+
+function isSkippableDir(name: string): boolean {
+  // Hidden dirs (.git, .obsidian, .vscode, ...) plus the explicit skip set.
+  if (name.startsWith(".")) return true;
+  return SKIP_TOP_LEVEL.has(name);
+}
+
 export type ReconcileStats = {
   scannedFiles: number;
   scannedLines: number;
@@ -38,6 +51,10 @@ export type Health = {
  * - per-line ltm.hasObservation(origin) dedups within a changed file.
  * - per-line errors are isolated (logged + counted, do not abort tick).
  * - tick-level errors (e.g. unreachable dataDir) bump consecutiveFailures.
+ * - lines are split on /\r?\n/ and trimmed before hashing so CRLF files
+ *   (from external editors / `git checkout core.autocrlf=true`) dedup
+ *   against the live path's clean origins.
+ * - skips dot-directories and `glacier/` (cold archives are out of scope).
  */
 export class LtmReconciler {
   private readonly ltm: MemorySystem;
@@ -47,7 +64,7 @@ export class LtmReconciler {
   private readonly mtimeCache = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
-  private health_: Health = {
+  private state: Health = {
     reachable: true,
     consecutiveFailures: 0,
   };
@@ -65,8 +82,10 @@ export class LtmReconciler {
       opts.logger ??
       ((level, msg, meta) => {
         const tag = `[ltm-reconciler]`;
-        if (level === "warn") console.warn(`${tag} ${msg}`, meta ?? "");
-        else console.info(`${tag} ${msg}`, meta ?? "");
+        const args =
+          meta === undefined ? [`${tag} ${msg}`] : [`${tag} ${msg}`, meta];
+        if (level === "warn") console.warn(...args);
+        else console.info(...args);
       });
   }
 
@@ -86,8 +105,24 @@ export class LtmReconciler {
     if (this.inFlight) await this.inFlight;
   }
 
+  /**
+   * Returns a structurally cloned health snapshot. Mutating the returned
+   * object (including its nested `lastTickStats`) does NOT mutate the
+   * reconciler's internal state -- callers (CLI, server.health()) can
+   * freely retain references.
+   */
   health(): Health {
-    return { ...this.health_ };
+    const h = this.state;
+    const snap: Health = {
+      reachable: h.reachable,
+      consecutiveFailures: h.consecutiveFailures,
+    };
+    if (h.lastError !== undefined)
+      snap.lastError = { ...h.lastError };
+    if (h.lastTickAt !== undefined) snap.lastTickAt = h.lastTickAt;
+    if (h.lastTickStats !== undefined)
+      snap.lastTickStats = { ...h.lastTickStats };
+    return snap;
   }
 
   private async tickSafe(): Promise<void> {
@@ -131,7 +166,13 @@ export class LtmReconciler {
         }
         stats.scannedFiles++;
         const content = await readFile(file, "utf8");
-        const lines = content.split("\n").filter((l) => l.trim().length > 0);
+        // Split on /\r?\n/ AND trim each line so CRLF and trailing-whitespace
+        // lines hash to the same origin as the live write path's clean lines.
+        // Filter empties.
+        const lines = content
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0);
         for (let i = 0; i < lines.length; i++) {
           stats.scannedLines++;
           await this.processLine(file, lines[i]!, i, stats);
@@ -152,7 +193,15 @@ export class LtmReconciler {
     lineNum: number,
     stats: ReconcileStats,
   ): Promise<void> {
-    const { domainPath, filename } = this.splitFilePath(file);
+    const split = this.splitFilePath(file);
+    if (!split) {
+      stats.errors++;
+      this.logger("warn", `skipping observations.md at unexpected path`, {
+        file,
+      });
+      return;
+    }
+    const { domainPath, filename } = split;
     const parsed = parseObservationLine(line);
     if (!parsed) {
       stats.errors++;
@@ -181,23 +230,42 @@ export class LtmReconciler {
 
   private async findObservationFiles(): Promise<string[]> {
     const results: string[] = [];
-    const walk = async (dir: string): Promise<void> => {
+    const root = this.dataDir;
+    const walk = async (dir: string, depth: number): Promise<void> => {
       const entries = await readdir(dir, { withFileTypes: true });
       for (const e of entries) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) await walk(full);
-        else if (e.isFile() && e.name === "observations.md") results.push(full);
+        if (e.isDirectory()) {
+          // Skip dot-directories at any depth and the configured top-level
+          // skip set when we're directly under the dataDir root.
+          if (e.name.startsWith(".")) continue;
+          if (depth === 0 && SKIP_TOP_LEVEL.has(e.name)) continue;
+          await walk(join(dir, e.name), depth + 1);
+        } else if (e.isFile() && e.name === "observations.md") {
+          results.push(join(dir, e.name));
+        }
       }
     };
-    await walk(this.dataDir);
+    // Use isSkippableDir for symmetry: root itself never gets checked
+    // (we always descend it), but the helper documents the rule.
+    void isSkippableDir;
+    await walk(root, 0);
     return results;
   }
 
-  private splitFilePath(file: string): { domainPath: string; filename: string } {
+  /**
+   * Split an absolute observations.md path into (domainPath, filename).
+   * Returns null for paths that sit directly under dataDir with no domain
+   * subdir -- a layout the cog memory contract does not produce, so we
+   * skip rather than mint a garbage domainPath.
+   */
+  private splitFilePath(
+    file: string,
+  ): { domainPath: string; filename: string } | null {
     const rel = file.startsWith(this.dataDir + "/")
       ? file.slice(this.dataDir.length + 1)
       : file;
     const lastSlash = rel.lastIndexOf("/");
+    if (lastSlash <= 0) return null; // top-level or empty domain -> skip
     return {
       domainPath: rel.slice(0, lastSlash),
       filename: rel.slice(lastSlash + 1),
@@ -206,21 +274,21 @@ export class LtmReconciler {
 
   private bumpTickError(err: Error, stats: ReconcileStats): void {
     stats.errors++;
-    this.health_.consecutiveFailures++;
-    this.health_.lastError = {
+    this.state.consecutiveFailures++;
+    this.state.lastError = {
       message: err.message,
       at: new Date().toISOString(),
     };
-    this.health_.reachable = false;
+    this.state.reachable = false;
     this.logger("warn", `tick error: ${err.message}`);
   }
 
   private recordTick(stats: ReconcileStats): void {
-    this.health_.lastTickAt = new Date().toISOString();
-    this.health_.lastTickStats = stats;
+    this.state.lastTickAt = new Date().toISOString();
+    this.state.lastTickStats = stats;
     if (stats.errors === 0) {
-      this.health_.consecutiveFailures = 0;
-      this.health_.reachable = true;
+      this.state.consecutiveFailures = 0;
+      this.state.reachable = true;
     }
   }
 }
