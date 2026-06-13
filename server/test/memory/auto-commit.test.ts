@@ -135,4 +135,90 @@ describe("memory auto-commit cadence", () => {
     const dirtyLines = dirty ? dirty.split("\n").length : 0;
     expect(dirtyLines).toBeLessThan(AUTO_COMMIT_EVERY);
   });
+
+  test("write/append/patch hooks: the 10th call across primitives triggers a commit", async () => {
+    // Domains.yml so append/patch's rejectIDAsPath has something to read.
+    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
+    const memory = await import("../../src/memory/index.ts");
+    // 4 writes (all on allow-listed paths)
+    await memory.write("domains.yml", "version: 1\ndomains: []\n");
+    await memory.write("link-index.md", "x\n");
+    await memory.write("glacier/index.md", "y\n");
+    await memory.write("cog-meta/reflect-cursor.md", "z\n");
+    // 3 appends (append has no whole-file allow-list; any non-observations path works)
+    for (let i = 0; i < 3; i++) {
+      await memory.append(`note-${i}.md`, "hello\n");
+    }
+    // 2 patches (patch has no whole-file allow-list either)
+    await memory.patch("note-0.md", "hello", "world");
+    await memory.patch("note-1.md", "hello", "world");
+    // 9 writes total — no auto-commit yet.
+    expect(gitLog().trim().split("\n")).toHaveLength(1);
+    // 10th: another append → cadence commit fires.
+    await memory.append("note-9.md", "tenth\n");
+    const log = gitLog().trim().split("\n");
+    expect(log).toHaveLength(2);
+    expect(log[0]).toContain("auto: 10 memory writes");
+  });
+
+  test("move bumps the counter", async () => {
+    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
+    const memory = await import("../../src/memory/index.ts");
+    // 9 appends to put us one short of the threshold.
+    for (let i = 0; i < 9; i++) {
+      await memory.append(`x-${i}.md`, "x\n");
+    }
+    expect(gitLog().trim().split("\n")).toHaveLength(1);
+    // Seed an allow-listed source DIRECTLY on disk (skip memory.write so
+    // the counter stays at 9). INDEX.md is allow-listed for any prefix
+    // → we can move between two project INDEX paths.
+    await mkdir(join(root, "projects", "foo"), { recursive: true });
+    await writeFile(join(root, "projects", "foo", "INDEX.md"), "src\n");
+    await memory.move("projects/foo/INDEX.md", "projects/bar/INDEX.md");
+    // 10th write → commit fires.
+    const log = gitLog().trim().split("\n");
+    expect(log).toHaveLength(2);
+    expect(log[0]).toContain("auto: 10 memory writes");
+  });
+
+  test("failed mutations do NOT bump the counter", async () => {
+    // Negative-path coverage: the hook must run AFTER a successful mutation,
+    // never before. A rejected write/append/patch/move leaves the counter
+    // unchanged so it can't poison the next session's cadence.
+    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
+    const memory = await import("../../src/memory/index.ts");
+    // 9 SUCCESSFUL appends to put the counter at 9.
+    for (let i = 0; i < 9; i++) {
+      await memory.append(`ok-${i}.md`, "ok\n");
+    }
+    expect(gitLog().trim().split("\n")).toHaveLength(1);
+
+    // write to a non-allow-listed path → should throw, must NOT bump.
+    await expect(memory.write("not-allowed.md", "x\n"))
+      .rejects.toThrow(/write path not allowed/);
+
+    // append to a path that uses a domain-id as its top-level path → throws.
+    await writeFile(join(root, "domains.yml"),
+      "version: 1\ndomains:\n  - id: foo\n    path: projects/foo\n");
+    await expect(memory.append("foo/things.md", "hello\n"))
+      .rejects.toThrow(/domain id used as path/);
+
+    // patch with oldText absent → throws.
+    await expect(memory.patch("ok-0.md", "NOT-THERE", "x"))
+      .rejects.toThrow(/oldText not found/);
+
+    // move to a non-allow-listed destination → throws.
+    await expect(memory.move("ok-1.md", "also-not-allowed.md"))
+      .rejects.toThrow(/write path not allowed/);
+
+    // Counter is still at 9 — no commit yet.
+    expect(gitLog().trim().split("\n")).toHaveLength(1);
+
+    // 10th SUCCESSFUL write fires the commit, proving the counter is at 9
+    // and not 13 (which it would be if failed mutations had bumped it).
+    await memory.append("ok-9.md", "ok\n");
+    const log = gitLog().trim().split("\n");
+    expect(log).toHaveLength(2);
+    expect(log[0]).toContain("auto: 10 memory writes");
+  });
 });
