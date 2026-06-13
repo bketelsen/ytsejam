@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { formatReport, runEval, BANDS } from "../src/eval/harness.ts";
+import { formatReport, formatBandedResult, runAllBands, runEval, BANDS } from "../src/eval/harness.ts";
 import { generateFixtures } from "../src/eval/synthetic.ts";
 import { readSessionFile } from "../src/session/reader.ts";
 
@@ -133,5 +133,22 @@ describe("decay bites (PLAN.md Task 1.3)", () => {
     const report = await runEval({ workDir: tmpDir(), seed: 42, band: "medium" });
     expect(report.stability).toBeLessThan(0.7);
     expect(report.stability).toBeGreaterThan(0); // learned at least once, though
+  });
+});
+
+describe("formatBandedResult does not spread strings (FOLLOWUP 4)", () => {
+  it("renders per-band detail blocks intact, not one character per line", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "ltm-fmt-"));
+    const result = await runAllBands({ workDir, seed: 42 });
+    const text = formatBandedResult(result);
+    // Every per-band detail block opens with "[<band>] <N> sessions"; if the
+    // string-spread bug returns, those characters get split onto their own
+    // lines and the substring is gone.
+    for (const band of ["[short]", "[medium]", "[long]"]) {
+      expect(text).toContain(band);
+    }
+    // No line should be a single character (the bug's signature).
+    const singleChar = text.split("\n").filter((l) => l.length === 1);
+    expect(singleChar.length).toBe(0);
   });
 });

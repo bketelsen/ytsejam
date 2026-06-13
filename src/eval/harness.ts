@@ -520,7 +520,7 @@ export function formatBandedResult(result: BandedEvalResult): string {
     ].join("  "),
   );
   return [
-    ...result.bands.map((b) => formatReport(b)).join("\n\n" + "─".repeat(72) + "\n\n"),
+    result.bands.map(formatReport).join("\n\n" + "─".repeat(72) + "\n\n"),
     "",
     "═".repeat(72),
     "Summary",
