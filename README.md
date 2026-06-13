@@ -81,11 +81,11 @@ session-by-session with a consolidation pass mid-horizon, and scores at
 horizon end. Thresholds are calibrated to measured behavior minus 5pp
 headroom and hold across a 20-seed sweep (60/60). Current measured numbers:
 
-| band   | horizon        | recall@5 | paraphrase r@5 | MRR  | pref F1 | directives | identity | stability |
-|--------|----------------|----------|----------------|------|---------|------------|----------|-----------|
-| short  | 12 × 14d ≈ 6mo | 100%     | 75%            | 1.00 | 1.00    | 100%       | yes      | 100%      |
-| medium | 24 × 30d ≈ 2yr | 88%      | 0%             | 0.69 | 0.33    | 100%       | yes*     | 40%       |
-| long   | 24 × 60d ≈ 4yr | 88%      | 0%             | 0.88 | 0.33    | 0%         | no       | 20%       |
+| band   | horizon        | recall@5 | paraphrase r@5 | MRR        | pref F1 | directives | identity | stability |
+|--------|----------------|----------|----------------|------------|---------|------------|----------|-----------|
+| short  | 12 × 14d ≈ 6mo | 100%     | 75%            | 1.00       | 1.00    | 100%       | yes      | 100%      |
+| medium | 24 × 30d ≈ 2yr | 100%     | 75%            | 0.75 (min) | 0.33    | 100%       | yes*     | 40%       |
+| long   | 24 × 60d ≈ 4yr | 100%     | 75%            | 0.9375 (min)| 0.33   | 0%         | no       | 20%       |
 
 The medium/long erosion is **decay working as designed**, and the test
 suite asserts it (a change that silently re-calibrates decay away fails):
@@ -97,7 +97,10 @@ lowered floor). The medium and long bands also lower `directiveFloor` to
 single-assertion directives at 100% (threshold 0.95), while the long band
 proves they still retire at ~4 years of disuse exactly like identity.
 Episodic recall stays high at every horizon because decay re-ranks, it
-never deletes.
+never deletes. Decay governs **unprompted** surfacing — profile-based
+metrics (pref F1, directives, identity, stability) are unchanged; direct
+questions can now recover past the decay floor via strong-cue recall
+(see below), returned stale-marked.
 
 Paraphrase probes share no content words with their plants. 75% at short
 horizon comes from slot-aware profile promotion (employer/allergy/
@@ -106,21 +109,59 @@ remaining misses are episodic-only facts that need a real embedder.
 
 ### With Ollama (`nomic-embed-text`, default seed)
 
-| band   | recall@5 | paraphrase r@5     | paraphrase MRR |
-|--------|----------|--------------------|----------------|
-| short  | 100%     | **100%** (hash 75%) | 0.82           |
-| medium | 88%      | 0%                 | 0.00           |
-| long   | 88%      | 0%                 | 0.00           |
+| band   | recall@5 | paraphrase r@5           | paraphrase range (seeds 0–5) |
+|--------|----------|--------------------------|------------------------------|
+| short  | 100%     | **100%** (hash 75%)      | 87.5–100%                    |
+| medium | 100%     | **88%** (hash 75%)       | 75–100%                      |
+| long   | 100%     | **88%** (hash 75%)       | 75–100%                      |
 
 The real embedder lifts exactly where embeddings can matter: the short
 band's episodic-only paraphrase misses (75% → 100% on the default seed,
-75–88% on other seeds vs hash's flat 75%). Medium/long paraphrase stays
-0% with `nomic-embed-text` and `mxbai-embed-large` alike — those probes
-target facts past their decay horizon at 24+ months, so the misses are
-decay-bound, not similarity-bound, and no embedder buys them back.
-Thresholds therefore stay at the band defaults (measured minus 5pp);
-the once-planned medium-band raise to 0.80 was aspirational and is not
-reachable by any embedder under the current decay design.
+87.5–100% on other seeds vs hash's flat 75%). With strong-cue recall,
+medium/long paraphrase rises to 75–88% — consolidated records are resurrected
+via a leave-one-out cosine z-score outlier test (`resurrectZ`, default 2.5),
+and dormant profile facts are promoted on direct slot questions.
+Thresholds are calibrated to measured behavior minus 5pp headroom:
+`paraphraseRecallAt5` 0.70, `recallAt5` 0.95, MRR 0.70/0.88 for medium/long.
+
+### Strong-cue recall
+
+A direct question is a strong retrieval cue that can recover memories past
+their decay floor, while decay continues to govern unprompted surfacing.
+
+**Slot recall of dormant facts.** Profile facts that fall below their decay
+floor land in a `dormant` section. A direct slot question (e.g. "Tell me
+about my sibling") with no above-floor answer promotes the strongest dormant
+fact, rendered with its age — "The user's sister is named Alice (last
+mentioned 2026-01-05)." — with `stale: true`. Generic identity predicates
+(name/role) only participate in dormancy recall when they are the query's
+sole matched slot, preventing incidental "called"/"name" tokens in unrelated
+questions from displacing real answers.
+
+**Rehearsal.** Recalling a dormant fact increments `recallCount` (rate-limited
+persistence), stretching the fact's disuse half-life: facts you keep asking
+about climb back above the floor; facts you stop asking about keep fading.
+Asking is not re-asserting — `lastSeenAt` is untouched, so you cannot
+accidentally anchor a stale fact to today.
+
+**Vector resurrection.** Consolidated episodic records remain in the vector
+index. A query whose cosine similarity to a candidate is a leave-one-out
+z-score outlier (≥ `resurrectZ`, default 2.5) over the candidate pool
+resurrects that record into results, marked `stale`. Returned resurrections
+take the normal access bump (slower decay next time). Lexical search still
+excludes consolidated records. Note: the twin-match ceiling is z≈2.98, so
+raising `resurrectZ` above 2.9 will silently break resurrection — don't raise
+it casually.
+
+**Mean-relative vector normalization.** The vector channel maps
+[pool mean, pool max] → [0,1] instead of cos/max, so tightly clustered
+real-embedder cosines stop losing their margins to the recency weight.
+
+**Observability.** Results carry `stale: true` when recalled from dormancy or
+resurrection; `ltm explain` marks them `[stale]` / `[consolidated]`;
+`LTM_RETRIEVAL_LOG` trace records include the flag. Consumers should phrase
+stale-recalled facts historically ("you mentioned last January that…") rather
+than as current assertions.
 
 ## Embedders
 
@@ -149,9 +190,8 @@ means re-ingesting, not migrating.
 
 ## Performance (bench, HashEmbedder)
 
-At 10k records: ingest ~16k turns/sec, retrieval p50 5.9ms / p99 11ms,
-consolidation ~7ms per 1k records. `npm run bench` fails below
-500 turns/sec ingest or 50ms p99 at 10k.
+At 10k records: ingest ~21k turns/sec, retrieval p99 5.7ms. `npm run bench`
+fails below 500 turns/sec ingest or 50ms p99 at 10k.
 
 ## When NOT to use this
 
@@ -171,7 +211,7 @@ consolidation ~7ms per 1k records. `npm run bench` fails below
 | session reader (pi v3, branch resolution, fork chains) | stable, fuzz-tested |
 | episodic store / decay / consolidation | stable; extractive summarizer is the PoC floor (LLM summarizer injectable) |
 | semantic extraction heuristics | PoC line: English regex patterns, precision-first; upgradeable to an LLM extractor behind the same candidate shapes |
-| retrieval (hybrid + MMR + promotion) | stable with HashEmbedder; Ollama delivers the real-embedder paraphrase lift (short band); medium/long paraphrase is decay-bound by design |
+| retrieval (hybrid + MMR + promotion) | stable; strong-cue recall recovers dormant/consolidated targets on direct questions; decay governs unprompted surfacing |
 | redaction / audit | stable, round-trip tested |
 | eval harness / sweep / bench | stable |
 | LocalEmbedder | shape-tested seam; the Ollama path is the working semantic mode |
