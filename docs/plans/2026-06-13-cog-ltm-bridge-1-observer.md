@@ -777,178 +777,40 @@ fallback to `memory.append`, section-specified fallback.
 ## Task 6: `LtmReconciler` class
 
 **Files:**
-- Create: `server/src/memory/bridge/ltm-reconciler.ts` (~150 LOC)
-- Test: `server/test/memory/bridge/ltm-reconciler.test.ts` (new)
+- Created: `server/src/memory/bridge/ltm-reconciler.ts`
+- Tests: `server/test/memory/bridge/ltm-reconciler.test.ts`
+- Test Coverage: **10/10** (`env -u NODE_ENV npm test --workspace server -- ltm-reconciler`)
 
-### Step 1: Write the failing tests
+`LtmReconciler` is the in-process safety net for observations that bypass the live cog write path. The normal mirror path remains `memory.recordObservation` / `cog_append`; the reconciler periodically walks `<dataDir>/**/observations.md`, parses each observation line with the already-shipped observer helpers, recomputes the deterministic `origin`, and only mirrors lines that `ltm.hasObservation(origin)` reports as missing. `MemorySystem.open(...)` is synchronous in this repository, so tests construct the LTM store without `await`, and test/source imports use `.ts` extensions consistently.
 
-```ts
-// server/test/memory/bridge/ltm-reconciler.test.ts
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { MemorySystem } from "ltm";
-import { mkdtemp, rm, mkdir, writeFile, appendFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { LtmReconciler } from "../../../src/memory/bridge/ltm-reconciler.js";
+The scan is mtime-bounded: unchanged files are skipped using an in-memory `mtimeMs` cache, while `reconcile({ force: true })` deliberately ignores that cache for manual catch-up or corruption recovery. Force does **not** bypass per-line dedupe; already-mirrored origins still count as `skipped`. Errors are split by scope: malformed lines and `mirrorToLtm(...)` failures are logged and counted in `stats.errors` without aborting the tick or bumping health failure state; tick-level failures such as an unreachable `dataDir` increment `health.consecutiveFailures`, set `reachable: false`, and retain `lastError`.
 
-describe("LtmReconciler", () => {
-  let dataDir: string;
-  let ltmDir: string;
-  let ltm: MemorySystem;
-  let reconciler: LtmReconciler;
+Timer lifecycle follows the idempotent `start()` / `stop()` pattern from `server/src/scheduler.ts:129-141`, with one intentional addition: the interval handle is `.unref()`'d when available so a stuck reconciler timer cannot keep the process alive during shutdown. `stop()` clears the timer and awaits any in-flight tick. `health()` returns a shallow snapshot with `reachable`, optional `lastError`, `consecutiveFailures`, optional `lastTickAt`, and optional `lastTickStats`.
 
-  beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "recon-data-"));
-    ltmDir = await mkdtemp(join(tmpdir(), "recon-ltm-"));
-    ltm = await MemorySystem.open({ storeDir: ltmDir });
-  });
-  afterEach(async () => {
-    await reconciler?.stop();
-    ltm.close();
-    await rm(dataDir, { recursive: true, force: true });
-    await rm(ltmDir, { recursive: true, force: true });
-  });
+### Test list (10/10)
 
-  it("replays missed lines from observations.md on reconcile()", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
-    await writeFile(
-      join(dataDir, "personal", "observations.md"),
-      "- 2026-06-10 [a]: line one\n- 2026-06-11 [b]: line two\n",
-    );
-    reconciler = new LtmReconciler({ ltm, dataDir });
-    const stats = await reconciler.reconcile();
-    expect(stats.replayed).toBe(2);
-    expect(stats.scannedLines).toBe(2);
-    expect(stats.errors).toBe(0);
-  });
+1. Replays missed lines from `observations.md` on `reconcile()`.
+2. Skips already-mirrored lines on subsequent forced reconcile; `force` ignores only the mtime cache.
+3. Skips unchanged files via mtime cache when not forced.
+4. `force: true` re-walks unchanged files and still dedupes by origin.
+5. Isolates malformed-line errors so the remaining valid lines still replay.
+6. Walks nested domain paths such as `projects/ytsejam/observations.md`.
+7. `start()` / `stop()` timer lifecycle is idempotent and safe, including `stop()` before `start()`.
+8. Per-line LTM failure surfaces as `stats.errors` but does not bump `consecutiveFailures`.
+9. Tick-level throw from a bad `dataDir` increments `consecutiveFailures` on each failed tick.
+10. A successful tick clears `consecutiveFailures` and restores `reachable: true`.
 
-  it("skips already-mirrored lines on subsequent reconcile", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
-    await writeFile(
-      join(dataDir, "personal", "observations.md"),
-      "- 2026-06-10 [a]: line one\n",
-    );
-    reconciler = new LtmReconciler({ ltm, dataDir });
-    await reconciler.reconcile();
-    const second = await reconciler.reconcile({ force: true });
-    expect(second.replayed).toBe(0);
-    expect(second.skipped).toBe(1);
-  });
-
-  it("skips unchanged files via mtime cache when not forced", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
-    await writeFile(
-      join(dataDir, "personal", "observations.md"),
-      "- 2026-06-10 [a]: line one\n",
-    );
-    reconciler = new LtmReconciler({ ltm, dataDir });
-    await reconciler.reconcile();
-    const cached = await reconciler.reconcile();
-    expect(cached.scannedFiles).toBe(0);
-    expect(cached.scannedLines).toBe(0);
-  });
-
-  it("--force re-walks even unchanged files", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
-    await writeFile(
-      join(dataDir, "personal", "observations.md"),
-      "- 2026-06-10 [a]: line one\n",
-    );
-    reconciler = new LtmReconciler({ ltm, dataDir });
-    await reconciler.reconcile();
-    const forced = await reconciler.reconcile({ force: true });
-    expect(forced.scannedFiles).toBe(1);
-    expect(forced.skipped).toBe(1);
-  });
-
-  it("isolates per-line errors (malformed line doesn't stop the rest)", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
-    await writeFile(
-      join(dataDir, "personal", "observations.md"),
-      "- 2026-06-10 [a]: good\nMALFORMED\n- 2026-06-11 [b]: also good\n",
-    );
-    reconciler = new LtmReconciler({ ltm, dataDir });
-    const stats = await reconciler.reconcile();
-    expect(stats.replayed).toBe(2);
-    expect(stats.errors).toBe(1);
-  });
-
-  it("start() registers the timer and is idempotent", () => {
-    reconciler = new LtmReconciler({ ltm, dataDir, intervalMs: 1000 });
-    reconciler.start();
-    reconciler.start(); // should not stack
-    // no public observable for "interval count" — assertion is "no throw"
-    expect(reconciler.health().reachable).toBe(true);
-  });
-
-  it("stop() clears the timer and awaits in-flight tick", async () => {
-    reconciler = new LtmReconciler({ ltm, dataDir, intervalMs: 1000 });
-    reconciler.start();
-    await reconciler.stop();
-    // no observable but: stop() must not throw, and subsequent reconcile is callable
-    const stats = await reconciler.reconcile();
-    expect(stats.scannedFiles).toBeGreaterThanOrEqual(0);
-  });
-
-  it("health: transient failure does not climb consecutiveFailures past recovery", async () => {
-    await mkdir(join(dataDir, "personal"), { recursive: true });
-    await writeFile(
-      join(dataDir, "personal", "observations.md"),
-      "- 2026-06-10 [a]: line one\n",
-    );
-    reconciler = new LtmReconciler({ ltm, dataDir });
-    // inject a thrown tick via spying on a private method? simpler: use a fake LTM
-    const fakeLtm = {
-      hasObservation: () => false,
-      recordObservation: vi
-        .fn()
-        .mockRejectedValueOnce(new Error("boom"))
-        .mockResolvedValue(undefined),
-    } as unknown as MemorySystem;
-    await reconciler.stop();
-    reconciler = new LtmReconciler({ ltm: fakeLtm, dataDir });
-    const r1 = await reconciler.reconcile();
-    expect(r1.errors).toBe(1);
-    expect(reconciler.health().consecutiveFailures).toBe(0); // per-line, not per-tick
-    expect(reconciler.health().recentFailureCount).toBe(1);
-    const r2 = await reconciler.reconcile({ force: true });
-    expect(r2.errors).toBe(0);
-    expect(reconciler.health().recentFailureCount).toBe(0);
-  });
-
-  it("health: tick-level throw increments consecutiveFailures", async () => {
-    // Use a dataDir that doesn't exist to force a tick-level error
-    reconciler = new LtmReconciler({ ltm, dataDir: "/nonexistent-path-xyz-12345" });
-    const r1 = await reconciler.reconcile();
-    expect(r1.errors).toBeGreaterThanOrEqual(1);
-    expect(reconciler.health().consecutiveFailures).toBe(1);
-    const r2 = await reconciler.reconcile();
-    expect(reconciler.health().consecutiveFailures).toBe(2);
-  });
-});
-```
-
-### Step 2: Run tests to verify they fail
-
-Run: `env -u NODE_ENV npm test --workspace server -- ltm-reconciler`
-Expected: FAIL — module not found.
-
-### Step 3: Implement `LtmReconciler`
+### Code shape outline
 
 ```ts
-// server/src/memory/bridge/ltm-reconciler.ts
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
 import type { MemorySystem } from "ltm";
 import {
   parseObservationLine,
   computeOrigin,
   mirrorToLtm,
-} from "./ltm-observer.js";
+} from "./ltm-observer.ts";
 
 type Logger = (level: "warn" | "info", msg: string, meta?: object) => void;
-
-const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
 export type ReconcileStats = {
   scannedFiles: number;
@@ -962,227 +824,29 @@ export type Health = {
   reachable: boolean;
   lastError?: { message: string; at: string };
   consecutiveFailures: number;
-  recentFailureCount: number;
   lastTickAt?: string;
   lastTickStats?: ReconcileStats;
 };
 
 export class LtmReconciler {
-  private readonly ltm: MemorySystem;
-  private readonly dataDir: string;
-  private readonly intervalMs: number;
-  private readonly logger: Logger;
-  private readonly mtimeCache = new Map<string, number>();
-  private timer: NodeJS.Timeout | null = null;
-  private inFlight: Promise<void> | null = null;
-  private health_: Health = {
-    reachable: true,
-    consecutiveFailures: 0,
-    recentFailureCount: 0,
-  };
-
   constructor(opts: {
     ltm: MemorySystem;
     dataDir: string;
     intervalMs?: number;
     logger?: Logger;
-  }) {
-    this.ltm = opts.ltm;
-    this.dataDir = opts.dataDir;
-    this.intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
-    this.logger =
-      opts.logger ??
-      ((level, msg, meta) => {
-        if (level === "warn") console.warn(`[ltm-reconciler] ${msg}`, meta ?? "");
-        else console.info(`[ltm-reconciler] ${msg}`, meta ?? "");
-      });
-  }
+  });
 
-  start(): void {
-    if (this.timer) return; // idempotent
-    this.timer = setInterval(() => {
-      void this.tickSafe();
-    }, this.intervalMs);
-    if (typeof this.timer.unref === "function") this.timer.unref();
-  }
+  start(): void;
+  stop(): Promise<void>;
+  health(): Health;
+  reconcile(opts?: { force?: boolean }): Promise<ReconcileStats>;
 
-  async stop(): Promise<void> {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-    if (this.inFlight) await this.inFlight;
-  }
-
-  health(): Health {
-    return { ...this.health_ };
-  }
-
-  private async tickSafe(): Promise<void> {
-    if (this.inFlight) return; // skip if previous tick still running
-    this.inFlight = this.reconcile()
-      .then(() => undefined)
-      .catch((err) => {
-        this.logger("warn", `tick threw out-of-band: ${(err as Error).message}`);
-      })
-      .finally(() => {
-        this.inFlight = null;
-      });
-    await this.inFlight;
-  }
-
-  async reconcile(opts?: { force?: boolean }): Promise<ReconcileStats> {
-    const force = opts?.force ?? false;
-    const stats: ReconcileStats = {
-      scannedFiles: 0,
-      scannedLines: 0,
-      replayed: 0,
-      skipped: 0,
-      errors: 0,
-    };
-
-    let files: string[];
-    try {
-      files = await this.findObservationFiles();
-    } catch (err) {
-      this.bumpTickError(err as Error, stats);
-      return stats;
-    }
-
-    for (const file of files) {
-      try {
-        const st = await stat(file);
-        if (!force) {
-          const cached = this.mtimeCache.get(file);
-          if (cached !== undefined && st.mtimeMs <= cached) continue;
-        }
-        stats.scannedFiles++;
-        const content = await readFile(file, "utf8");
-        const lines = content.split("\n").filter((l) => l.trim().length > 0);
-        for (let i = 0; i < lines.length; i++) {
-          stats.scannedLines++;
-          await this.processLine(file, lines[i], i, stats);
-        }
-        this.mtimeCache.set(file, st.mtimeMs);
-      } catch (err) {
-        this.bumpTickError(err as Error, stats);
-      }
-    }
-
-    this.recordTick(stats);
-    return stats;
-  }
-
-  private async processLine(
-    file: string,
-    line: string,
-    lineNum: number,
-    stats: ReconcileStats,
-  ): Promise<void> {
-    const { domainPath, filename } = this.splitFilePath(file);
-    const parsed = parseObservationLine(line);
-    if (!parsed) {
-      stats.errors++;
-      this.logger("warn", `malformed line skipped`, {
-        file: `${domainPath}/${filename}`,
-        line: lineNum + 1,
-      });
-      return;
-    }
-    const origin = computeOrigin(domainPath, filename, line);
-    if (this.ltm.hasObservation(origin)) {
-      stats.skipped++;
-      return;
-    }
-    const result = await mirrorToLtm(this.ltm, parsed, origin);
-    if (result.ok) {
-      stats.replayed++;
-    } else {
-      stats.errors++;
-      this.logger("warn", `mirror failed`, {
-        origin,
-        error: result.error.message,
-      });
-    }
-  }
-
-  private async findObservationFiles(): Promise<string[]> {
-    // Walk dataDir for any */observations.md or */**/observations.md
-    const results: string[] = [];
-    const walk = async (dir: string) => {
-      const entries = await readdir(dir, { withFileTypes: true });
-      for (const e of entries) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) await walk(full);
-        else if (e.isFile() && e.name === "observations.md") results.push(full);
-      }
-    };
-    await walk(this.dataDir);
-    return results;
-  }
-
-  private splitFilePath(file: string): { domainPath: string; filename: string } {
-    const rel = file.startsWith(this.dataDir + "/")
-      ? file.slice(this.dataDir.length + 1)
-      : file;
-    const lastSlash = rel.lastIndexOf("/");
-    return {
-      domainPath: rel.slice(0, lastSlash),
-      filename: rel.slice(lastSlash + 1),
-    };
-  }
-
-  private bumpTickError(err: Error, stats: ReconcileStats): void {
-    stats.errors++;
-    this.health_.consecutiveFailures++;
-    this.health_.recentFailureCount++;
-    this.health_.lastError = {
-      message: err.message,
-      at: new Date().toISOString(),
-    };
-    this.health_.reachable = false;
-    this.logger("warn", `tick error: ${err.message}`);
-  }
-
-  private recordTick(stats: ReconcileStats): void {
-    this.health_.lastTickAt = new Date().toISOString();
-    this.health_.lastTickStats = stats;
-    if (stats.errors === 0) {
-      this.health_.consecutiveFailures = 0;
-      this.health_.recentFailureCount = 0;
-      this.health_.reachable = true;
-    }
-  }
+  // Private helpers: tickSafe(), processLine(), findObservationFiles(),
+  // splitFilePath(), bumpTickError(), recordTick().
 }
 ```
 
-### Step 4: Run tests to verify they pass
-
-Run: `env -u NODE_ENV npm test --workspace server -- ltm-reconciler`
-Expected: PASS (9/9).
-
-### Step 5: Run full gate
-
-Run: `scripts/gate.sh`
-Expected: PASSED.
-
-### Step 6: Commit
-
-```bash
-git add server/src/memory/bridge/ltm-reconciler.ts \
-        server/test/memory/bridge/ltm-reconciler.test.ts
-git commit -m "feat(memory): LtmReconciler — 5min timer + mtime-bounded scan + health
-
-In-process timer drives reconcile() ticks. Each tick walks
-<dataDir>/**/observations.md, respects an mtime cache (skips unchanged
-files), and uses ltm.hasObservation() to dedup. Per-line errors are
-isolated; tick-level errors bump health.consecutiveFailures and
-log WARNING. CLI use force:true to ignore mtime cache.
-
-Refs docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md (Task 6)."
-```
-
----
+Cross-refs: observer parsing/origin/mirror helpers live in `server/src/memory/bridge/ltm-observer.ts`; LTM's synchronous `MemorySystem.open(...)` and `hasObservation(origin)` contracts live in `packages/ltm/src/api/memory-system.ts`; lifecycle wiring is covered by Task 7.
 
 ## Task 7: Lifecycle wiring on server boot
 
