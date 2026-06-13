@@ -298,4 +298,36 @@ describe("LtmReconciler", () => {
     expect(fresh.lastTickStats?.replayed).toBe(1);
     expect(fresh.lastError?.message).not.toBe("tampered");
   });
+
+  it("emits exactly one INFO 'tick complete' summary per reconcile() with all five numeric fields", async () => {
+    // Mix a good line and a malformed line so we can also assert that the
+    // per-line WARN path (separate issue #100) is still emitted alongside
+    // the new INFO rollup -- the summary line is additive, not a replacement.
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: good line\nMALFORMED\n",
+    );
+    const logger = vi.fn();
+    reconciler = new LtmReconciler({ ltm, dataDir, logger });
+    await reconciler.reconcile();
+
+    const infoCalls = logger.mock.calls.filter(
+      (c) => c[0] === "info" && c[1] === "tick complete",
+    );
+    expect(infoCalls).toHaveLength(1);
+    const meta = infoCalls[0]![2] as Record<string, unknown>;
+    expect(typeof meta.scannedFiles).toBe("number");
+    expect(typeof meta.scannedLines).toBe("number");
+    expect(typeof meta.replayed).toBe("number");
+    expect(typeof meta.skipped).toBe("number");
+    expect(typeof meta.errors).toBe("number");
+
+    // The per-line malformed-line WARN must still fire -- this fix is the
+    // rollup line, NOT a replacement for the detail line (#100's scope).
+    const warnCalls = logger.mock.calls.filter(
+      (c) => c[0] === "warn" && c[1] === "malformed line skipped",
+    );
+    expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+  });
 });

@@ -187,6 +187,13 @@ export class LtmReconciler {
     }
 
     this.recordTick(stats);
+    this.logger("info", "tick complete", {
+      scannedFiles: stats.scannedFiles,
+      scannedLines: stats.scannedLines,
+      replayed: stats.replayed,
+      skipped: stats.skipped,
+      errors: stats.errors,
+    });
     return stats;
   }
 
