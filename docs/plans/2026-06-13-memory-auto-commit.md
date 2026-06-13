@@ -256,128 +256,97 @@ git commit -m "feat(memory): add auto-commit cadence module (counter + mutex)"
 - Modify: `server/src/memory/store/move.ts`
 - Test: `server/test/memory/auto-commit.test.ts` (extend)
 
+**Allow-list reference** (from `server/src/memory/store/paths.ts:62-70`, verify before writing tests):
+- `write` enforces `validateWholeFileWritePath` — only these paths pass: `domains.yml`, `link-index.md`, `glacier/index.md`, any `**/INDEX.md`, `cog-meta/{scenario-calibration,reflect-cursor,foresight-nudge,evolve-log,evolve-observations,scorecard}.md`, `cog-meta/scenarios/<single>.md`.
+- `append` and `patch` do NOT use the whole-file allow-list — they only enforce `rejectIDAsPath` (domain-id-as-path-prefix rejection) and the observations-format check (only when path ends with `observations.md`). Any other path works.
+- `move` enforces the whole-file allow-list on the DESTINATION; the source can be any path.
+
 ### Step 1: Write the failing tests for hook coverage
 
-Append to `server/test/memory/auto-commit.test.ts` (inside the describe block):
+Append THREE tests to `server/test/memory/auto-commit.test.ts` (inside the describe block). Use these EXACT shapes — they reflect the allow-list constraints above. Do not invent variants.
 
 ```typescript
-  test("write, append, patch, move all bump the counter", async () => {
-    // We need a domains.yml so rejectIDAsPath / validateWholeFileWritePath
-    // are happy when append/patch hit memory through the real surface.
+  test("write/append/patch hooks: the 10th call across primitives triggers a commit", async () => {
+    // Domains.yml so append/patch's rejectIDAsPath has something to read.
     await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
     const memory = await import("../../src/memory/index.ts");
-    // 3 appends + 3 patches + 3 moves = 9 writes (+1 = N).
-    // Each touches a fresh file so they don't collide.
-    for (let i = 0; i < 3; i++) {
-      await memory.append(`obs-${i}.md`, `hello ${i}\n`);
-    }
-    for (let i = 0; i < 3; i++) {
-      await memory.write(`tmp-${i}.md`, "init\n"); // 3 writes
-    }
-    // Now we are at 6 writes — no commit yet.
-    expect(gitLog().trim().split("\n")).toHaveLength(1);
-    for (let i = 0; i < 3; i++) {
-      await memory.patch(`tmp-${i}.md`, "init\n", `patched ${i}\n`);
-    }
-    // 9 writes — still no commit.
-    expect(gitLog().trim().split("\n")).toHaveLength(1);
-    await memory.move("tmp-0.md", "moved.md");
-    // 10 writes — commit fires.
-    const log = gitLog().trim().split("\n");
-    expect(log).toHaveLength(2);
-    expect(log[0]).toContain("auto: 10 memory writes");
-  });
-```
-
-NOTE: this test imports `memory/index.ts` to exercise the real surface,
-not the bare module. The `write` calls land at non-allow-listed paths
-(`tmp-0.md`), so we need to use a path that IS allow-listed. Switch
-those three `memory.write` calls to whole-file-write-allowed paths:
-
-```typescript
-    await memory.write("domains.yml", "version: 1\ndomains: []\n");
-    await memory.write("link-index.md", "x\n");
-    await memory.write("glacier/index.md", "y\n");
-```
-
-And drop the corresponding `memory.patch` calls (use 3 more appends
-instead so we still hit 9 mutations before the move):
-
-```typescript
-    for (let i = 3; i < 9; i++) {
-      await memory.append(`obs-${i}.md`, `hello ${i}\n`);
-    }
-    // 3 appends + 3 writes + 3 more appends = 9 writes.
-    expect(gitLog().trim().split("\n")).toHaveLength(1);
-    await memory.move("obs-0.md", "obs-moved.md");
-    // The move IS allow-listed only for whole-file-write paths; obs-moved.md
-    // is not on the allow-list, so move will reject. Use a path that IS:
-```
-
-Move's allow-list is narrow. Restructure: the 10th call is another
-`memory.append` (which never trips the allow-list), and we cover `move`
-in a SEPARATE small test:
-
-```typescript
-  test("write, append, patch all bump the counter; the 10th call triggers a commit", async () => {
-    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
-    const memory = await import("../../src/memory/index.ts");
-    // 4 writes (whole-file-allow-listed paths)
+    // 4 writes (all on allow-listed paths)
     await memory.write("domains.yml", "version: 1\ndomains: []\n");
     await memory.write("link-index.md", "x\n");
     await memory.write("glacier/index.md", "y\n");
     await memory.write("cog-meta/reflect-cursor.md", "z\n");
-    // 3 appends (non-observations.md paths to skip format validation)
+    // 3 appends (append has no whole-file allow-list; any non-observations path works)
     for (let i = 0; i < 3; i++) {
       await memory.append(`note-${i}.md`, "hello\n");
     }
-    // 2 patches
+    // 2 patches (patch has no whole-file allow-list either)
     await memory.patch("note-0.md", "hello", "world");
     await memory.patch("note-1.md", "hello", "world");
-    // We are at 9 writes — no commit yet.
+    // 9 writes total — no auto-commit yet.
     expect(gitLog().trim().split("\n")).toHaveLength(1);
-    // 10th: another append.
+    // 10th: another append → cadence commit fires.
     await memory.append("note-9.md", "tenth\n");
     const log = gitLog().trim().split("\n");
     expect(log).toHaveLength(2);
     expect(log[0]).toContain("auto: 10 memory writes");
   });
 
-  test("move bumps the counter too", async () => {
+  test("move bumps the counter", async () => {
     await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
     const memory = await import("../../src/memory/index.ts");
-    // 9 appends to put us at 9 writes.
+    // 9 appends to put us one short of the threshold.
     for (let i = 0; i < 9; i++) {
       await memory.append(`x-${i}.md`, "x\n");
     }
     expect(gitLog().trim().split("\n")).toHaveLength(1);
-    // Now move an allow-listed file as the 10th write.
-    await memory.write("domains.yml", "version: 1\ndomains: []\n");
-    // Reset to 9 by moving (rather than appending) — note we already have
-    // 10 writes now because of the line above. Restructure:
-  });
-```
-
-The "move bumps the counter" test is fiddly because `move` only accepts
-allow-listed destinations. Simplest reliable shape: pre-seed an
-allow-listed source, then move it to another allow-listed name. The
-`INDEX.md` suffix is allow-listed for ANY domain, so we can move
-between two `projects/X/INDEX.md` paths:
-
-```typescript
-  test("move bumps the counter too", async () => {
-    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
-    const memory = await import("../../src/memory/index.ts");
-    // 9 appends.
-    for (let i = 0; i < 9; i++) {
-      await memory.append(`x-${i}.md`, "x\n");
-    }
-    expect(gitLog().trim().split("\n")).toHaveLength(1);
-    // Seed an allow-listed file directly (not through memory.write so we
-    // don't bump the counter). Then move it — that's the 10th write.
-    await mkdir(join(root, "projects/foo"), { recursive: true });
-    await writeFile(join(root, "projects/foo/INDEX.md"), "src\n");
+    // Seed an allow-listed source DIRECTLY on disk (skip memory.write so
+    // the counter stays at 9). INDEX.md is allow-listed for any prefix
+    // → we can move between two project INDEX paths.
+    await mkdir(join(root, "projects", "foo"), { recursive: true });
+    await writeFile(join(root, "projects", "foo", "INDEX.md"), "src\n");
     await memory.move("projects/foo/INDEX.md", "projects/bar/INDEX.md");
+    // 10th write → commit fires.
+    const log = gitLog().trim().split("\n");
+    expect(log).toHaveLength(2);
+    expect(log[0]).toContain("auto: 10 memory writes");
+  });
+
+  test("failed mutations do NOT bump the counter", async () => {
+    // Negative-path coverage: the hook must run AFTER a successful mutation,
+    // never before. A rejected write/append/patch/move leaves the counter
+    // unchanged so it can't poison the next session's cadence.
+    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
+    const memory = await import("../../src/memory/index.ts");
+    // 9 SUCCESSFUL appends to put the counter at 9.
+    for (let i = 0; i < 9; i++) {
+      await memory.append(`ok-${i}.md`, "ok\n");
+    }
+    expect(gitLog().trim().split("\n")).toHaveLength(1);
+
+    // write to a non-allow-listed path → should throw, must NOT bump.
+    await expect(memory.write("not-allowed.md", "x\n"))
+      .rejects.toThrow(/write path not allowed/);
+
+    // append to a path that uses a domain-id as its top-level path → throws.
+    await writeFile(join(root, "domains.yml"),
+      "version: 1\ndomains:\n  - id: foo\n    path: projects/foo\n");
+    await expect(memory.append("foo/things.md", "hello\n"))
+      .rejects.toThrow(/domain id used as path/);
+
+    // patch with oldText absent → throws.
+    await expect(memory.patch("ok-0.md", "NOT-THERE", "x"))
+      .rejects.toThrow(/oldText not found/);
+
+    // move to a non-allow-listed destination → throws.
+    await expect(memory.move("ok-1.md", "also-not-allowed.md"))
+      .rejects.toThrow(/write path not allowed/);
+
+    // Counter is still at 9 — no commit yet.
+    expect(gitLog().trim().split("\n")).toHaveLength(1);
+
+    // 10th SUCCESSFUL write fires the commit, proving the counter is at 9
+    // and not 13 (which it would be if failed mutations had bumped it).
+    await memory.append("ok-9.md", "ok\n");
     const log = gitLog().trim().split("\n");
     expect(log).toHaveLength(2);
     expect(log[0]).toContain("auto: 10 memory writes");
@@ -387,7 +356,7 @@ between two `projects/X/INDEX.md` paths:
 ### Step 2: Run tests to verify they fail
 
 Run: `npm test --workspace server -- auto-commit`
-Expected: FAIL — the new tests fail because `write`/`append`/`patch`/`move` don't call `maybeAutoCommit()` yet.
+Expected: FAIL for all three new tests — the existing `write`/`append`/`patch`/`move` don't call `maybeAutoCommit()` yet, so the 10th write never triggers a commit. The existing 6 tests must still pass.
 
 ### Step 3: Wire the hook into each mutation primitive
 
@@ -478,7 +447,7 @@ export async function move(from: string, to: string): Promise<OkResult> {
 ### Step 4: Run tests to verify they pass
 
 Run: `npm test --workspace server -- auto-commit`
-Expected: PASS for all auto-commit tests, including the two new ones.
+Expected: PASS for all 9 auto-commit tests (6 existing + 3 new).
 
 Also run the full memory store test suite:
 
@@ -489,7 +458,7 @@ Expected: PASS — no regressions.
 
 ```bash
 cd /tmp/feat-memory-auto-commit
-git add server/src/memory/store/{write,append,patch,move}.ts server/test/memory/auto-commit.test.ts
+git add server/src/memory/store/write.ts server/src/memory/store/append.ts server/src/memory/store/patch.ts server/src/memory/store/move.ts server/test/memory/auto-commit.test.ts
 git commit -m "feat(memory): call maybeAutoCommit from write/append/patch/move"
 ```
 
