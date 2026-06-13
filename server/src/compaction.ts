@@ -243,6 +243,8 @@ export function buildSurrenderMessage(
  * Fed to both formatDevLogLine (one-line cog dev-log entry) and
  * serializeJsonRecord (full structured record for per-session JSONL).
  */
+export type CompactionEntryPoint = "idle" | "inner_loop" | "reactive_path";
+
 export interface CompactionEvent {
   timestamp: Date;
   sessionId: string;
@@ -262,7 +264,7 @@ export interface CompactionEvent {
   compactionDurationMs: number;
   succeeded: boolean;
   backupPath: string;
-  entryPoint: "idle" | "inner_loop" | "reactive_path";
+  entryPoint: CompactionEntryPoint;
 }
 
 /**
@@ -271,7 +273,7 @@ export interface CompactionEvent {
  * Shape:
  *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
  *     <trigger>, <model>, ctx ~<before>→~<after> tokens, summary <S> tokens,
- *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
+ *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED] via=<entryPoint>
  */
 export function formatDevLogLine(e: CompactionEvent): string {
   const ts = e.timestamp.toISOString().replace("T", " ").slice(0, 19);
@@ -346,9 +348,8 @@ export function buildCompactionEvent(
   model: Model<any>,
   sessionFilePath: string,
   result: RunCompactionResult,
-  compactionEntry: any = {},
-  _devLogPath: string | undefined,
-  entryPoint: "idle" | "inner_loop" | "reactive_path",
+  compactionEntry: any,
+  entryPoint: CompactionEntryPoint,
 ): CompactionEvent {
   const pending = result.pending;
   const details = compactionEntry?.details ?? {};

@@ -547,7 +547,6 @@ export class AgentManager {
       sessionFilePath,
       result,
       enrichedEntry,
-      devLogPath,
     );
 
     // Dev-log entry — write to the cog memory dev-log file.

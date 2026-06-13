@@ -482,6 +482,8 @@ describe("buildCompactionEvent", () => {
           budget: 800_000,
         },
       },
+      {},
+      "idle",
     );
 
     expect(event.trigger).toBe("proactive");
@@ -505,6 +507,8 @@ describe("buildCompactionEvent", () => {
           budget: 800_000,
         },
       },
+      {},
+      "reactive_path",
     );
 
     expect(event.trigger).toBe("reactive");
@@ -528,6 +532,7 @@ describe("buildCompactionEvent", () => {
         },
       },
       { tokensBefore: 12_345 },
+      "reactive_path",
     );
 
     expect(event.tokensBeforeEstimated).toBe(12_345);
@@ -548,6 +553,8 @@ describe("buildCompactionEvent", () => {
           budget: 800_000,
         },
       },
+      {},
+      "idle",
     );
 
     expect(event.succeeded).toBe(false);
@@ -573,6 +580,7 @@ describe("buildCompactionEvent", () => {
         subagentTaskId: "task-abc",
         tokensAfter: 120_000,
       },
+      "idle",
     );
 
     expect(event.sessionId).toBe("parent-session-123");
@@ -603,6 +611,7 @@ describe("buildCompactionEvent", () => {
         tokensAfter: 250_000, // 2.5x over budget — should flip succeeded
         summaryTokens: 2000,
       },
+      "idle",
     );
     expect(event.succeeded).toBe(false);
     expect(event.reason).toMatch(/KEPT_SET_OVERSIZED/);
@@ -631,6 +640,7 @@ describe("buildCompactionEvent", () => {
         tokensAfter: 60_000, // under 100k budget
         summaryTokens: 2000,
       },
+      "idle",
     );
     expect(event.succeeded).toBe(true);
     expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);
@@ -660,6 +670,7 @@ describe("buildCompactionEvent", () => {
         tokensAfter: 60_000, // would pass the post-condition if checked
         summaryTokens: 2000,
       },
+      "idle",
     );
     expect(event.succeeded).toBe(false);
     expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);

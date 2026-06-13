@@ -408,7 +408,6 @@ export class TaskManager {
       sessionFilePath,
       result,
       enrichedEntry,
-      devLogPath,
     );
 
     await appendDevLogLine(formatDevLogLine(compactionEvent), devLogPath);
