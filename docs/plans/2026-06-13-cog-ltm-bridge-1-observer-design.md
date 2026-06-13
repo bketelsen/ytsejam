@@ -81,12 +81,24 @@ Pure, testable. No I/O. Exports:
 export type ParsedObservation = {
   text: string;          // body after "<date> [tags]: "
   timestamp: string;     // ISO at T00:00:00.000Z
-  tags: string[];        // [] if untagged
+  tags: string[];        // at least one tag; untagged lines are rejected
 };
 
 /** Parse one observation line. Returns null on malformed input. */
 export function parseObservationLine(line: string): ParsedObservation | null;
+```
 
+**Tags are mandatory** per the cog SSOT write validator in
+`server/src/memory/store/append.ts:7` (which requires `\[.+\]:`). The
+parser rejects untagged lines (returns null) to mirror the SSOT rule.
+The bridge therefore requires every observation to carry at least one
+tag — `recordObservation({tags: []})` is a programming error.
+
+**Dates must be calendar-valid**, not just structurally valid:
+`2026-13-99` and `2026-02-30` are rejected by re-constructing the date
+and confirming round-trip. Mirrors `consolidated/observations-parser.ts:11-12`.
+
+```ts
 /** Compute the content-addressed origin string. */
 export function computeOrigin(
   domainPath: string,    // e.g. "personal" or "projects/ytsejam"
@@ -298,7 +310,7 @@ npx ytsejam ltm replay --force
 
 | test | what it asserts |
 |------|----------------|
-| `parseObservationLine` shape variants | tagged / untagged / multi-tag / weird whitespace / malformed → null |
+| `parseObservationLine` shape variants | tagged / multi-tag / weird whitespace accepted; untagged / empty tags / invalid calendar dates / malformed → null |
 | `computeOrigin` collision distinguishability | same line text in two different files → distinct origins |
 | `recordObservation` cog-side correctness | line written to correct file with correct format; tags + timestamp round-trip |
 | `recordObservation` LTM-throw resilience | inject LTM that throws on `recordObservation` → cog write still succeeds, return value reflects truth |

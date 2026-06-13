@@ -60,15 +60,6 @@ describe("parseObservationLine", () => {
     });
   });
 
-  it("parses an untagged observation", () => {
-    const r = parseObservationLine("- 2026-06-13: a thing happened");
-    expect(r).toEqual({
-      text: "a thing happened",
-      timestamp: "2026-06-13T00:00:00.000Z",
-      tags: [],
-    });
-  });
-
   it("trims whitespace and tag entries", () => {
     const r = parseObservationLine("- 2026-06-13 [  ltm , bridge  ]:   spaced out  ");
     expect(r).toEqual({
@@ -97,6 +88,35 @@ describe("parseObservationLine", () => {
   it("handles multi-tag without spaces", () => {
     const r = parseObservationLine("- 2026-06-13 [a,b,c,d]: many tags");
     expect(r?.tags).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("returns null on untagged observation (tags required per cog SSOT)", () => {
+    expect(parseObservationLine("- 2026-06-13: missing tags")).toBeNull();
+  });
+
+  it("returns null on empty tag block [  ]", () => {
+    expect(parseObservationLine("- 2026-06-13 [  ]: tags spaces-only")).toBeNull();
+  });
+
+  it("returns null on empty tag block []", () => {
+    expect(parseObservationLine("- 2026-06-13 []: no tags")).toBeNull();
+  });
+
+  it("returns null on whitespace-only tag entries [, ,]", () => {
+    // split yields ["", " ", ""], all trimmed to "" and filtered -> tags.length === 0
+    expect(parseObservationLine("- 2026-06-13 [, ,]: no real tags")).toBeNull();
+  });
+
+  it("returns null on structurally-valid but invalid date (2026-13-99)", () => {
+    expect(parseObservationLine("- 2026-13-99 [x]: bad month and day")).toBeNull();
+  });
+
+  it("returns null on Feb 30", () => {
+    expect(parseObservationLine("- 2026-02-30 [x]: not a real day")).toBeNull();
+  });
+
+  it("returns null on embedded newline in body (regex stops at \n)", () => {
+    expect(parseObservationLine("- 2026-06-13 [x]: line one\nline two")).toBeNull();
   });
 });
 
@@ -143,20 +163,27 @@ export type ParsedObservation = {
   tags: string[];
 };
 
-const LINE_RE =
-  /^-\s+(\d{4}-\d{2}-\d{2})(?:\s+\[([^\]]*)\])?\s*:\s*(.+?)\s*$/;
+// Mirrors the cog SSOT validator in server/src/memory/store/append.ts:7.
+// Tags are MANDATORY (non-empty bracket block); body is mandatory and non-empty.
+const OBSERVATION_LINE_RE =
+  /^-\s+(\d{4}-\d{2}-\d{2})\s+\[([^\]]+)\]\s*:\s*(.+?)\s*$/;
 
 export function parseObservationLine(line: string): ParsedObservation | null {
-  const m = LINE_RE.exec(line);
+  const m = OBSERVATION_LINE_RE.exec(line);
   if (!m) return null;
   const [, date, tagBlock, text] = m;
   if (!text || !text.trim()) return null;
+  // Date validity: 2026-13-99 etc. would pass the shape regex but produce
+  // an Invalid Date downstream. Mirrors observations-parser.ts:11-12.
+  const d = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) {
+    return null;
+  }
   const tags = tagBlock
-    ? tagBlock
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0)
-    : [];
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  if (tags.length === 0) return null; // [   ] or [, ,] yields zero tags -> invalid per cog SSOT
   return {
     text: text.trim(),
     timestamp: `${date}T00:00:00.000Z`,
@@ -192,8 +219,9 @@ git add server/src/memory/bridge/ltm-observer.ts \
         server/test/memory/bridge/ltm-observer.test.ts
 git commit -m "feat(memory): parse + origin helpers for cog->LTM observer bridge
 
-Pure functions, no I/O. parseObservationLine handles tagged/untagged/
-whitespace-noisy variants, returns null on malformed input.
+Pure functions, no I/O. parseObservationLine requires tagged observations,
+handles whitespace-noisy variants, validates calendar dates, and returns null
+on malformed input.
 computeOrigin produces cog:<domainPath>/<filename>#<sha256-12> with a
 null byte separator so path and line text can't collide.
 
@@ -497,22 +525,14 @@ describe("memory.recordObservation", () => {
     }
   });
 
-  it("formats untagged observations without a [...] block", async () => {
+  it("rejects untagged observations (tags mandatory per cog SSOT)", async () => {
     const memory = await openMemory({ dataDir });
-    const ltm = await MemorySystem.open({ storeDir: ltmDir });
-    memory.attachLtm(ltm);
     try {
-      await memory.recordObservation({
-        domainPath: "personal",
-        text: "no tags here",
-        timestamp: new Date("2026-06-13T12:00:00Z"),
-      });
-      const file = await readFile(join(dataDir, "personal", "observations.md"), "utf8");
-      expect(file).toContain("- 2026-06-13: no tags here");
-      expect(file).not.toContain("[]");
+      await expect(
+        memory.recordObservation({ domainPath: "personal", text: "needs tags" }),
+      ).rejects.toThrow(/tags are mandatory/);
     } finally {
       memory.close();
-      ltm.close();
     }
   });
 
@@ -525,6 +545,7 @@ describe("memory.recordObservation", () => {
       await memory.recordObservation({
         domainPath: "personal",
         text: "now-ish",
+        tags: ["time"],
       });
       const file = await readFile(join(dataDir, "personal", "observations.md"), "utf8");
       expect(file).toContain(`- ${today}`);
@@ -546,6 +567,7 @@ describe("memory.recordObservation", () => {
       const r = await memory.recordObservation({
         domainPath: "personal",
         text: "still gets written",
+        tags: ["resilience"],
       });
       expect(r.cog.ok).toBe(true);
       expect(r.ltm.ok).toBe(false);
@@ -562,6 +584,7 @@ describe("memory.recordObservation", () => {
       const r = await memory.recordObservation({
         domainPath: "personal",
         text: "cog only",
+        tags: ["cog"],
       });
       expect(r.cog.ok).toBe(true);
       // ltm reports a clean "not configured" shape, not an error
@@ -610,9 +633,12 @@ export async function recordObservation(args: {
 }> {
   const ts = args.timestamp ?? new Date();
   const date = ts.toISOString().slice(0, 10);
-  const tagBlock =
-    args.tags && args.tags.length > 0 ? ` [${args.tags.join(",")}]` : "";
-  const line = `- ${date}${tagBlock}: ${args.text}`;
+  if (!args.tags || args.tags.length === 0) {
+    throw new Error(
+      "recordObservation: tags are mandatory (cog SSOT validator requires [...]). Pass at least one tag.",
+    );
+  }
+  const line = `- ${date} [${args.tags.join(",")}]: ${args.text}`;
 
   const path = `${args.domainPath}/observations.md`;
   await append(path, line + "\n");
