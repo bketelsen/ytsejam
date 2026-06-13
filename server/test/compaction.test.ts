@@ -20,6 +20,13 @@ vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
     prepareCompaction: vi.fn(),
   };
 });
+vi.mock("../src/compaction.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/compaction.ts")>();
+  return {
+    ...actual,
+    runInlineCompactionInLoop: vi.fn(actual.runInlineCompactionInLoop),
+  };
+});
 import type {
   AgentHarness,
   AgentMessage,
@@ -31,6 +38,8 @@ import {
   compact,
   prepareCompaction,
 } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
+
 import {
   computeReserveTokens,
   buildSettings,
@@ -1095,6 +1104,167 @@ describe("buildSurrenderAgentMessage", () => {
       totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     });
+  });
+});
+
+describe("AgentManager.runPendingInlineCompactionInLoop", () => {
+  let faux: ReturnType<typeof setupFaux>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    faux = setupFaux();
+  });
+
+  afterEach(() => {
+    faux.unregister();
+  });
+
+  const pending = () => ({
+    trigger: "proactive" as const,
+    reason: "test",
+    tokensBefore: 100,
+    budget: 50_000,
+  });
+
+  const branchEntries = () => [
+    {
+      type: "message",
+      id: "entry-1",
+      parentId: null,
+      timestamp: "2026-06-13T00:00:00.000Z",
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    },
+  ];
+
+  it("happy path: emits markCompactionStart + markCompactionEnd('succeeded') + recordCompactionEvent and returns newMessages", async () => {
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+    opened.compaction.pendingCompaction = pending();
+
+    const newMessages = [
+      {
+        role: "compactionSummary",
+        summary: "X",
+        tokensBefore: 100,
+        timestamp: "2026-06-13T00:00:01.000Z",
+      },
+    ] as unknown as AgentMessage[];
+    const inlineResult = {
+      fired: true,
+      succeeded: true,
+      newMessages,
+      compactionEntryId: "ce-1",
+      durationMs: 10,
+      pending: pending(),
+    };
+    vi.mocked(runInlineCompactionInLoop).mockResolvedValueOnce(inlineResult);
+
+    const markStart = vi.spyOn(manager as any, "markCompactionStart");
+    const markEnd = vi.spyOn(manager as any, "markCompactionEnd");
+    const recordEvent = vi
+      .spyOn(manager as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(manager as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const result = await (manager as any).runPendingInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      "inner_loop",
+    );
+
+    expect(markStart).toHaveBeenCalledOnce();
+    expect(markStart).toHaveBeenCalledWith(opened, "proactive");
+    expect(markEnd).toHaveBeenCalledOnce();
+    expect(markEnd).toHaveBeenCalledWith(opened, "succeeded");
+    expect(recordEvent).toHaveBeenCalledOnce();
+    expect(recordEvent).toHaveBeenCalledWith(
+      opened,
+      inlineResult,
+      { firstKeptEntryId: "ce-1" },
+      "inner_loop",
+    );
+    expect(emitSurrender).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.surrendered).toBe(false);
+    expect(result.newMessages).toBe(newMessages);
+  });
+
+  it("surrender path: emits markCompactionEnd('surrendered') + recordCompactionEvent + emitCompactionSurrender, returns surrendered", async () => {
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+    opened.compaction.pendingCompaction = pending();
+
+    const inlineResult = {
+      fired: true,
+      succeeded: false,
+      surrendered: true,
+      error: new Error("verify failed"),
+      durationMs: 10,
+      backupPath: "/tmp/foo.bak",
+      pending: pending(),
+    };
+    vi.mocked(runInlineCompactionInLoop).mockResolvedValueOnce(inlineResult);
+
+    const markStart = vi.spyOn(manager as any, "markCompactionStart");
+    const markEnd = vi.spyOn(manager as any, "markCompactionEnd");
+    const recordEvent = vi
+      .spyOn(manager as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(manager as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const result = await (manager as any).runPendingInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      "inner_loop",
+    );
+
+    expect(markStart).toHaveBeenCalledOnce();
+    expect(markStart).toHaveBeenCalledWith(opened, "proactive");
+    expect(markEnd).toHaveBeenCalledOnce();
+    expect(markEnd).toHaveBeenCalledWith(opened, "surrendered");
+    expect(recordEvent).toHaveBeenCalledOnce();
+    expect(emitSurrender).toHaveBeenCalledOnce();
+    expect(emitSurrender).toHaveBeenCalledWith(opened);
+    expect(result.ok).toBe(false);
+    expect(result.surrendered).toBe(true);
+    expect(result.newMessages).toBeUndefined();
+  });
+
+  it("no-op when opened.compaction.pendingCompaction is null: no pill, no telemetry, returns {ok:true, surrendered:false}", async () => {
+    const { manager } = makeManager(faux);
+    const row = await manager.createSession();
+    const opened = (manager as any).open.get(row.id);
+    opened.compaction.pendingCompaction = null;
+
+    const markStart = vi.spyOn(manager as any, "markCompactionStart");
+    const markEnd = vi.spyOn(manager as any, "markCompactionEnd");
+    const recordEvent = vi
+      .spyOn(manager as any, "recordCompactionEvent")
+      .mockResolvedValue(undefined);
+    const emitSurrender = vi
+      .spyOn(manager as any, "emitCompactionSurrender")
+      .mockResolvedValue(undefined);
+
+    const result = await (manager as any).runPendingInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      "inner_loop",
+    );
+
+    expect(markStart).not.toHaveBeenCalled();
+    expect(markEnd).not.toHaveBeenCalled();
+    expect(recordEvent).not.toHaveBeenCalled();
+    expect(emitSurrender).not.toHaveBeenCalled();
+    expect(runInlineCompactionInLoop).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.surrendered).toBe(false);
+    expect(result.newMessages).toBeUndefined();
   });
 });
 

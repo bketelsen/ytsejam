@@ -8,6 +8,7 @@ import {
   type AgentTool,
   type JsonlSessionMetadata,
   type Session,
+  type SessionTreeEntry,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
@@ -37,6 +38,7 @@ import {
   formatDevLogLine,
   REACTIVE_RETRY_PROMPT,
   runCompactionIfPending,
+  runInlineCompactionInLoop,
   serializeJsonRecord,
   toOpenedForCompaction,
   type CompactionEntryPoint,
@@ -446,6 +448,75 @@ export class AgentManager {
         return false;
       }
       return true;
+    } finally {
+      this.markCompactionEnd(opened, endStatus);
+    }
+  }
+
+  /**
+   * Inner-loop pending-compaction wrapper. Symmetric to `runPendingCompactionAtIdle`
+   * but uses `runInlineCompactionInLoop` (pure functions, no phase guard) instead of
+   * `runCompactionIfPending` (harness.compact() wrapper).
+   *
+   * Called from the `context` hook handler (registered in Task 4) — the only safe
+   * site to invoke inline compaction from `phase==="turn"`.
+   *
+   * Returns a discriminated result:
+   * - `{ ok: true, newMessages: [...] }` → happy path; caller returns `{ messages: newMessages }` from the hook
+   * - `{ ok: false, surrendered: true }` → caller appends surrender notice to event.messages
+   * - `{ ok: true, newMessages: undefined }` → no-op (nothing pending); caller returns `undefined`
+   *
+   * NOTE: the inline path does NOT populate `opened.compaction.lastCompactionDetails`
+   * (pi's `session_before_compact` hook is not invoked by the pure-function path),
+   * so observability for inline compactions has reduced detail (no filesRead/filesModified
+   * in the dev-log entry; firstKeptEntryId comes from result.compactionEntryId where available).
+   */
+  private async runPendingInlineCompactionInLoop(
+    opened: OpenSession,
+    branchEntries: SessionTreeEntry[],
+    entryPoint: CompactionEntryPoint,
+  ): Promise<{ ok: boolean; newMessages?: AgentMessage[]; surrendered: boolean }> {
+    if (!opened.compaction?.pendingCompaction) {
+      return { ok: true, surrendered: false };
+    }
+
+    this.markCompactionStart(opened, "proactive");
+    let endStatus: "succeeded" | "surrendered" | "failed" = "failed";
+    try {
+      const result = await runInlineCompactionInLoop(
+        toOpenedForCompaction({
+          session: opened.session,
+          metadata: opened.metadata,
+          harness: opened.harness,
+          compaction: opened.compaction,
+        }),
+        branchEntries,
+        this.repo,
+      );
+      if (result.fired) {
+        // Synthesize a minimal compactionEntry from the inline result's
+        // compactionEntryId; the inline path does NOT populate
+        // opened.compaction.lastCompactionDetails (no session_before_compact hook).
+        const syntheticEntry = result.compactionEntryId
+          ? { firstKeptEntryId: result.compactionEntryId }
+          : undefined;
+        await this.recordCompactionEvent(
+          opened,
+          result,
+          syntheticEntry,
+          entryPoint,
+        );
+      }
+      endStatus = result.surrendered ? "surrendered" : "succeeded";
+      if (result.surrendered) {
+        await this.emitCompactionSurrender(opened);
+        return { ok: false, surrendered: true };
+      }
+      return {
+        ok: !!result.succeeded,
+        newMessages: result.newMessages,
+        surrendered: false,
+      };
     } finally {
       this.markCompactionEnd(opened, endStatus);
     }
