@@ -65,16 +65,40 @@ many writes since last commit?"
 
 ### Startup flush
 
-On first write after process start, if `git status --porcelain` is
-non-empty, commit immediately with message `auto: startup flush (uncommitted
-from previous session)` BEFORE applying the new write. This catches the
-case where a previous process died with uncommitted writes — instead of
-piling onto an already-dirty tree, we close the previous chapter first,
-then start counting toward the next auto-commit.
+On first write after process start, if `git status --porcelain
+--untracked-files=no` is non-empty (i.e. a TRACKED file is dirty),
+commit immediately with message `auto: startup flush (uncommitted from
+previous session)`. This catches the dominant real-world case: someone
+edited an already-tracked memory file (`observations.md`, `hot-memory.md`,
+a hot pattern file) in the previous session and the process died before
+committing.
 
-If the tree is dirty but `git status` shows ONLY rebase/merge conflict
-markers (not just unstaged files), we skip the flush and warn — that's
-not our mess to clean up.
+**Why tracked-only, not all dirty.** The startup-flush detector runs
+AFTER the hook's caller has already mutated a file. A brand-new file
+created in THIS session looks identical to a brand-new file left
+uncommitted by the PREVIOUS session — both appear as untracked dirt.
+Including untracked files in the startup-flush detector would steal
+this-session writes from the cadence counter on the very first call.
+Restricting to tracked files cleanly separates "previous session edited
+an existing file" (caught by startup flush) from "this session is
+creating new files" (governed by the counter).
+
+**What about new files left uncommitted by a previous session?** They
+remain on disk; the very next normal cadence cycle's `git add -A` picks
+them up alongside this session's writes. No data is lost — the new
+file just rides with the next `auto: N memory writes` commit instead of
+its own startup-flush commit. That is an acceptable shape: the typical
+75-file backlog scenario (observed 2026-06-12) is dominated by tracked
+files, not new ones.
+
+If the tree is dirty but a rebase/merge/cherry-pick is in progress,
+skip the flush and warn — that's not our mess to clean up.
+
+(Design history: the first cut of this design said "any dirty tree
+triggers startup flush." Task 1's implementer caught the ambiguity
+during TDD — the foundational tests had to fail before the
+contradiction was visible. The fix is recorded here, not in a follow-up
+commit, because it changes design intent, not implementation detail.)
 
 ### Hook placement
 

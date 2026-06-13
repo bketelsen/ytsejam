@@ -505,23 +505,50 @@ git commit -m "feat(memory): call maybeAutoCommit from write/append/patch/move"
 Append three more tests to `server/test/memory/auto-commit.test.ts` (inside the describe block):
 
 ```typescript
-  test("startup flush: pre-existing dirty file is committed before first auto-commit increments", async () => {
-    // Seed a dirty file directly on disk (not via memory.write) so it's
-    // uncommitted from a "previous session" point of view.
-    await writeFile(join(root, "prev.md"), "leftover from previous session\n");
-    expect(execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }))
-      .toContain("?? prev.md");
+  test("startup flush: pre-existing dirty TRACKED file is committed before first auto-commit increments", async () => {
+    // Seed a tracked file and commit it as 'previous session' baseline.
+    await writeFile(join(root, "tracked-prev.md"), "v1\n");
+    execFileSync("git", ["add", "tracked-prev.md"], { cwd: root });
+    execFileSync("git", ["commit", "-q", "-m", "prev session baseline"], { cwd: root });
+    // Now modify it (dirty tracked file = previous-session uncommitted edit).
+    await writeFile(join(root, "tracked-prev.md"), "v2 (uncommitted from previous session)\n");
+    expect(execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: root, encoding: "utf8" }))
+      .toContain("tracked-prev.md");
     await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
     const memory = await import("../../src/memory/index.ts");
-    // First memory write triggers startup flush; only 1 write toward the counter.
+    // First memory write triggers startup flush; this counts as 1 toward the cadence.
     await memory.append("first.md", "first\n");
     const log = gitLog().trim().split("\n");
-    expect(log).toHaveLength(2); // root + startup-flush
+    // Expect: root, prev-session-baseline, startup-flush. 3 commits.
+    expect(log).toHaveLength(3);
     expect(log[0]).toContain("auto: startup flush");
-    // The startup flush captures BOTH prev.md AND first.md (everything dirty).
+    // The startup flush captures BOTH tracked-prev.md AND first.md
+    // (everything dirty at the moment `git add -A` ran inside the flush).
     const flushCommit = execFileSync("git", ["show", "--stat", "HEAD"], { cwd: root, encoding: "utf8" });
-    expect(flushCommit).toMatch(/prev\.md/);
+    expect(flushCommit).toMatch(/tracked-prev\.md/);
     expect(flushCommit).toMatch(/first\.md/);
+  });
+
+  test("startup flush ignores untracked-only dirt (covered by next normal cadence cycle)", async () => {
+    // Seed an untracked file directly on disk — simulates a new file
+    // never committed by a previous session.
+    await writeFile(join(root, "new-prev.md"), "leftover untracked\n");
+    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
+    const memory = await import("../../src/memory/index.ts");
+    // 9 appends — startup flush should NOT fire (no tracked dirt).
+    for (let i = 0; i < AUTO_COMMIT_EVERY - 1; i++) {
+      await memory.append(`x${i}.md`, "x\n");
+    }
+    // Still only the root commit; startup flush did not fire.
+    expect(gitLog().trim().split("\n")).toHaveLength(1);
+    // 10th write triggers a normal cadence commit, which `git add -A`
+    // picks up new-prev.md alongside everything else. No data loss.
+    await memory.append("x9.md", "x\n");
+    const log = gitLog().trim().split("\n");
+    expect(log).toHaveLength(2);
+    expect(log[0]).toContain("auto: 10 memory writes");
+    const cadenceCommit = execFileSync("git", ["show", "--stat", "HEAD"], { cwd: root, encoding: "utf8" });
+    expect(cadenceCommit).toMatch(/new-prev\.md/); // untracked-prev ride along
   });
 
   test("commit failure (not a git repo) logs a warning and the write succeeds", async () => {
