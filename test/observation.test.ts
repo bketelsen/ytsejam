@@ -126,3 +126,31 @@ describe("observation redaction + consolidation exemption (SEAM 5)", () => {
     mem.close();
   });
 });
+
+describe("recordObservation re-ingest is fact-idempotent (SEAM 5 review)", () => {
+  it("re-recording the same observation does not inflate fact mentionCount/strength", async () => {
+    const mem = openMem();
+    const args = { text: "I work at Initech.", timestamp: "2026-05-01T00:00:00.000Z" };
+    await mem.recordObservation(args);
+    const first = mem.listFacts().find((f) => f.predicate === "works_at")!;
+    const m0 = first.mentionCount;
+    const s0 = first.strength;
+    await mem.recordObservation(args);
+    await mem.recordObservation(args);
+    const again = mem.listFacts().find((f) => f.predicate === "works_at")!;
+    expect(again.mentionCount).toBe(m0); // not 3
+    expect(again.strength).toBe(s0); // no reinforcement drift
+    expect(mem.listEpisodic().filter((r) => r.kind === "observation")).toHaveLength(1);
+    mem.close();
+  });
+
+  it("re-recording with new metadata updates the record latest-wins without re-learning", async () => {
+    const mem = openMem();
+    const base = { text: "ytsejam deploy moved to forgejo.", timestamp: "2026-05-02T00:00:00.000Z" };
+    await mem.recordObservation(base);
+    await mem.recordObservation({ ...base, tags: ["projects:ytsejam"] });
+    const rec = mem.listEpisodic().find((r) => r.text.includes("forgejo"))!;
+    expect(rec.tags).toEqual(["projects:ytsejam"]); // metadata updated
+    mem.close();
+  });
+});

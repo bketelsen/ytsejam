@@ -478,7 +478,10 @@ two missed risks, from the person who built the surfaces this doc leans on:
    MUST skip lines carrying the `promoted-from-ltm` marker or facts
    round-trip into duplicate records. Second defense now built into LTM:
    observation ids are content-addressed (`obs-<digest(text+timestamp)>`),
-   so re-ingest is idempotent.
+   and `recordObservation` learns facts only on first sight of an id — so
+   re-ingesting an unchanged line is a true no-op (record upserts
+   latest-wins; the extracted fact's mentionCount/strength do NOT accrue,
+   which matters because Seam 2's promotion gate reads mentionCount).
 6. **Missed risk — consolidation interplay.** Slow-decay observations
    avoid the consolidation fold only by accident of retention thresholds.
    → Now an explicit exemption: `kind: "observation"` is never

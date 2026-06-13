@@ -199,8 +199,14 @@ export class MemorySystem {
    * deliberate writes and a later originPrefix redaction cascades to them.
    *
    * The id is content-addressed (`obs-<sha256(text+timestamp)>`), so
-   * re-recording the same line is idempotent (latest-wins upsert) — a
-   * second defense against the bridge's promote→ingest loop.
+   * re-recording the same line is idempotent: the record upserts
+   * latest-wins (metadata like tags/origin updates), and fact learning
+   * runs only on first sight of that id — re-ingest does NOT inflate the
+   * extracted fact's mentionCount/strength. This matters because the
+   * bridge's promotion gate reads mentionCount; a watcher re-emitting an
+   * unchanged line must not look like reinforcement. (Note: `origin` is
+   * not part of the id; re-recording identical text+timestamp under a new
+   * origin won't re-learn under the new provenance.)
    */
   async recordObservation(obs: {
     text: string;
@@ -215,6 +221,7 @@ export class MemorySystem {
       .digest("hex")
       .slice(0, 12);
     const id = `obs-${digest}`;
+    const alreadyLearned = this.episodic.get(id) !== undefined;
     const record: EpisodicRecord = {
       id,
       kind: "observation",
@@ -232,16 +239,20 @@ export class MemorySystem {
     };
     this.episodic.upsert(record);
 
-    // Learn facts from the deliberate write. The synthesized Turn's
+    // Learn facts from the deliberate write — ONLY on first sight of this
+    // id, so re-ingest of an unchanged line doesn't reinforce facts (the
+    // bridge's promotion gate reads mentionCount). The synthesized Turn's
     // sessionId = origin so source-based redaction (originPrefix) cascades.
-    const turn: Turn = {
-      sessionId: obs.origin ?? "observation",
-      entryId: digest,
-      role: "user",
-      text: obs.text,
-      timestamp: obs.timestamp,
-    };
-    this.semantic.ingestTurn(turn);
+    if (!alreadyLearned) {
+      const turn: Turn = {
+        sessionId: obs.origin ?? "observation",
+        entryId: digest,
+        role: "user",
+        text: obs.text,
+        timestamp: obs.timestamp,
+      };
+      this.semantic.ingestTurn(turn);
+    }
 
     this.rebuildDerived();
     return record;
