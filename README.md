@@ -21,6 +21,10 @@ It can also schedule reminders and recurring jobs that wake it up (cron times ar
     YTSEJAM_AUTH_TOKEN=<secret> ANTHROPIC_API_KEY=<key> npm start
     # open http://localhost:3000 and sign in with the token
 
+Once it's running, see [`docs/USAGE.md`](docs/USAGE.md) for how to actually use it day to day —
+sessions, tools, skills, subagents, schedules, and the memory model. For the cog memory deep dive
+(domains, tiers, the weekly/monthly pipeline, customizing), see [`docs/MEMORY.md`](docs/MEMORY.md).
+
 If `NODE_ENV=production` is set in your shell (a common foot-gun when
 running these commands after sourcing a deploy shell), `npm install`
 silently skips devDependencies and the build fails. Unset it first
