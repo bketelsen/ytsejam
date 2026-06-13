@@ -43,7 +43,7 @@ const fact: SemanticFact = {
 };
 
 describe("EpisodicKind soundness (FOLLOWUP 3)", () => {
-  it("a switch over EpisodicRecord.kind is exhaustive with exactly turn | consolidated", () => {
+  it("a switch over EpisodicRecord.kind is exhaustive with exactly turn | consolidated | observation", () => {
     // Compile-time proof the union is closed: this only type-checks while
     // every EpisodicKind arm is handled, because the default branch demands
     // that r.kind has narrowed to never.
@@ -53,6 +53,8 @@ describe("EpisodicKind soundness (FOLLOWUP 3)", () => {
           return "turn";
         case "consolidated":
           return "consolidated";
+        case "observation":
+          return "observation";
         default: {
           const unreachable: never = r.kind;
           return unreachable;
@@ -61,6 +63,7 @@ describe("EpisodicKind soundness (FOLLOWUP 3)", () => {
     };
     expect(label(episodic("turn"))).toBe("turn");
     expect(label(episodic("consolidated"))).toBe("consolidated");
+    expect(label(episodic("observation"))).toBe("observation");
   });
 
   it("narrowing is real: a switch missing an arm fails the never check", () => {

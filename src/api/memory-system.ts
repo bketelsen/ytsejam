@@ -24,6 +24,7 @@ import type {
   RetrievedMemory,
   SemanticFact,
   SourceRef,
+  Turn,
 } from "../types.ts";
 import { mergeConfig, type LtmConfigPatch } from "../types.ts";
 import { HashEmbedder, type Embedder } from "../embedding/embedder.ts";
@@ -187,6 +188,63 @@ export class MemorySystem {
     const report = await this.pipeline.ingestDir(dir);
     if (report.recordsCreated > 0 || report.turnsIngested > 0) this.rebuildDerived();
     return report;
+  }
+
+  /**
+   * Record a deliberate, externally authored observation (SEAM 4) — the
+   * write API the cog→LTM bridge calls. Unlike session turns (learned by
+   * the ingester), an observation is an explicit note: it gets a slow
+   * per-kind half-life, an optional domain tag and provenance `origin`,
+   * and its text is run through the semantic extractor so facts learn from
+   * deliberate writes and a later originPrefix redaction cascades to them.
+   *
+   * The id is content-addressed (`obs-<sha256(text+timestamp)>`), so
+   * re-recording the same line is idempotent (latest-wins upsert) — a
+   * second defense against the bridge's promote→ingest loop.
+   */
+  async recordObservation(obs: {
+    text: string;
+    timestamp: string;
+    tags?: string[];
+    origin?: string;
+    salience?: number;
+  }): Promise<EpisodicRecord> {
+    const digest = crypto
+      .createHash("sha256")
+      .update(`${obs.text}\n${obs.timestamp}`)
+      .digest("hex")
+      .slice(0, 12);
+    const id = `obs-${digest}`;
+    const record: EpisodicRecord = {
+      id,
+      kind: "observation",
+      sessionId: obs.origin ?? "observation",
+      entryId: digest,
+      role: "user",
+      text: obs.text,
+      timestamp: obs.timestamp,
+      salience: obs.salience ?? 0.85,
+      accessCount: 0,
+      state: "active",
+      embedding: await this.embedder.embed(obs.text),
+      ...(obs.tags ? { tags: obs.tags } : {}),
+      ...(obs.origin ? { origin: obs.origin } : {}),
+    };
+    this.episodic.upsert(record);
+
+    // Learn facts from the deliberate write. The synthesized Turn's
+    // sessionId = origin so source-based redaction (originPrefix) cascades.
+    const turn: Turn = {
+      sessionId: obs.origin ?? "observation",
+      entryId: digest,
+      role: "user",
+      text: obs.text,
+      timestamp: obs.timestamp,
+    };
+    this.semantic.ingestTurn(turn);
+
+    this.rebuildDerived();
+    return record;
   }
 
   // -- retrieval ------------------------------------------------------------

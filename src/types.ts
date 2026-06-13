@@ -63,8 +63,13 @@ export type RecordState = "active" | "consolidated" | "redacted";
  * The closed set of kinds that can appear in episodic.jsonl. Synthetic
  * retrieval-only items (promoted profile facts) are deliberately NOT part
  * of this union — see PromotedFact.
+ *
+ * "observation" (SEAM 4): a deliberate, externally authored note (e.g. a
+ * cog observation line bridged from ytsejam) — persisted like any episodic
+ * record but slow-decaying (DecayConfig.halfLifeDaysByKind) and exempt
+ * from consolidation; written via MemorySystem.recordObservation().
  */
-export type EpisodicKind = "turn" | "consolidated";
+export type EpisodicKind = "turn" | "consolidated" | "observation";
 
 /**
  * One episodic memory: a chunk of a conversation turn, or a consolidated
@@ -97,6 +102,13 @@ export interface EpisodicRecord {
    * session-ingested turns.
    */
   tags?: string[];
+  /**
+   * Opaque provenance key for externally sourced records (SEAM 4),
+   * convention `cog:<path>#<date>:<digest12>`. Drives redaction cascade
+   * via RedactionSelector { originPrefix } — prefer date + content digest
+   * over line numbers, which drift in human-edited files.
+   */
+  origin?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +410,12 @@ export function mergeConfig(patch: LtmConfigPatch = {}): LtmConfig {
 }
 
 export const DEFAULT_CONFIG: LtmConfig = {
-  decay: { halfLifeDays: 30, accessBonus: 0.5 },
+  decay: {
+    halfLifeDays: 30,
+    accessBonus: 0.5,
+    // Observations are deliberate writes; let them last (SEAM 2/4).
+    halfLifeDaysByKind: { observation: 730 },
+  },
   consolidation: { olderThanDays: 45, retentionFloor: 0.35, maxSummaryChars: 1200 },
   // Content match (lexical + vector) must dominate; recency and salience are
   // tie-breakers, not channels that can outvote an exact term match.
