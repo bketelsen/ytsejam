@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { OkResult } from "../types.ts";
 import { atomicWrite } from "./fs.ts";
+import { maybeAutoCommit } from "./auto-commit.ts";
 import { resolveMemoryPath } from "./paths.ts";
 
 export async function patch(path: string, oldText: string, newText: string): Promise<OkResult> {
@@ -10,5 +11,6 @@ export async function patch(path: string, oldText: string, newText: string): Pro
   if (count === 0) throw new Error(`store: patch: oldText not found in ${JSON.stringify(rel)}`);
   if (count >= 2) throw new Error(`store: patch: oldText appears ${count} times in ${JSON.stringify(rel)} (must appear exactly once)`);
   await atomicWrite(abs, content.replace(oldText, newText));
+  await maybeAutoCommit();
   return { ok: true };
 }

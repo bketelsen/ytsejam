@@ -23,17 +23,43 @@ grep -rn "memory_root\|ytsejam/data/memory\|chapterhouse/memory" server/src | gr
 
 That invariant preserves the "extract to npm package on day N+1" property.
 
-## Internal structure (planned)
+## Internal structure
 
-- `store/` — primitive I/O (`read`, `write`, `append`, `patch`, `outline`,
-  `move`, `list`, `search`, `stats`).
-- `domain/` — manifest loading and controller path validation.
+- `index.ts` — public surface. Re-exports every callable.
+- `types.ts` — shared types (`OkResult`, `WriteResult`, manifest types, etc.).
+- `store/` — primitive I/O (`read`, `write`, `append`, `patch`, `move`, `list`,
+  `search`, `stats`, `outline`, `walk`, `health`, `git`) plus the
+  auto-commit hook (`auto-commit.ts`). Path validation and the whole-file
+  write allow-list live in `store/paths.ts`.
+- `domain/` — manifest loading, controller path validation, domain-id rejection.
 - `consolidated/` — RPC-equivalent envelopes (`sessionBrief`,
   `housekeepingScan`, audits, indexes, and summaries).
-- `git/` — auto-commit cadence and git wrappers.
-- `format/` — parsers and serializers for markdown, L0 headers, frontmatter,
-  observation lines, and action items.
 - `server/test/memory/` — memory module tests.
+
+## Auto-commit cadence
+
+The memory store auto-commits its git repo every 10 writes
+(`store/auto-commit.ts`, constant `AUTO_COMMIT_EVERY`). The cadence counter
+is in-process and resets to zero on every process restart — it survives
+nothing. Each successful call to `write` / `append` / `patch` / `move`
+invokes `maybeAutoCommit()` AFTER the on-disk mutation, so a rejected
+mutation never bumps the counter.
+
+Commit messages are prefixed `auto:`:
+
+- `auto: 10 memory writes` — normal cadence commit
+- `auto: startup flush (uncommitted from previous session)` — the first
+  commit after a process restart that finds a TRACKED dirty file in the
+  memory repo. Untracked-only dirt does NOT trigger a startup flush; those
+  files ride along with the next normal cadence commit. The startup flush
+  is skipped (with a warning) when an in-progress merge / rebase /
+  cherry-pick / revert / bisect is detected, to avoid clobbering it.
+
+Commit failures (e.g. memory dir is not a git repo) log a
+`ytsejam memory auto-commit:` warning to stderr and do NOT fail the
+underlying write. The mutex inside `maybeAutoCommit` coalesces concurrent
+bursts so N concurrent writes produce ⌈N/10⌉ commits, not N race-induced
+attempts.
 
 ## File format spec
 

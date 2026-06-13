@@ -1,6 +1,7 @@
 import { mkdir, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { OkResult } from "../types.ts";
+import { maybeAutoCommit } from "./auto-commit.ts";
 import { resolveMemoryPath, validateWholeFileWritePath } from "./paths.ts";
 
 /**
@@ -23,5 +24,6 @@ export async function move(from: string, to: string): Promise<OkResult> {
   catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
   await mkdir(dirname(dst.abs), { recursive: true, mode: 0o755 });
   await rename(src.abs, dst.abs);
+  await maybeAutoCommit();
   return { ok: true };
 }

@@ -71,3 +71,28 @@ _Added: 2026-06-13 | Task: Task 5 of compaction-pill — server vitest tests_
 When reviewing whether test assertions are "strong enough" — especially pinned-design-gap tests like those in `server/test/compaction-events.test.ts` that assert the *absence* of an event (e.g. no `compaction_end{surrendered}` on the reactive retry-exhaust path) — don't rely on code-reading alone; apply mutation testing. Temporarily perturb the implementation (e.g. make `manager.ts:382` erroneously emit `compaction_end{surrendered}`, or suppress a `compaction_start` emit) and confirm each test fails at the expected line for the right reason, then restore the file and verify `git diff` is byte-clean. This catches the class of bug a pure inspection cannot: an assertion that always passes regardless of implementation state (e.g. a `toContain` on a stable string), which looks correct but gives zero regression protection. A guard like `expect(ends).toHaveLength(1)` is only proven to do real work once you've shown it flips to a failure when the gap it pins is "fixed." Bidirectional pins matter because they force a deliberate decision if someone later closes the gap.
 
 _Added: 2026-06-13 | Task: Two-stage review of Task 5 compaction-pill tests_
+
+## Detect Git Operations Via On-Disk State Files
+
+In `server/src/memory/store/auto-commit.ts`, detect in-progress git operations
+with synchronous `existsSync` checks against the actual state files
+(`.git/MERGE_HEAD`, `.git/rebase-merge/`, `.git/rebase-apply/`,
+`.git/CHERRY_PICK_HEAD`, `.git/REVERT_HEAD`, `.git/BISECT_LOG`) — never regex
+`git status --porcelain=v2 --branch`, whose output contains none of those
+markers, so the guard silently returns `false` and lets `git add -A`/`git
+commit` finalize a conflicted, half-merged tree. For the cadence counter,
+decrement with `pendingWrites -= n` inside a
+`while (pendingWrites >= AUTO_COMMIT_EVERY)` drain loop instead of resetting to
+`0`, otherwise concurrent `pendingWrites += 1` increments arriving during an
+in-flight commit are discarded and the "at most N uncommitted writes"
+crash-window guarantee breaks under concurrent bursts (measured: 31/50
+increments dropped). Critically, write tests for every guard and mutex you
+ship, not just counter arithmetic — pull forward a real merge-conflict
+regression test (assert HEAD did not advance, `MERGE_HEAD` still exists, a
+`/git operation in progress/` warning logged) and a 50-concurrent-call burst
+(assert ≥4 cadence commits) so defects surface at TDD red-state rather than in
+production. When a test needs scaffolding like a pre-commit hook to make
+behavior observable, verify it isn't inflating results by running the OLD
+buggy code with the same hook and confirming the old failure still reproduces.
+
+_Added: 2026-06-13 | Task: D7 auto-commit cadence for server/src/memory/git/_
