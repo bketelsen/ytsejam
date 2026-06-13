@@ -111,6 +111,16 @@ describe("memory auto-commit cadence", () => {
   });
 
   test("concurrent burst of 50 writes produces ~5 auto-commits without losing increments", async () => {
+    // Make each auto-commit leave one tracked file dirty so the fixed drain loop
+    // can emit multiple real commits. The old `= 0` reset loses the concurrent
+    // increments and stops after the first commit.
+    await writeFile(join(root, "hook-counter.md"), "base\n");
+    execFileSync("git", ["add", "hook-counter.md"], { cwd: root });
+    execFileSync("git", ["commit", "-q", "-m", "hook counter"], { cwd: root });
+    const commitHook = join(root, ".git", "hooks", "pre-commit");
+    await writeFile(commitHook, "#!/bin/sh\nprintf tick >> hook-counter.md\n");
+    await chmod(commitHook, 0o755);
+
     for (let i = 0; i < 50; i++) {
       await writeFileAt(`burst-${i}.md`, `x${i}\n`);
     }
