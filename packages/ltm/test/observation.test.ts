@@ -158,11 +158,10 @@ describe("recordObservation re-ingest is fact-idempotent (SEAM 5 review)", () =>
   });
 });
 
-
 describe("MemorySystem.hasObservation", () => {
   it("returns false before record, true after", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ltm-has-"));
-    const mem = await MemorySystem.open({ storeDir: dir });
+    const mem = MemorySystem.open({ storeDir: dir });
     try {
       const origin = "cog:personal/observations.md#abc123def456";
       expect(mem.hasObservation(origin)).toBe(false);
@@ -180,7 +179,7 @@ describe("MemorySystem.hasObservation", () => {
 
   it("returns false for origins from other records", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ltm-has-"));
-    const mem = await MemorySystem.open({ storeDir: dir });
+    const mem = MemorySystem.open({ storeDir: dir });
     try {
       await mem.recordObservation({
         text: "hello",
@@ -197,7 +196,7 @@ describe("MemorySystem.hasObservation", () => {
   it("survives a close/reopen cycle", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ltm-has-"));
     const origin = "cog:projects/ytsejam/observations.md#deadbeef1234";
-    let mem = await MemorySystem.open({ storeDir: dir });
+    let mem = MemorySystem.open({ storeDir: dir });
     try {
       await mem.recordObservation({
         text: "persisted",
@@ -207,7 +206,7 @@ describe("MemorySystem.hasObservation", () => {
     } finally {
       mem.close();
     }
-    mem = await MemorySystem.open({ storeDir: dir });
+    mem = MemorySystem.open({ storeDir: dir });
     try {
       expect(mem.hasObservation(origin)).toBe(true);
     } finally {

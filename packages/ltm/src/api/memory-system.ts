@@ -266,6 +266,7 @@ export class MemorySystem {
    * Used by the cog-LTM bridge to skip already-mirrored observations.
    */
   hasObservation(origin: string): boolean {
+    if (!origin) return false;
     return this.episodic.all().some((r) => r.origin === origin);
   }
 
