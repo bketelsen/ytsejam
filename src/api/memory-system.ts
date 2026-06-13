@@ -248,7 +248,12 @@ export class MemorySystem {
           at,
           query,
           k,
-          returned: items.map((i) => ({ id: i.record.id, score: i.score, stale: i.stale, breakdown: i.breakdown })),
+          returned: items.map((i) => ({
+            id: i.record.id,
+            score: i.score,
+            ...(i.stale ? { stale: true } : {}),
+            breakdown: i.breakdown,
+          })),
         })}\n`,
       );
     } catch {

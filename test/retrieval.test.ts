@@ -354,7 +354,11 @@ describe("strong-cue recall end to end (RECALL 5)", () => {
     await mem.ingestSessionDir(path.join(work, "sessions"));
     await mem.retrieve("Tell me about my sibling.");
     const line = JSON.parse(fs.readFileSync(tracePath, "utf8").trim().split("\n").at(-1)!);
-    expect(line.returned.some((r: { stale?: boolean }) => r.stale === true)).toBe(true);
+    const returned: { stale?: boolean }[] = line.returned;
+    expect(returned.some((r) => r.stale === true)).toBe(true);
+    // Non-stale items omit the key entirely (spread pattern), so the trace
+    // shape is stable under serializers that preserve undefined.
+    expect(returned.filter((r) => !r.stale).every((r) => !("stale" in r))).toBe(true);
     mem.close();
   });
 });
