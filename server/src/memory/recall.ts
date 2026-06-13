@@ -17,6 +17,7 @@
  * one; that's a separate design problem. Score on each hit is informational.
  */
 
+import type { RetrievalResult } from "ltm";
 import { parseObservationLine } from "./bridge/ltm-observer.ts";
 import * as memory from "./index.ts";
 
@@ -52,12 +53,20 @@ export async function recall(query: string): Promise<RecallResult> {
     return { results: [], count: 0 };
   });
   const ltm = memory.getLtm();
-  const ltmRaw = ltm
+  // Empty fallback shape. `profile` is non-optional on RetrievalResult but
+  // recall() never reads it — the cast is localized so consumers of `record`
+  // keep their EpisodicRecord | PromotedFact union and `kind === "observation"`
+  // narrowing actually guards origin/tags access below.
+  const EMPTY_LTM: RetrievalResult = {
+    items: [],
+    profile: undefined as unknown as RetrievalResult["profile"],
+  };
+  const ltmRaw: RetrievalResult = ltm
     ? await ltm.retrieve(query, { k: K }).catch((err: Error) => {
         console.warn("[recall] ltm retrieve failed:", err.message);
-        return { items: [] as Array<{ record: any; score: number; stale?: boolean }>, profile: null as any };
+        return EMPTY_LTM;
       })
-    : { items: [] as Array<{ record: any; score: number; stale?: boolean }>, profile: null as any };
+    : EMPTY_LTM;
 
   // 2. Normalize cog hits (top K). Parse observation-shaped lines for tags.
   const cogHits: RecallHit[] = cogRaw.results.slice(0, K).map((r) => {
@@ -98,8 +107,9 @@ export async function recall(query: string): Promise<RecallResult> {
       score: item.score,
     };
     if (item.stale) hit.stale = true;
-    if (Array.isArray(record.tags) && record.tags.length > 0) {
-      hit.tags = record.tags;
+    const tags = "tags" in record ? record.tags : undefined;
+    if (Array.isArray(tags) && tags.length > 0) {
+      hit.tags = tags;
     }
     ltmHits.push(hit);
   }
