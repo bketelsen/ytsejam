@@ -1241,6 +1241,7 @@ describe("runInlineCompactionInLoop", () => {
       true,
     );
     expect(result.compactionEntryId).toBe("compaction-entry-1");
+    expect(result.newMessages).toHaveLength(3);
     expect(result.newMessages?.[0]).toMatchObject({
       role: "compactionSummary",
       summary: "SUM",
@@ -1249,6 +1250,10 @@ describe("runInlineCompactionInLoop", () => {
     expect(result.newMessages?.[1]).toMatchObject({
       role: "user",
       content: [{ type: "text", text: "kept" }],
+    });
+    expect(result.newMessages?.[2]).toMatchObject({
+      role: "assistant",
+      content: [{ type: "text", text: "kept assistant" }],
     });
     expect(opened.compaction.pendingCompaction).toBeNull();
   });
