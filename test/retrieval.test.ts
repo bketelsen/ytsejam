@@ -6,6 +6,8 @@ import { HashEmbedder, cosine } from "../src/embedding/embedder.ts";
 import { Bm25Index } from "../src/retrieval/lexical.ts";
 import { MemorySystem } from "../src/api/memory-system.ts";
 import { generateFixtures } from "../src/eval/synthetic.ts";
+import { promoteFacts } from "../src/retrieval/promote.ts";
+import type { SemanticFact } from "../src/types.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ltm-test-"));
@@ -208,5 +210,57 @@ describe("end-to-end retrieval over synthetic sessions", () => {
     const second = await mem.ingestSessionDir(path.join(work, "sessions"));
     expect(second.recordsCreated).toBe(0);
     expect(second.turnsIngested).toBe(0);
+  });
+});
+
+function fact(partial: Partial<SemanticFact> & Pick<SemanticFact, "kind" | "predicate" | "object">): SemanticFact {
+  return {
+    id: `fact-${partial.kind}-${partial.predicate}-${partial.object.toLowerCase()}-p`,
+    objectNorm: partial.object.toLowerCase(),
+    polarity: 1,
+    strength: 0.7,
+    mentionCount: 1,
+    firstSeenAt: "2026-01-05T00:00:00.000Z",
+    lastSeenAt: "2026-01-05T00:00:00.000Z",
+    sources: [{ sessionId: "s1", entryId: "e1" }],
+    state: "active",
+    ...partial,
+  } as SemanticFact;
+}
+const emptyProfile = { identity: [], preferences: [], directives: [], attributes: [], dormant: [], topEntities: [] };
+
+describe("dormant promotion (RECALL 4)", () => {
+  const sister = fact({ kind: "attribute", predicate: "rel_sister", object: "Alice" });
+
+  it("promotes a dormant fact on a slot query, stale with last-mentioned date", () => {
+    const out = promoteFacts("Tell me about my sibling.", { ...emptyProfile, dormant: [sister] });
+    expect(out).toHaveLength(1);
+    expect(out[0].stale).toBe(true);
+    expect(out[0].text).toBe("The user's sister is named Alice (last mentioned 2026-01-05).");
+  });
+
+  it("prefers an above-floor fact over a dormant one for the same predicate", () => {
+    const fresh = fact({ kind: "attribute", predicate: "rel_sister", object: "Alice" });
+    const out = promoteFacts("Tell me about my sibling.", {
+      ...emptyProfile, attributes: [fresh], dormant: [sister],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].stale).toBeUndefined();
+    expect(out[0].text).toBe("The user's sister is named Alice.");
+  });
+
+  it("never promotes dormant facts for a slot-free query", () => {
+    const out = promoteFacts("Can you help me untangle a git rebase?", {
+      ...emptyProfile, dormant: [sister],
+    });
+    expect(out).toHaveLength(0);
+  });
+
+  it("maps project/codebase/hobby to works_on", () => {
+    const proj = fact({ kind: "attribute", predicate: "works_on", object: "Chapterhouse" });
+    for (const q of ["What is my project called?", "What's the hobby codebase I keep tinkering with?"]) {
+      const out = promoteFacts(q, { ...emptyProfile, dormant: [proj] });
+      expect(out.map((p) => p.fact.predicate)).toContain("works_on");
+    }
   });
 });

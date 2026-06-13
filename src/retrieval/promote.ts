@@ -9,6 +9,11 @@
  * The keyword map is generic English (kinship terms, employment terms,
  * residence terms) — deliberately small and high-precision; broad words
  * like "use" are excluded because they'd promote on most queries.
+ *
+ * Strong-cue recall: when a slot question matches a predicate but no
+ * above-floor fact covers it, the dormant section is searched for the
+ * strongest matching fact. Dormant facts are rendered stale — carrying the
+ * date last mentioned — so callers can phrase them as historical context.
  */
 
 import type { ProfileSummary, PromotedFact, SemanticFact } from "../types.ts";
@@ -62,6 +67,10 @@ const PREDICATE_KEYWORDS: Record<string, string[]> = {
   cat: ["rel_cat"],
   feline: ["rel_cat"],
   kitten: ["rel_cat"],
+  project: ["works_on"],
+  projects: ["works_on"],
+  codebase: ["works_on"],
+  hobby: ["works_on"],
 };
 
 function renderFact(fact: SemanticFact): string {
@@ -79,6 +88,11 @@ function renderFact(fact: SemanticFact): string {
   return `The user's ${p}: ${fact.object}.`;
 }
 
+/** Stale facts carry their age so consumers phrase them as historical. */
+function renderStale(fact: SemanticFact): string {
+  return `${renderFact(fact).replace(/\.$/, "")} (last mentioned ${fact.lastSeenAt.slice(0, 10)}).`;
+}
+
 const MAX_PROMOTED = 3;
 
 /**
@@ -93,26 +107,46 @@ export function promoteFacts(query: string, profile: ProfileSummary): PromotedFa
   }
   if (predicates.size === 0) return [];
 
-  const facts = [
+  const aboveFloor = [
     ...profile.identity,
     ...profile.attributes,
     ...profile.directives,
     ...profile.preferences,
   ].filter((f) => predicates.has(f.predicate));
+  aboveFloor.sort((a, b) => b.strength - a.strength);
 
-  facts.sort((a, b) => b.strength - a.strength);
-  return facts.slice(0, MAX_PROMOTED).map(
-    (fact): PromotedFact => ({
-      id: `fact/${fact.id}`,
-      kind: "fact",
-      fact,
-      sessionId: fact.sources[0]?.sessionId ?? "profile",
-      entryId: fact.sources[0]?.entryId,
-      role: "summary",
-      text: renderFact(fact),
-      timestamp: fact.lastSeenAt,
-      salience: fact.strength,
-      accessCount: 0,
-    }),
-  );
+  // Strong-cue recall: a slot question reaches past the floor. Only
+  // predicates with NO above-floor answer fall back to the dormant section
+  // (strongest first — profile.dormant is pre-sorted), one fact each.
+  // "name" and "role" are excluded from dormant fallback: they are high-
+  // frequency predicates whose keywords appear in many queries asking about
+  // OTHER slots ("my sister's name", "my project called"), causing false
+  // promotions that displace the correct answer.
+  const covered = new Set(aboveFloor.map((f) => f.predicate));
+  const DORMANT_EXCLUDED = new Set(["name", "role"]);
+  const dormantPicks: SemanticFact[] = [];
+  for (const f of profile.dormant) {
+    if (!predicates.has(f.predicate) || covered.has(f.predicate) || DORMANT_EXCLUDED.has(f.predicate)) continue;
+    covered.add(f.predicate);
+    dormantPicks.push(f);
+  }
+
+  const toPromoted = (fact: SemanticFact, stale: boolean): PromotedFact => ({
+    id: `fact/${fact.id}`,
+    kind: "fact",
+    fact,
+    sessionId: fact.sources[0]?.sessionId ?? "profile",
+    entryId: fact.sources[0]?.entryId,
+    role: "summary",
+    text: stale ? renderStale(fact) : renderFact(fact),
+    timestamp: fact.lastSeenAt,
+    salience: fact.strength,
+    accessCount: 0,
+    ...(stale ? { stale: true } : {}),
+  });
+
+  return [
+    ...aboveFloor.map((f) => toPromoted(f, false)),
+    ...dormantPicks.map((f) => toPromoted(f, true)),
+  ].slice(0, MAX_PROMOTED);
 }
