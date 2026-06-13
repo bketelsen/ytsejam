@@ -36,6 +36,7 @@ import {
   runCompactionIfPending,
   serializeJsonRecord,
   toOpenedForCompaction,
+  type CompactionEntryPoint,
   type CompactionEvent,
   type CompactionWiringState,
   type RunCompactionResult,
@@ -284,6 +285,7 @@ export class TaskManager {
             active,
             result,
             active.compaction.lastCompactionDetails,
+            "idle",
           );
           active.compaction.lastCompactionDetails = undefined;
         }
@@ -372,7 +374,8 @@ export class TaskManager {
   private async recordCompactionEvent(
     active: ActiveTaskHarness,
     result: RunCompactionResult,
-    compactionEntry?: any,
+    compactionEntry: any,
+    entryPoint: CompactionEntryPoint,
   ): Promise<void> {
     if (!active.compaction) return;
     const model = active.harness.getModel();
@@ -408,7 +411,7 @@ export class TaskManager {
       sessionFilePath,
       result,
       enrichedEntry,
-      devLogPath,
+      entryPoint,
     );
 
     await appendDevLogLine(formatDevLogLine(compactionEvent), devLogPath);

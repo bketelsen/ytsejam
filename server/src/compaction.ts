@@ -243,6 +243,8 @@ export function buildSurrenderMessage(
  * Fed to both formatDevLogLine (one-line cog dev-log entry) and
  * serializeJsonRecord (full structured record for per-session JSONL).
  */
+export type CompactionEntryPoint = "idle" | "inner_loop" | "reactive_path";
+
 export interface CompactionEvent {
   timestamp: Date;
   sessionId: string;
@@ -262,6 +264,7 @@ export interface CompactionEvent {
   compactionDurationMs: number;
   succeeded: boolean;
   backupPath: string;
+  entryPoint: CompactionEntryPoint;
 }
 
 /**
@@ -270,7 +273,7 @@ export interface CompactionEvent {
  * Shape:
  *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
  *     <trigger>, <model>, ctx ~<before>→~<after> tokens, summary <S> tokens,
- *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
+ *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED] via=<entryPoint>
  */
 export function formatDevLogLine(e: CompactionEvent): string {
   const ts = e.timestamp.toISOString().replace("T", " ").slice(0, 19);
@@ -288,7 +291,7 @@ export function formatDevLogLine(e: CompactionEvent): string {
     `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
     `ctx ~${e.tokensBeforeEstimated}→~${e.tokensAfterEstimated} tokens, ` +
     `summary ${e.summaryTokens} tokens, files-read ${filesReadStr}, ` +
-    `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker}`
+    `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker} via=${e.entryPoint}`
   );
 }
 
@@ -321,6 +324,7 @@ export function serializeJsonRecord(
     compaction_duration_ms: e.compactionDurationMs,
     succeeded: e.succeeded,
     backup_path: e.backupPath,
+    entry_point: e.entryPoint,
   };
 }
 
@@ -344,8 +348,8 @@ export function buildCompactionEvent(
   model: Model<any>,
   sessionFilePath: string,
   result: RunCompactionResult,
-  compactionEntry: any = {},
-  _devLogPath?: string,
+  compactionEntry: any,
+  entryPoint: CompactionEntryPoint,
 ): CompactionEvent {
   const pending = result.pending;
   const details = compactionEntry?.details ?? {};
@@ -405,6 +409,7 @@ export function buildCompactionEvent(
     compactionDurationMs: result.durationMs ?? 0,
     succeeded,
     backupPath: result.backupPath ?? "",
+    entryPoint,
   };
 }
 

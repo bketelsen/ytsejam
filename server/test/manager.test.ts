@@ -122,6 +122,7 @@ describe("AgentManager", () => {
       const devLog = readDevLog(dataDir);
       expect(devLog).toContain("compaction in session " + row.id);
       expect(devLog).toContain("— reactive,");
+      expect(devLog).toContain("via=reactive_path");
       expect(devLog).toContain("Trigger: isContextOverflow.");
     } finally {
       restoreEnv();

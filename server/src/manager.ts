@@ -39,6 +39,7 @@ import {
   runCompactionIfPending,
   serializeJsonRecord,
   toOpenedForCompaction,
+  type CompactionEntryPoint,
   type CompactionWiringState,
   type RunCompactionResult,
 } from "./compaction.ts";
@@ -340,6 +341,7 @@ export class AgentManager {
               opened,
               result,
               opened.compaction.lastCompactionDetails,
+              "reactive_path",
             );
             opened.compaction.lastCompactionDetails = undefined;
           }
@@ -412,6 +414,7 @@ export class AgentManager {
 
   private async runPendingCompactionAtIdle(
     opened: OpenSession,
+    entryPoint: CompactionEntryPoint,
   ): Promise<boolean> {
     if (!opened.compaction?.pendingCompaction) return true;
     opened.compaction.lastCompactionDetails = undefined;
@@ -433,6 +436,7 @@ export class AgentManager {
           opened,
           result,
           opened.compaction.lastCompactionDetails,
+          entryPoint,
         );
         opened.compaction.lastCompactionDetails = undefined;
       }
@@ -512,7 +516,8 @@ export class AgentManager {
   private async recordCompactionEvent(
     opened: OpenSession,
     result: RunCompactionResult,
-    compactionEntry?: any,
+    compactionEntry: any,
+    entryPoint: CompactionEntryPoint,
   ): Promise<void> {
     if (!opened.compaction) return;
     const model = opened.harness.getModel();
@@ -547,7 +552,7 @@ export class AgentManager {
       sessionFilePath,
       result,
       enrichedEntry,
-      devLogPath,
+      entryPoint,
     );
 
     // Dev-log entry — write to the cog memory dev-log file.
@@ -568,7 +573,7 @@ export class AgentManager {
       await opened.harness.steer(text);
       return;
     }
-    if (!(await this.runPendingCompactionAtIdle(opened))) return;
+    if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
     opened.harness.prompt(text).catch((err) => {
       // run failures already surface as assistant error messages via events;
@@ -589,7 +594,7 @@ export class AgentManager {
       await opened.harness.followUp(text);
       return;
     }
-    if (!(await this.runPendingCompactionAtIdle(opened))) return;
+    if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true;
     opened.harness.prompt(text).catch((err) => {
       console.error(`task result injection failed for session ${id}`, err);

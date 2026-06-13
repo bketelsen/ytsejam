@@ -373,6 +373,7 @@ describe("formatDevLogLine", () => {
     succeeded: true,
     backupPath:
       "/tmp/ytsejam-test-data/sessions/--chat--/2026-06-12T14-32-18-412Z_abc123.jsonl.pre-compact-1718193600000",
+    entryPoint: "idle",
   };
 
   it("formats a single line for proactive main-session compaction", () => {
@@ -384,6 +385,7 @@ describe("formatDevLogLine", () => {
     expect(line).toMatch(/ctx ~947112→~184309 tokens/);
     expect(line).toMatch(/summary 4821 tokens/);
     expect(line).toMatch(/Trigger: above 920000 budget/);
+    expect(line).toMatch(/ via=idle$/);
   });
 
   it("adds subagent prefix when subagentTaskId is present", () => {
@@ -407,6 +409,58 @@ describe("formatDevLogLine", () => {
     const e = { ...baseEvent, succeeded: false };
     expect(formatDevLogLine(e)).toMatch(/FAILED/);
   });
+
+  it("CompactionEvent carries an entryPoint field and serializes to snake_case", () => {
+    const e: CompactionEvent = {
+      timestamp: new Date("2026-06-13T12:00:00Z"),
+      sessionId: "sess-1",
+      subagentTaskId: null,
+      trigger: "proactive",
+      entryPoint: "inner_loop",
+      reason: "ctx-window-crossed",
+      model: "anthropic/claude-opus-4-8",
+      contextWindow: 200000,
+      reserveTokens: 4096,
+      keepRecentTokens: 16384,
+      tokensBeforeEstimated: 195000,
+      tokensAfterEstimated: 80000,
+      summaryTokens: 4000,
+      firstKeptEntryId: "entry-42",
+      filesRead: [],
+      filesModified: [],
+      compactionDurationMs: 1234,
+      succeeded: true,
+      backupPath: "/tmp/backup",
+    };
+    const record = serializeJsonRecord(e);
+    expect(record.entry_point).toBe("inner_loop");
+  });
+
+  it("formatDevLogLine appends via=<entryPoint>", () => {
+    const e: CompactionEvent = {
+      timestamp: new Date("2026-06-13T12:00:00Z"),
+      sessionId: "sess-1",
+      subagentTaskId: null,
+      trigger: "proactive",
+      entryPoint: "inner_loop",
+      reason: "ctx-window-crossed",
+      model: "anthropic/claude-opus-4-8",
+      contextWindow: 200000,
+      reserveTokens: 4096,
+      keepRecentTokens: 16384,
+      tokensBeforeEstimated: 195000,
+      tokensAfterEstimated: 80000,
+      summaryTokens: 4000,
+      firstKeptEntryId: "entry-42",
+      filesRead: [],
+      filesModified: [],
+      compactionDurationMs: 1234,
+      succeeded: true,
+      backupPath: "/tmp/backup",
+    };
+    const line = formatDevLogLine(e);
+    expect(line).toContain("via=inner_loop");
+  });
 });
 
 describe("buildCompactionEvent", () => {
@@ -429,6 +483,8 @@ describe("buildCompactionEvent", () => {
           budget: 800_000,
         },
       },
+      {},
+      "idle",
     );
 
     expect(event.trigger).toBe("proactive");
@@ -452,6 +508,8 @@ describe("buildCompactionEvent", () => {
           budget: 800_000,
         },
       },
+      {},
+      "reactive_path",
     );
 
     expect(event.trigger).toBe("reactive");
@@ -475,6 +533,7 @@ describe("buildCompactionEvent", () => {
         },
       },
       { tokensBefore: 12_345 },
+      "reactive_path",
     );
 
     expect(event.tokensBeforeEstimated).toBe(12_345);
@@ -495,6 +554,8 @@ describe("buildCompactionEvent", () => {
           budget: 800_000,
         },
       },
+      {},
+      "idle",
     );
 
     expect(event.succeeded).toBe(false);
@@ -520,6 +581,7 @@ describe("buildCompactionEvent", () => {
         subagentTaskId: "task-abc",
         tokensAfter: 120_000,
       },
+      "idle",
     );
 
     expect(event.sessionId).toBe("parent-session-123");
@@ -550,6 +612,7 @@ describe("buildCompactionEvent", () => {
         tokensAfter: 250_000, // 2.5x over budget — should flip succeeded
         summaryTokens: 2000,
       },
+      "idle",
     );
     expect(event.succeeded).toBe(false);
     expect(event.reason).toMatch(/KEPT_SET_OVERSIZED/);
@@ -578,6 +641,7 @@ describe("buildCompactionEvent", () => {
         tokensAfter: 60_000, // under 100k budget
         summaryTokens: 2000,
       },
+      "idle",
     );
     expect(event.succeeded).toBe(true);
     expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);
@@ -607,6 +671,7 @@ describe("buildCompactionEvent", () => {
         tokensAfter: 60_000, // would pass the post-condition if checked
         summaryTokens: 2000,
       },
+      "idle",
     );
     expect(event.succeeded).toBe(false);
     expect(event.reason).not.toMatch(/KEPT_SET_OVERSIZED/);
@@ -635,6 +700,7 @@ describe("serializeJsonRecord", () => {
       compactionDurationMs: 100,
       succeeded: true,
       backupPath: "/tmp/x",
+      entryPoint: "idle",
     };
     const json = serializeJsonRecord(e);
     const parsed = JSON.parse(JSON.stringify(json));

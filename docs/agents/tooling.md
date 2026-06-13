@@ -36,3 +36,9 @@ flag it loudly so reviewers and `git blame` readers see the reasoning instead
 of an unexplained simplification.
 
 _Added: 2026-06-12 | Task: Use estimateKeptSetTokens for tokens_after_estimated (#72)_
+
+## Re-Grep HEAD Before Writing Implementation Plans
+
+When authoring an implementation plan (e.g. via the write-plan skill), always re-grep the actual files at HEAD for the real function signature, test framework, and all call sites before prescribing changes — never write from a stale mental model. In ytsejam, a plan for `buildCompactionEvent` in `server/src/compaction.ts` wrongly assumed `node:test`/`node:assert` when the test file uses Vitest (`describe`/`it`/`expect`), and missed that 8 existing calls in the `describe("buildCompactionEvent")` block would break typecheck, so `npm run check` exited 2 with 10 errors instead of the planned 2 and broke the gate. The plan also bolted a new required `entryPoint` arg on as the last positional without inspecting the existing signature, which still carried a dead `_devLogPath` param and a now-pointless `compactionEntry = {}` default. Before adding a required positional parameter, inspect the full signature and remove dead/defaulted params, and hoist repeated literal unions (like `"idle" | "inner_loop" | "reactive_path"`) into a named type (`CompactionEntryPoint`). Accurate expected-failure analysis depends on counting every real call site in scope, so the gate's error count matches the plan.
+
+_Added: 2026-06-13 | Task: Add `entryPoint` to `CompactionEvent` (type-level)_
