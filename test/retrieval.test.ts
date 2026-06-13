@@ -264,6 +264,13 @@ describe("dormant promotion (RECALL 4)", () => {
     expect(out[0].text).toBe("The user's name is Brian (last mentioned 2026-01-05).");
   });
 
+  it("incidental name keyword does not recall dormant identity when another slot matched", () => {
+    const name = fact({ kind: "identity", predicate: "name", object: "Brian" });
+    const dog = fact({ kind: "attribute", predicate: "rel_dog", object: "Biscuit" });
+    const out = promoteFacts("What's my dog called?", { ...emptyProfile, dormant: [name, dog] });
+    expect(out.map((p) => p.fact.predicate)).toEqual(["rel_dog"]);
+  });
+
   it("maps project/codebase/hobby to works_on", () => {
     const proj = fact({ kind: "attribute", predicate: "works_on", object: "Chapterhouse" });
     for (const q of ["What is my project called?", "What's the hobby codebase I keep tinkering with?"]) {

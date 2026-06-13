@@ -118,15 +118,17 @@ export function promoteFacts(query: string, profile: ProfileSummary): PromotedFa
   // Strong-cue recall: a slot question reaches past the floor. Only
   // predicates with NO above-floor answer fall back to the dormant section
   // (strongest first — profile.dormant is pre-sorted), one fact each.
-  // Generic keywords ("name" fires on "my sister's name") can promote an
-  // incidental stale identity fact alongside the real answer; that is
-  // bounded — above-floor facts keep priority and MAX_PROMOTED caps the
-  // list — and the alternative (excluding name/role) would block the
-  // canonical "What is my name?" recall entirely.
+  // Generic identity predicates (name/role) join the fallback only when
+  // they are the query's SOLE match: "What's my dog called?" matches
+  // rel_dog + name, and promoting the stale user-name there displaced real
+  // answers (measured: long-band MRR 0.88 → 0.81). "What is my name?"
+  // matches name alone and still recalls.
+  const GENERIC_PREDICATES = new Set(["name", "role"]);
   const covered = new Set(aboveFloor.map((f) => f.predicate));
   const dormantPicks: SemanticFact[] = [];
   for (const f of profile.dormant) {
     if (!predicates.has(f.predicate) || covered.has(f.predicate)) continue;
+    if (GENERIC_PREDICATES.has(f.predicate) && predicates.size > 1) continue;
     covered.add(f.predicate);
     dormantPicks.push(f);
   }
