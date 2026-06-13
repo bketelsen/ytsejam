@@ -373,3 +373,273 @@ Evolve audits the architecture of the memory system itself. It asks whether the 
 The anti-pattern is running every skill every day in a *normal week*. That is theatrical. It burns attention and creates churn without adding much signal.
 
 The skill catalog — names, purposes, and invocation patterns — lives in [USAGE.md §2.5](USAGE.md#25-skills--the-catalog). This section narrates the cadence; the catalog names the tools.
+
+
+## Part 2 — Cookbook
+
+Each entry below is a verb-phrase task. The body is steps + rationale + links back to the concepts in Part 1. Skim the headings; read the body when you need to do that task.
+
+### §2.1 Day-to-day tasks
+
+Use these for ordinary memory interaction: capture, patch, look up, recover, and refresh. The common path is conversational; direct file edits are for precision.
+
+#### §2.1.1 Surface a fact you want remembered
+
+Tell the agent plainly: "remember that..." or "log this as an observation in [domain]." The agent picks the domain from `domains.yml` triggers; you can override with a path when you know the canonical home.
+
+How:
+1. Give the fact, and optionally the domain and file type.
+2. Use observations for dated events, entities/wiki for durable nouns, and hot-memory for current working-set truths.
+3. Let the agent write through `cog_append` or `cog_patch`.
+
+Example: "log in personal/observations: kid's piano recital moved to June 21" should append `- 2026-06-13 [kids piano]: piano recital moved to June 21` to `personal/observations.md`. That preserves date, tags, and audit shape; see [§1.4](#14-file-types).
+
+#### §2.1.2 Check off an action item
+
+Ask the agent to check off the item, or patch the checkbox yourself. The edit is exactly `- [ ]` → `- [x]`, optionally adding `done:YYYY-MM-DD` if that convention is already present.
+
+How:
+1. Say: "check off task N in personal/action-items."
+2. Or patch the exact line in `action-items.md`.
+3. Do not rewrite the whole file to complete one item.
+
+Why: `action-items.md` relies on line stability for `cog_patch`. Whole-file rewrites create churn and can race with other edits; `/housekeeping` will archive completed slabs later.
+
+#### §2.1.3 See what's in hot-memory right now
+
+Hot-memory is the current working set for a domain. Ask the agent to show it, or open the file directly.
+
+How:
+1. Ask: "show me ytsejam hot-memory."
+2. Or open `~/.ytsejam/data/memory/projects/ytsejam/hot-memory.md`.
+3. Refresh your read after `/housekeeping` or a reflect pass that rewrote hot-memory.
+
+Why: hot-memory is capped around 50 lines and should hold current priorities, constraints, and must-know cross-session facts. It is not a log; old material belongs in observations, threads, wiki, or glacier.
+
+#### §2.1.4 Find when something happened
+
+Use `/history` for narrative reconstruction; use `cog_search` for remembered wording. Pick the tool by query shape.
+
+How:
+1. Ask `/history`: "what happened with Y in May?" or "show me the arc of Z."
+2. Ask for `cog_search` when you remember a phrase but not the date.
+3. Follow the ranked hits and file paths into observations, entities, action items, hot-memory, or glacier.
+
+Why: `/history` reads across observations and glacier to reconstruct a timeline. `cog_search` is faster for phrase lookup because it returns ranked snippets plus source paths.
+
+#### §2.1.5 See what the agent knows about a person/project/tool
+
+Look in the wiki tier for consolidated knowledge. That is the right lookup target for "what do we know about X?"
+
+How:
+1. Ask the agent to `cog_search` the name.
+2. Or browse `wiki/people/`, `wiki/projects/`, and `wiki/tools/` directly.
+3. Follow compact entity links such as `[[wiki/people/liam]]` when they exist.
+
+Why: `entities.md` is a small registry; wiki pages are the narrative home for durable knowledge. If only observations exist, the topic may not yet have earned a page.
+
+#### §2.1.6 Add a note that doesn't fit any domain
+
+Capture first; refine routing later. A misc note is better than a lost fact.
+
+How:
+1. Default personal-life miscellany to `personal/observations.md`.
+2. Default knowledge-base miscellany to `pkb/observations.md`.
+3. If you capture 3+ similar notes, run `/cog` and make the topic a domain or subdomain.
+
+Why: one stray note does not justify structure. Repeated notes are evidence that the topic has become a real routing path, as described in [§1.2](#12-domains).
+
+#### §2.1.7 Recover an archived note
+
+Glacier is read-only in normal use. Recover by copying from glacier back into live memory.
+
+How:
+1. Read `glacier/index.md` to find the relevant slab.
+2. Read the matching `glacier/<domain>/...` file.
+3. Copy the line or synthesis you need into a live file: observations, thread, entity, hot-memory, or wiki.
+
+Why: glacier frontmatter carries `date_range`, `entries`, tags, and summary. Editing the slab in place makes the metadata false and breaks the audit trail.
+
+#### §2.1.8 Rebuild generated indexes
+
+Rebuild indexes after manual edits to many files, wiki import work, glacier recovery, or link refactors. The normal path is `/housekeeping`.
+
+How:
+1. Run `/housekeeping` for the full pass.
+2. For targeted rebuilds, ask the agent to call `cog_rpc("glacier_index_compute")`, `cog_rpc("wiki_index_compute")`, or `cog_rpc("link_index_compute")`.
+3. Let the generated `glacier/index.md`, `wiki/index.md`, and `link-index.md` reflect source files.
+
+Why: generated indexes are navigation surfaces. Hand-polishing them creates drift unless you are deliberately editing a curated, non-generated index.
+
+### §2.2 Weekly maintenance
+
+The weekly pair is cleanup followed by synthesis. Run it in one session so the agent carries housekeeping findings into reflect.
+
+#### §2.2.1 Run the weekly cadence properly
+
+Run `/housekeeping` first, ideally in a fresh session. Then run `/reflect` in the same session; reflect needs to see the cleaned state.
+
+How:
+1. Start a focused memory-maintenance session.
+2. Invoke `/housekeeping` and let it archive, prune, sweep temporal markers, and rebuild indexes.
+3. Invoke `/reflect` before leaving the session.
+
+Why: housekeeping cleans substrate; reflect mines patterns, spikes, and thread candidates from that substrate. If you're in a heavy work burst, drop the "weekly" frame and run on volume — see [§1.7](#17-the-pipeline--narrative) for the full caveat and the canonical signal.
+
+#### §2.2.2 Read the reflect output
+
+Reflect output is the review surface for what entered, skipped, or changed in memory. Read the debrief before trusting the new state.
+
+What to check:
+1. Promoted patterns in `cog-meta/patterns.md` or a domain `patterns.md`.
+2. Dropped candidates that failed the gates.
+3. Replacements where a new line subsumed an older pattern.
+4. Thread candidates and hot-memory changes.
+
+The three gates: cluster (≥3 entries, ≥7 day span, ≥3 distinct dates, specific tag); coverage (skip if an existing pattern covers it, replace when the new one subsumes old); synthesis (one actionable line plus `<!-- promoted:YYYY-MM-DD theme:tag -->`). Weak patterns bias future sessions, so skipped candidates are often correct.
+
+#### §2.2.3 Handle a heating topic (spike)
+
+A spike is a hot topic, not a pattern. The threshold is ≥5 entries in <7 days: enough to notice, too compressed to pass the date-span gate.
+
+How:
+1. Treat it as a thread candidate.
+2. Check whether a thread or wiki page already exists.
+3. If not, raise a thread with Current State → Timeline → Insights.
+4. Let `/reflect` propose this through spike-handling, or author it manually.
+
+Why: threads can hold fast-moving synthesis without pretending the lesson is timeless. If the topic becomes durable, promote the stable narrative to wiki later.
+
+### §2.3 Monthly + on-demand
+
+Use these when you need architecture review, a nudge, a history reconstruction, or structured audit data. They are focused tools, not daily rituals.
+
+#### §2.3.1 Run `/evolve` and act on the scorecard
+
+Run `/evolve` monthly after enough housekeeping and reflect history exists. It audits the memory system itself: domains, tiers, caps, indexes, patterns, routing, and process drift.
+
+How:
+1. Invoke `/evolve`.
+2. Read `cog-meta/scorecard.md` and any `[evolve]` action items.
+3. Follow recommendations when metrics are well above threshold and the fix is structural.
+4. Defer cosmetic flags during a heavy work week when retrieval still works.
+
+Why: evolve is architecture review. Its value is turning threshold breaches into routed actions, such as compressing entities, pruning pattern files, rebuilding stale indexes, or splitting a bloated domain.
+
+#### §2.3.2 Run `/foresight` for a nudge
+
+Run `/foresight` when you want one forward-looking prompt from memory. It writes a single nudge, not a backlog.
+
+When:
+1. Start of a new week.
+2. When you feel stuck.
+3. After a domain shift or a project becoming active again.
+
+How to use it: read `cog-meta/foresight-nudge.md`, then act, discard, or convert the suggested action into an action item. The nudge should have Signal → Insight → Suggested Action and cite sources.
+
+#### §2.3.3 Run `/history` for a question
+
+Use `/history` for questions that need past-facing reconstruction across files. Phrase the question as the timeline you want.
+
+Good prompts:
+- "when did I first run X?"
+- "what happened with Y in May?"
+- "show me the arc of Z."
+- "what did we decide about the migration?"
+
+The skill searches observations and glacier, with entity, action-item, hot-memory, and `cog_search` support when useful. It is read-only; if it finds a gap, it flags the gap rather than writing.
+
+#### §2.3.4 Audit memory health
+
+Use `cog_rpc` audit methods after large refactors, before migrations, or when you want structured evidence before editing.
+
+Useful calls:
+- `cog_rpc("link_audit")` returns missing-link candidates and cross-reference opportunities.
+- `cog_rpc("entity_audit")` returns entity format violations, stale temporal markers, glacier candidates, and missing metadata.
+- `cog_rpc("cluster_check")` returns recurring observation clusters and thread candidates.
+- `cog_rpc("scenario_check")` returns scenario files that are due, overdue, or active.
+
+Each returns a structured envelope you can read directly or ask the agent to summarize. The envelope finds candidates; you still decide which edits are correct.
+
+### §2.4 Customizing your memory
+
+Customize memory when the current shape no longer matches how you talk or work. Add structure when repetition proves it, promote synthesis when it becomes durable, and refactor when routing itself causes drift.
+
+#### §2.4.1 Add a new domain
+
+Run `/cog` when a recurring topic deserves its own routing path. It edits `domains.yml`, creates the domain folder, generates a router skill, and can seed starter files.
+
+How:
+1. Tell the agent the topic and what kind of memory it needs.
+2. Let `/cog` preserve existing manifest entries while adding the new one.
+3. Confirm the folder path, starter files, and generated skill.
+
+Pick triggers that are specific nouns you actually say: project names, people, organizations, tools, or topic names. Avoid generic verbs such as "write", "fix", "plan", or "think"; they route too broadly.
+
+#### §2.4.2 Customize hot-memory for a domain
+
+Edit hot-memory when the domain's always-nearby context changes. Keep it under 50 lines or it gets pruned.
+
+Belongs:
+- Cross-session truths.
+- Active priorities and constraints.
+- Things the agent must always know about this domain.
+
+Does not belong:
+- Transient events; put those in observations.
+- Durable facts about specific entities; put those in entities or wiki.
+- Resolved audit history; put that in observations, threads, wiki, or glacier.
+
+Why: hot-memory is orientation, not storage. Link to canonical sources instead of duplicating full detail.
+
+#### §2.4.3 Promote an observation to a pattern
+
+Normally `/reflect` promotes patterns through the three gates. Manual promotion is for a clear, high-confidence rule that would not pass the cluster gate yet.
+
+How:
+1. Edit `cog-meta/patterns.md` or a domain `patterns.md`.
+2. Add one actionable, timeless line.
+3. Include `<!-- promoted:YYYY-MM-DD theme:tag -->`.
+4. Replace any older pattern the new line subsumes.
+
+Use this sparingly: pattern files shape many future sessions. A one-off user preference or proven operational rule may qualify; ordinary event notes do not.
+
+#### §2.4.4 Promote a cluster to a thread file
+
+Raise a thread when a topic has ≥3 observations across ≥2 weeks and feels important enough to consolidate. Threads are synthesis between observations and wiki.
+
+How:
+1. Create one canonical file in the relevant domain.
+2. Use Current State → Timeline → Insights.
+3. Rewrite Current State freely, append to Timeline, curate Insights.
+4. Link to source observations, entities, wiki pages, or glacier slabs.
+
+Rule: one file forever. Never delete the thread because the state changed; supersede inside the file.
+
+#### §2.4.5 Promote a durable fact to a wiki page
+
+Create or update a wiki page when a recurring person, project, tool, topic, idea, or research question earns its own narrative home.
+
+How:
+1. Pick `wiki/people/`, `wiki/projects/`, `wiki/tools/`, `wiki/topics/`, `wiki/research/`, or `wiki/ideas/`.
+2. Create `wiki/<subtree>/<slug>/index.md`.
+3. Link to it as `[[wiki/<subtree>/<slug>]]`, without `/index` in the link text.
+4. Use frontmatter such as `type:`, `tags:`, `created:`, and `updated:`.
+
+Why: observations are dated facts; wiki pages are editable synthesis. The page becomes the canonical home other files point at.
+
+#### §2.4.6 Refactor a domain
+
+Refactor when routing no longer matches reality. Move the canonical home, update the manifest, then sweep links.
+
+Splitting: create a child domain when a project graduates from "mentioned in `projects/`" to "has its own subdomain," such as `projects/myapp/`. Keep child facts in the child and portfolio context in the parent.
+
+Merging: merge when two domains collapsed in practice. Pick the surviving path, preserve historical observations, and avoid rewriting old dates to fit the new structure.
+
+Renaming:
+1. Update `domains.yml` for id, path, label, and triggers.
+2. Move files carefully with `cog_move` or an explicit migration.
+3. Sweep wiki-links repo-wide with `grep -r '\[\['` and patch references.
+4. Rebuild indexes with `/housekeeping` or targeted index RPCs.
+
+Why: domains drive routing. A stale domain shape means the agent loads stale or irrelevant memory, and a rename is incomplete until links point to the new canonical home.
