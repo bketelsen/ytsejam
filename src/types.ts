@@ -384,5 +384,19 @@ export const DEFAULT_CONFIG: LtmConfig = {
   mmrLambda: 0.7,
   maxChunkChars: 1500,
   recencyHalfLifeDays: 21,
+  // Calibrated RECALL 9: leave-one-out z-gate for consolidated-record
+  // resurrection. Measured {2.5, 3.5, 5.0} on seeds 0-5, hash + nomic — all
+  // three recover the SAME consolidated paraphrase targets (guitar, marathon)
+  // with no MRR/stability change: a lone true outlier clears z ≈ 28, far
+  // above any candidate, and no false resurrection lands in the 2.5-5.0 band,
+  // so the eval fixtures cannot distinguish the three. The binding constraint
+  // is the RECALL 7 "no mutual suppression" invariant: when TWO equally
+  // strong consolidated records (cosine 1.0) sit in one pool, each one's
+  // leave-one-out z collapses to ≈ 2.98 (the twin inflates the pool mean and
+  // std), so any gate above ~2.98 makes genuine twin matches mutually
+  // suppress each other below the floor. 2.5 is the calibrated value: it
+  // preserves twin resurrection with headroom while still rejecting mid-pool
+  // records (a 0.30-cosine consolidated record scores z ≈ -0.15). Raising it
+  // buys no measured eval recovery and silently breaks multi-match recall.
   resurrectZ: 2.5,
 };

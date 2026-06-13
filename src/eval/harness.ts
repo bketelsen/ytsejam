@@ -80,11 +80,12 @@ export interface BandSpec {
 
 /**
  * Thresholds reflect measured behavior of the current system minus 5pp
- * headroom, re-baselined per PLAN.md Task 4.4 after a 20-seed sweep
- * (measured ranges were seed-invariant to ±0.13: short r@5 1.00 / para
- * 0.75 / MRR 1.00 / F1 1.00 / stab 1.00; medium 0.88 / 0.00–0.13 / 0.69 /
- * 0.33 / 0.40; long 0.88 / 0.00 / 0.88 / 0.33 / 0.20). Calibration notes
- * per band:
+ * headroom. Re-baselined per PLAN.md Task 4.4 after a 20-seed sweep, then
+ * again under RECALL 9 for the strong-cue recall feature. Measured 20-seed
+ * hash floors (seed-invariant except where noted): short r@5 1.00 / para
+ * 0.75 / MRR 1.00 / F1 1.00 / stab 1.00; medium r@5 1.00 / para 0.75 /
+ * MRR 0.75 / F1 0.33 / stab 0.40; long r@5 1.00 / para 0.75 / MRR 0.94 /
+ * F1 0.33 / stab 0.20. Calibration notes per band:
  *
  * - short: everything alive; near-perfect is the honest bar.
  * - medium: at per-session clocks, preferences planted with 2–3 statements
@@ -99,6 +100,22 @@ export interface BandSpec {
  *   this band PROVES decay bites); directives retire identically (strength
  *   ≈ 0.07 < 0.2 at the ~1440-day horizon, measured 0%); episodic recall
  *   stays high because decay never deletes text, it only re-ranks.
+ *
+ * RECALL 9 — paraphrase recall on medium/long is NO LONGER 0/decay-bound.
+ * Two recovery paths now lift it to a measured 0.75 flat across the 20-seed
+ * hash sweep (was 0.00): (1) slot questions promote below-floor "dormant"
+ * facts as stale items and rehearse them, recovering sister/dog/employer/
+ * city/allergy via keyword slots even after they drop under the profile
+ * floor; (2) consolidated episodic records stay in the vector index and
+ * resurrect into results when their query cosine clears a leave-one-out
+ * z-score ≥ config.resurrectZ over the candidate pool — the only path back
+ * for episodic-only targets (project/guitar/marathon). With nomic embeddings
+ * the same probes measure seed-min 0.75 / max 1.00 on both bands. Plain
+ * retrieval also rose under the mean-relative vector normalization (medium/
+ * long r@5 1.00, MRR up to 1.00); thresholds re-baselined to measured-min
+ * minus 5pp. Profile metrics (F1, directives, identity, stability) are
+ * UNCHANGED from pre-feature values — confirming eval probing does not
+ * contaminate the profile via rehearsal.
  */
 export const BANDS: Record<EvalBand, BandSpec> = {
   short: {
@@ -131,9 +148,20 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     // directives at ~0.24 effective strength surface here too.
     config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
     thresholds: {
-      recallAt5: 0.83,
-      mrr: 0.64,
-      paraphraseRecallAt5: 0,
+      // RECALL 9 re-baseline: the strong-cue recall feature (slot-recall of
+      // dormant facts + consolidated-record resurrection + mean-relative
+      // vector normalization) lifted plain retrieval. Measured 20-seed hash
+      // floor: r@5 100% (→ 0.95 with 5pp headroom), MRR min 0.75 (→ 0.70).
+      recallAt5: 0.95,
+      mrr: 0.7,
+      // Paraphrase recall is no longer 0/decay-bound: slot questions promote
+      // below-floor dormant facts (sister/dog/employer/city/allergy recovered
+      // via keyword slots) and consolidated episodic records resurrect when
+      // their query cosine clears the leave-one-out z-gate. Measured 75% flat
+      // across the 20-seed hash sweep (6 of 8 probes recoverable; project/
+      // guitar/marathon are episodic-only and lean on resurrection); nomic
+      // seed-min 75%, max 100%. Threshold is measured-min minus 5pp.
+      paraphraseRecallAt5: 0.7,
       preferenceF1: 0.28,
       // Measured 100% with directiveFloor 0.2, seed-invariant across the
       // 20-seed sweep; threshold is measured minus 5pp headroom.
@@ -153,9 +181,17 @@ export const BANDS: Record<EvalBand, BandSpec> = {
     // lowered symmetrically (FOLLOWUP Task 1) for the same reason.
     config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
     thresholds: {
-      recallAt5: 0.83,
-      mrr: 0.83,
-      paraphraseRecallAt5: 0,
+      // RECALL 9 re-baseline (see medium band). Measured 20-seed hash floor:
+      // r@5 100% (→ 0.95), MRR min 0.9375 (→ 0.88 with 5pp headroom).
+      recallAt5: 0.95,
+      mrr: 0.88,
+      // Paraphrase recall is no longer 0/decay-bound here either: even at the
+      // ~1440-day horizon, slot-recall surfaces dormant facts and resurrection
+      // brings back consolidated episodic targets. Measured 75% flat across
+      // the 20-seed hash sweep; nomic seed-min 75%, max 100%. Threshold is
+      // measured-min minus 5pp. (Plain recall stays high because decay never
+      // deletes text — it only re-ranks — and resurrection re-promotes it.)
+      paraphraseRecallAt5: 0.7,
       preferenceF1: 0.28,
       // 0% is CORRECT here, exactly parallel to identityExpected: false: a
       // directive asserted once at session 1-2 (~day 60-120) sits at
