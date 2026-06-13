@@ -1,0 +1,531 @@
+/**
+ * End-to-end evaluation harness, banded by horizon (PLAN.md Phase 1).
+ *
+ * Three bands run the same persona over increasingly long horizons so the
+ * eval measures the regime where decay actually bites instead of only the
+ * regime where nothing has decayed yet:
+ *
+ *   short  — 12 sessions × 14d ≈ 6mo  (decay barely engaged)
+ *   medium — 24 sessions × 30d ≈ 24mo (preferences decay out between
+ *            reassertions; identity hangs on)
+ *   long   — 24 sessions × 60d ≈ 48mo (identity itself decays below the
+ *            profile floor — asserted as CORRECT behavior, see Task 1.3)
+ *
+ * Honesty rules baked in:
+ * - Profile snapshots and the mid-run consolidation pass use the clock of
+ *   that point in the corpus timeline, not the horizon end — evaluating a
+ *   2-year-old snapshot "from the future" would understate decay.
+ * - Thresholds are PER BAND and calibrated to measured behavior (minus
+ *   headroom), not aspiration. A band where decay correctly erodes a metric
+ *   has a low threshold and an explicit identityExpected flag; "fixing" a
+ *   long-band failure by weakening decay is the failure mode this structure
+ *   exists to catch.
+ *
+ * Per run: ingest session-by-session (snapshotting the profile after each at
+ * that session's clock), consolidate two-thirds through at that point's
+ * clock, then probe every planted fact and score recall + personality
+ * mirroring at horizon end.
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import { MemorySystem } from "../api/memory-system.ts";
+import type { Embedder } from "../embedding/embedder.ts";
+import type { LtmConfigPatch, ProfileSummary } from "../types.ts";
+import { generateFixtures, type GenerateOptions, type GroundTruth } from "./synthetic.ts";
+import {
+  contradictionsResolved,
+  directiveRecall,
+  identityCorrect,
+  preferenceMetrics,
+  recallMetrics,
+  stabilityScore,
+  type PreferenceMetrics,
+  type RecallMetrics,
+  type RecallOutcome,
+} from "./metrics.ts";
+
+export type EvalBand = "short" | "medium" | "long";
+
+export interface EvalThresholds {
+  recallAt5: number;
+  mrr: number;
+  /**
+   * Recall@5 over the paraphrase probe set (probes sharing no content words
+   * with their plants). Low by design with the lexical HashEmbedder — this
+   * number is the honest baseline that Phase 4 must move.
+   */
+  paraphraseRecallAt5: number;
+  preferenceF1: number;
+  directiveRecall: number;
+  /**
+   * Exact expectation, not a floor: a band where decay should have erased
+   * the identity FAILS if identity survives (that would mean decay stopped
+   * doing its job — see PLAN.md Task 1.3).
+   */
+  identityExpected: boolean;
+  /** Whether the mid-horizon contradiction must resolve to the latest statement. */
+  contradictionRequired: boolean;
+  stability: number;
+}
+
+export interface BandSpec {
+  sessions: number;
+  intervalDays: number;
+  turnsPerSession: number;
+  thresholds: EvalThresholds;
+  /** MemorySystem config for this band (e.g. profile floors, Task 2.1). */
+  config?: LtmConfigPatch;
+}
+
+/**
+ * Thresholds reflect measured behavior of the current system minus 5pp
+ * headroom. Re-baselined per PLAN.md Task 4.4 after a 20-seed sweep, then
+ * again under RECALL 9 for the strong-cue recall feature. Measured 20-seed
+ * hash floors (seed-invariant except where noted): short r@5 1.00 / para
+ * 0.75 / MRR 1.00 / F1 1.00 / stab 1.00; medium r@5 1.00 / para 0.75 /
+ * MRR 0.75 / F1 0.33 / stab 0.40; long r@5 1.00 / para 0.75 / MRR 0.9375 /
+ * F1 0.33 / stab 0.20. Calibration notes per band:
+ *
+ * - short: everything alive; near-perfect is the honest bar.
+ * - medium: at per-session clocks, preferences planted with 2–3 statements
+ *   over 24 months spend the gaps between reassertions below the profile
+ *   floor (stability ≈ 0.5 measured) and have fully decayed by horizon end
+ *   8 months after their last assertion (F1 ≈ 0.3 measured: only the
+ *   late-flipped contradiction survives). Directives (one assertion at
+ *   month ~1, 365d half-life) sit at ~0.24 effective strength by month 24 —
+ *   below the default 0.3 floor, surfaced by the band's directiveFloor: 0.2
+ *   (FOLLOWUP Task 1; measured 100% across all 20 sweep seeds).
+ * - long: identity itself is below the floor (identityExpected: false —
+ *   this band PROVES decay bites); directives retire identically (strength
+ *   ≈ 0.07 < 0.2 at the ~1440-day horizon, measured 0%); episodic recall
+ *   stays high because decay never deletes text, it only re-ranks.
+ *
+ * RECALL 9 — paraphrase recall on medium/long is NO LONGER 0/decay-bound.
+ * Two recovery paths now lift it to a measured 0.75 flat across the 20-seed
+ * hash sweep (was 0.00): (1) slot questions promote below-floor "dormant"
+ * facts as stale items and rehearse them, recovering sister/dog/employer/
+ * city/allergy via keyword slots even after they drop under the profile
+ * floor; (2) consolidated episodic records stay in the vector index and
+ * resurrect into results when their query cosine clears a leave-one-out
+ * z-score ≥ config.resurrectZ over the candidate pool — the only path back
+ * for episodic-only targets (project/guitar/marathon). With nomic embeddings
+ * the same probes measure seed-min 0.75 / max 1.00 on both bands. Plain
+ * retrieval also rose under the mean-relative vector normalization (medium/
+ * long r@5 1.00, MRR up to 1.00); thresholds re-baselined to measured-min
+ * minus 5pp. Profile metrics (F1, directives, identity, stability) are
+ * UNCHANGED from pre-feature values — confirming eval probing does not
+ * contaminate the profile via rehearsal.
+ */
+export const BANDS: Record<EvalBand, BandSpec> = {
+  short: {
+    sessions: 12,
+    intervalDays: 14,
+    turnsPerSession: 12,
+    thresholds: {
+      recallAt5: 0.95,
+      mrr: 0.95,
+      paraphraseRecallAt5: 0.7,
+      preferenceF1: 0.95,
+      directiveRecall: 1,
+      identityExpected: true,
+      contradictionRequired: true,
+      stability: 0.95,
+    },
+  },
+  medium: {
+    sessions: 24,
+    intervalDays: 30,
+    turnsPerSession: 12,
+    // Identity at 24mo sits at effective strength ~0.24 — below the default
+    // 0.3 floor but real. The medium band accepts the Task 2.1 tradeoff
+    // (identityFloor 0.2: keep slot-like identity surfacing at the cost of
+    // staler positives), which is exactly the seam's intended use. The
+    // default floors are unchanged; the long band shows identity retiring
+    // even at the lowered floor. directiveFloor is lowered symmetrically
+    // (FOLLOWUP Task 1): directives share identity's 365d half-life by
+    // design — "set it once, I remember it" — so single-assertion
+    // directives at ~0.24 effective strength surface here too.
+    config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
+    thresholds: {
+      // RECALL 9 re-baseline: the strong-cue recall feature (slot-recall of
+      // dormant facts + consolidated-record resurrection + mean-relative
+      // vector normalization) lifted plain retrieval. Measured 20-seed hash
+      // floor: r@5 100% (→ 0.95 with 5pp headroom), MRR min 0.75 (→ 0.70).
+      recallAt5: 0.95,
+      mrr: 0.7,
+      // Paraphrase recall is no longer 0/decay-bound: slot questions promote
+      // below-floor dormant facts (sister/dog/employer/city/allergy recovered
+      // via keyword slots) and consolidated episodic records resurrect when
+      // their query cosine clears the leave-one-out z-gate. Measured 75% flat
+      // across the 20-seed hash sweep (6 of 8 probes recoverable; project/
+      // guitar/marathon are episodic-only and lean on resurrection); nomic
+      // seed-min 75%, max 100%. Threshold is measured-min minus 5pp.
+      paraphraseRecallAt5: 0.7,
+      preferenceF1: 0.28,
+      // Measured 100% with directiveFloor 0.2, seed-invariant across the
+      // 20-seed sweep; threshold is measured minus 5pp headroom.
+      directiveRecall: 0.95,
+      identityExpected: true,
+      contradictionRequired: true,
+      stability: 0.35,
+    },
+  },
+  long: {
+    sessions: 24,
+    intervalDays: 60,
+    turnsPerSession: 12,
+    // Same lowered floors as medium: identity STILL retires at 48mo
+    // (0.9·2^(-1380/365) ≈ 0.065 < 0.2) — the decay-bites assertion holds
+    // against the seam, not just against the default. directiveFloor is
+    // lowered symmetrically (FOLLOWUP Task 1) for the same reason.
+    config: { profile: { identityFloor: 0.2, directiveFloor: 0.2 } },
+    thresholds: {
+      // RECALL 9 re-baseline (see medium band). Measured 20-seed hash floor:
+      // r@5 100% (→ 0.95), MRR min 0.9375 (− 5pp = 0.8875, set to 0.88).
+      recallAt5: 0.95,
+      mrr: 0.88,
+      // Paraphrase recall is no longer 0/decay-bound here either: even at the
+      // ~1440-day horizon, slot-recall surfaces dormant facts and resurrection
+      // brings back consolidated episodic targets. Measured 75% flat across
+      // the 20-seed hash sweep; nomic seed-min 75%, max 100%. Threshold is
+      // measured-min minus 5pp. (Plain recall stays high because decay never
+      // deletes text — it only re-ranks — and resurrection re-promotes
+      // consolidated episodic records; dormant profile facts come back via
+      // slot recall, not resurrection.)
+      paraphraseRecallAt5: 0.7,
+      preferenceF1: 0.28,
+      // 0% is CORRECT here, exactly parallel to identityExpected: false: a
+      // directive asserted once at session 1-2 (~day 60-120) sits at
+      // strength ≈ 0.07 at the ~1440-day horizon — below even the lowered
+      // 0.2 floor. This band proves directives, like identity, retire at
+      // ~4yr of disuse; the medium band proves the seam surfaces them.
+      directiveRecall: 0,
+      identityExpected: false,
+      contradictionRequired: false,
+      stability: 0.15,
+    },
+  },
+};
+
+export interface RecallMissDiagnostic {
+  probeSet: "plain" | "paraphrase";
+  key: string;
+  probe: string;
+  answer: string;
+  topRetrieved: string[];
+}
+
+export interface SpuriousPreferenceDiagnostic {
+  fact: string;
+  /** The first source turn's text that triggered the extraction. */
+  exampleTurn: string;
+}
+
+export interface EvalDiagnostics {
+  recallMisses: RecallMissDiagnostic[];
+  spuriousPreferences: SpuriousPreferenceDiagnostic[];
+  missedPreferences: { expected: string; closest: string | null }[];
+}
+
+export interface EvalReport {
+  band: EvalBand;
+  corpus: { sessions: number; intervalDays: number; turns: number; seed: number; horizonEnd: string };
+  recall: RecallMetrics;
+  paraphrase: RecallMetrics;
+  preferences: PreferenceMetrics;
+  directiveRecall: number;
+  identityCorrect: boolean;
+  contradictions: { correct: number; total: number };
+  stability: number;
+  consolidation: { created: number; folded: number };
+  thresholds: EvalThresholds;
+  passed: boolean;
+  failures: string[];
+  diagnostics: EvalDiagnostics;
+}
+
+export interface RunEvalOptions {
+  workDir: string;
+  band?: EvalBand;
+  seed?: number;
+  /** Override the embedder (semantic eval mode); default HashEmbedder. */
+  embedder?: Embedder;
+  /** Override the band's corpus shape (tests use small corpora). */
+  sessions?: number;
+  turnsPerSession?: number;
+  thresholds?: Partial<EvalThresholds>;
+  generate?: Partial<GenerateOptions>;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export async function runEval(opts: RunEvalOptions): Promise<EvalReport> {
+  const band = opts.band ?? "short";
+  const spec = BANDS[band];
+  const seed = opts.seed ?? 42;
+  const sessionsDir = path.join(opts.workDir, "sessions");
+  const storeDir = path.join(opts.workDir, "store");
+  fs.rmSync(opts.workDir, { recursive: true, force: true });
+
+  const truth: GroundTruth = generateFixtures({
+    outDir: sessionsDir,
+    seed,
+    sessions: opts.sessions ?? spec.sessions,
+    turnsPerSession: opts.turnsPerSession ?? spec.turnsPerSession,
+    intervalDays: spec.intervalDays,
+    ...opts.generate,
+  });
+
+  const horizonEnd = truth.horizonEnd;
+  // Clock at "just before the next session" for mid-run snapshots: the
+  // moment this point in history would actually be observed.
+  const clockAfter = (i: number): string =>
+    new Date(
+      Math.min(
+        Date.parse(horizonEnd),
+        Date.parse(truth.sessionStarts[i]) + truth.intervalDays * DAY_MS,
+      ),
+    ).toISOString();
+
+  let now = truth.sessionStarts[0];
+  const mem = MemorySystem.open({
+    storeDir,
+    now: () => now,
+    config: spec.config,
+    embedder: opts.embedder,
+  });
+
+  const snapshots: ProfileSummary[] = [];
+  let consolidation = { created: 0, folded: 0 };
+  const files = truth.sessionIds.map((id) => path.join(sessionsDir, `${id}.jsonl`));
+  const consolidateAfter = Math.floor(files.length * 0.66);
+  for (let i = 0; i < files.length; i++) {
+    now = clockAfter(i);
+    await mem.ingestSessionFile(files[i]);
+    if (i === consolidateAfter) {
+      const result = await mem.consolidate({ now });
+      consolidation = { created: result.created, folded: result.folded };
+    }
+    snapshots.push(mem.profile(now));
+  }
+  now = horizonEnd;
+
+  // Recall probes (dryRun so probing doesn't perturb access counts). A probe
+  // counts as answered when the answer surfaces in the context the system
+  // would hand the assistant: episodic items at their rank, or — for facts
+  // the semantic layer distilled (employer, name, …) — profile facts, which
+  // composeContext places above the episodic section, i.e. rank 1.
+  const recallMisses: RecallMissDiagnostic[] = [];
+  const probeFact = async (
+    probeSet: "plain" | "paraphrase",
+    key: string,
+    probe: string,
+    answer: string,
+  ): Promise<number | null> => {
+    const { items, profile } = await mem.retrieve(probe, { k: 5, now, dryRun: true });
+    const needle = answer.toLowerCase();
+    let rank: number | null = null;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].record.text.toLowerCase().includes(needle)) {
+        rank = i + 1;
+        break;
+      }
+    }
+    const inProfile = [
+      ...profile.identity,
+      ...profile.attributes,
+      ...profile.preferences,
+    ].some((f) => f.object.toLowerCase().includes(needle));
+    if (inProfile) rank = 1;
+    if (rank === null) {
+      recallMisses.push({
+        probeSet,
+        key,
+        probe,
+        answer,
+        topRetrieved: items.slice(0, 3).map((i) => i.record.text.slice(0, 120)),
+      });
+    }
+    return rank;
+  };
+
+  const outcomes: RecallOutcome[] = [];
+  const paraphraseOutcomes: RecallOutcome[] = [];
+  for (const fact of truth.facts) {
+    outcomes.push({ key: fact.key, rank: await probeFact("plain", fact.key, fact.probe, fact.answer) });
+    paraphraseOutcomes.push({
+      key: fact.key,
+      rank: await probeFact("paraphrase", fact.key, fact.paraphraseProbe, fact.answer),
+    });
+  }
+
+  const finalProfile = mem.profile(horizonEnd);
+  const recall = recallMetrics(outcomes);
+  const paraphrase = recallMetrics(paraphraseOutcomes);
+  const preferences = preferenceMetrics(finalProfile, truth);
+  const directives = directiveRecall(finalProfile, truth);
+  const identity = identityCorrect(finalProfile, truth);
+  const contradictions = contradictionsResolved(finalProfile, truth);
+  const stability = stabilityScore(snapshots, truth);
+
+  // Trace spurious preferences back to the turn that triggered them — the
+  // difference between "the eval fails" and "here's where to look first".
+  const diagnostics: EvalDiagnostics = {
+    recallMisses,
+    spuriousPreferences: preferences.spuriousFacts.map((f) => {
+      const src = f.sources[0];
+      const record = src ? mem.getRecord(`${src.sessionId}/${src.entryId}#0`) : undefined;
+      return {
+        fact: `${f.polarity > 0 ? "+" : "-"}${f.object}`,
+        exampleTurn: record?.text.slice(0, 160) ?? (src ? `${src.sessionId}/${src.entryId}` : "unknown"),
+      };
+    }),
+    missedPreferences: preferences.missedDetail,
+  };
+
+  mem.close();
+
+  const thresholds = { ...spec.thresholds, ...opts.thresholds };
+  const failures: string[] = [];
+  if (recall.at5 < thresholds.recallAt5) {
+    failures.push(`recall@5 ${recall.at5.toFixed(2)} < ${thresholds.recallAt5} (missed: ${recall.misses.join(", ")})`);
+  }
+  if (recall.mrr < thresholds.mrr) failures.push(`MRR ${recall.mrr.toFixed(2)} < ${thresholds.mrr}`);
+  if (paraphrase.at5 < thresholds.paraphraseRecallAt5) {
+    failures.push(
+      `paraphrase recall@5 ${paraphrase.at5.toFixed(2)} < ${thresholds.paraphraseRecallAt5} (missed: ${paraphrase.misses.join(", ")})`,
+    );
+  }
+  if (preferences.f1 < thresholds.preferenceF1) {
+    failures.push(
+      `preference F1 ${preferences.f1.toFixed(2)} < ${thresholds.preferenceF1}` +
+        (preferences.missed.length ? ` (missed: ${preferences.missed.join(", ")})` : ""),
+    );
+  }
+  if (directives < thresholds.directiveRecall) {
+    failures.push(`directive recall ${directives.toFixed(2)} < ${thresholds.directiveRecall}`);
+  }
+  if (identity !== thresholds.identityExpected) {
+    failures.push(
+      thresholds.identityExpected
+        ? "identity (name) not learned"
+        : "identity survived a horizon where decay should have retired it",
+    );
+  }
+  if (thresholds.contradictionRequired && contradictions.correct < contradictions.total) {
+    failures.push("contradiction not resolved to latest statement");
+  }
+  if (stability < thresholds.stability) failures.push(`stability ${stability.toFixed(2)} < ${thresholds.stability}`);
+
+  const turns = truth.sessionIds.length * (opts.turnsPerSession ?? spec.turnsPerSession);
+  return {
+    band,
+    corpus: {
+      sessions: truth.sessionIds.length,
+      intervalDays: truth.intervalDays,
+      turns,
+      seed,
+      horizonEnd,
+    },
+    recall,
+    paraphrase,
+    preferences,
+    directiveRecall: directives,
+    identityCorrect: identity,
+    contradictions,
+    stability,
+    consolidation,
+    thresholds,
+    passed: failures.length === 0,
+    failures,
+    diagnostics,
+  };
+}
+
+export interface BandedEvalResult {
+  bands: EvalReport[];
+  passed: boolean;
+}
+
+export async function runAllBands(opts: Omit<RunEvalOptions, "band">): Promise<BandedEvalResult> {
+  const bands: EvalReport[] = [];
+  for (const band of Object.keys(BANDS) as EvalBand[]) {
+    bands.push(await runEval({ ...opts, workDir: path.join(opts.workDir, band), band }));
+  }
+  return { bands, passed: bands.every((b) => b.passed) };
+}
+
+export function formatReport(report: EvalReport): string {
+  const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+  const t = report.thresholds;
+  const lines = [
+    `[${report.band}] ${report.corpus.sessions} sessions × ${report.corpus.intervalDays}d, seed ${report.corpus.seed}, horizon ends ${report.corpus.horizonEnd.slice(0, 10)}`,
+    ``,
+    `Recall quality (${report.recall.n} planted facts)`,
+    `  recall@1  ${pct(report.recall.at1)}`,
+    `  recall@5  ${pct(report.recall.at5)}   (threshold ${pct(t.recallAt5)})`,
+    `  MRR       ${report.recall.mrr.toFixed(2)}   (threshold ${t.mrr})`,
+    `  paraphrase recall@5 ${pct(report.paraphrase.at5)}  MRR ${report.paraphrase.mrr.toFixed(2)}   (threshold ${pct(t.paraphraseRecallAt5)})`,
+    ``,
+    `Personality mirroring`,
+    `  preference precision ${pct(report.preferences.precision)}  recall ${pct(report.preferences.recall)}  F1 ${report.preferences.f1.toFixed(2)} (threshold ${t.preferenceF1})`,
+    `  directive recall     ${pct(report.directiveRecall)} (threshold ${pct(t.directiveRecall)})`,
+    `  identity surfaced    ${report.identityCorrect ? "yes" : "no"} (expected: ${t.identityExpected ? "yes" : "no — decay should retire it"})`,
+    `  contradictions       ${report.contradictions.correct}/${report.contradictions.total} resolved${t.contradictionRequired ? "" : " (informational)"}`,
+    `  stability (horizon)  ${pct(report.stability)} (threshold ${pct(t.stability)})`,
+    ``,
+    `Consolidation: ${report.consolidation.created} summaries folded ${report.consolidation.folded} turn records`,
+    ``,
+    report.passed ? `PASSED` : `FAILED:\n${report.failures.map((f) => `  - ${f}`).join("\n")}`,
+  ];
+
+  // Diagnostics: enough context to start debugging without re-running.
+  const d = report.diagnostics;
+  if (!report.passed && d.recallMisses.length) {
+    lines.push(``, `Recall misses:`);
+    for (const miss of d.recallMisses) {
+      lines.push(`  [${miss.probeSet}] ${miss.key}: "${miss.probe}" expected "${miss.answer}"`);
+      miss.topRetrieved.forEach((t, i) => lines.push(`      top${i + 1}: ${t}`));
+    }
+  }
+  if (d.spuriousPreferences.length) {
+    lines.push(``, `Spurious learned preferences (with triggering turn):`);
+    for (const s of d.spuriousPreferences) {
+      lines.push(`  ${s.fact}`, `      from: ${s.exampleTurn}`);
+    }
+  }
+  if (!report.passed && d.missedPreferences.length) {
+    lines.push(``, `Missed planted preferences:`);
+    for (const m of d.missedPreferences) {
+      lines.push(`  expected ${m.expected}, observed: ${m.closest ?? "NONE"}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export function formatBandedResult(result: BandedEvalResult): string {
+  const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+  const rows = result.bands.map((b) =>
+    [
+      b.band.padEnd(7),
+      `r@5 ${pct(b.recall.at5).padStart(4)}`,
+      `para ${pct(b.paraphrase.at5).padStart(4)}`,
+      `MRR ${b.recall.mrr.toFixed(2)}`,
+      `prefF1 ${b.preferences.f1.toFixed(2)}`,
+      `dir ${pct(b.directiveRecall).padStart(4)}`,
+      `id ${b.identityCorrect ? "yes" : "no "}`,
+      `stab ${pct(b.stability).padStart(4)}`,
+      b.passed ? "PASS" : "FAIL",
+    ].join("  "),
+  );
+  return [
+    result.bands.map(formatReport).join("\n\n" + "─".repeat(72) + "\n\n"),
+    "",
+    "═".repeat(72),
+    "Summary",
+    ...rows,
+    "",
+    result.passed ? "ALL BANDS PASSED" : "ONE OR MORE BANDS FAILED",
+  ].join("\n");
+}
