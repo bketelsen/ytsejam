@@ -121,4 +121,14 @@ describe("in-process cog tool integration", () => {
       }
     }
   });
+
+  test("cog_rpc reconcile_now reaches memory.reconcileNow (no reconciler attached path)", async () => {
+    // With no reconciler attached in this test harness, the dispatch should
+    // reach memory.reconcileNow and surface its documented error -- this
+    // proves the method is wired through the dispatcher (not an unknown method).
+    const err: any = await tool("cog_rpc")
+      .execute("test", { method: "reconcile_now" })
+      .catch((e) => e);
+    expect(err.message).toContain("memory.reconcileNow: no reconciler attached");
+  });
 });

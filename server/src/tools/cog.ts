@@ -36,6 +36,7 @@ const RPC_METHODS = [
   "stats",
   "git",
   "health",
+  "reconcile_now",
 ] as const;
 
 type RpcMethod = (typeof RPC_METHODS)[number];
@@ -75,6 +76,14 @@ const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = 
   "health": (params) => {
     rejectParams("health", params, []);
     return memory.health();
+  },
+  "reconcile_now": (params) => {
+    rejectParams("reconcile_now", params, ["force"]);
+    const force = params.force;
+    if (force !== undefined && typeof force !== "boolean") {
+      throw new Error("reconcile_now: force must be a boolean");
+    }
+    return memory.reconcileNow(force !== undefined ? { force } : {});
   },
 };
 

@@ -104,6 +104,43 @@ describe("createCogTools", () => {
     expect(err.message).toContain("unknown cog_rpc method: not.real");
   });
 
+  test("cog_rpc reconcile_now dispatches with no opts and returns the stats", async () => {
+    const stats = { scannedFiles: 3, scannedLines: 42, replayed: 7, skipped: 1, errors: 0 };
+    const reconcileNow = vi.spyOn(memory, "reconcileNow").mockResolvedValue(stats);
+    const r = await tool(createCogTools(), "cog_rpc").execute("t1", { method: "reconcile_now" });
+    expect(reconcileNow).toHaveBeenCalledWith({});
+    expect(text(r)).toContain('"replayed": 7');
+  });
+
+  test("cog_rpc reconcile_now threads force=true through to memory.reconcileNow", async () => {
+    const reconcileNow = vi
+      .spyOn(memory, "reconcileNow")
+      .mockResolvedValue({ scannedFiles: 0, scannedLines: 0, replayed: 0, skipped: 0, errors: 0 });
+    await tool(createCogTools(), "cog_rpc").execute("t1", {
+      method: "reconcile_now",
+      params: { force: true },
+    });
+    expect(reconcileNow).toHaveBeenCalledWith({ force: true });
+  });
+
+  test("cog_rpc reconcile_now rejects non-boolean force", async () => {
+    const reconcileNow = vi.spyOn(memory, "reconcileNow");
+    const err = await tool(createCogTools(), "cog_rpc")
+      .execute("t1", { method: "reconcile_now", params: { force: "yes" } })
+      .catch((e) => e);
+    expect(err.message).toContain("reconcile_now: force must be a boolean");
+    expect(reconcileNow).not.toHaveBeenCalled();
+  });
+
+  test("cog_rpc reconcile_now rejects unknown param keys", async () => {
+    const reconcileNow = vi.spyOn(memory, "reconcileNow");
+    const err = await tool(createCogTools(), "cog_rpc")
+      .execute("t1", { method: "reconcile_now", params: { bogus: 1 } })
+      .catch((e) => e);
+    expect(err.message).toContain("reconcile_now: invalid params: unknown param key: bogus");
+    expect(reconcileNow).not.toHaveBeenCalled();
+  });
+
   test("memory errors (id-as-path correction) propagate into the thrown error", async () => {
     vi.spyOn(memory, "write").mockRejectedValue(
       new Error(
