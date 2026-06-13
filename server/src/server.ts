@@ -7,6 +7,7 @@ import type { Config } from "./config.ts";
 import type { EventBus, ServerEvent } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { AgentManager } from "./manager.ts";
+import * as memory from "./memory/index.ts";
 import { listAvailableModels } from "./models.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
@@ -94,6 +95,11 @@ export function createApp(deps: AppDeps) {
         compacting: manager.isCompacting(s.id),
       }));
     return c.json({ sessions });
+  });
+
+  app.get("/api/memory/health", async (c) => {
+    const h = await memory.health();
+    return c.json({ ltm: h.ltm ?? null });
   });
 
   app.post("/api/sessions", async (c) => {

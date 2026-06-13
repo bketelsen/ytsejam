@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
+import { HealthIcon } from "./components/HealthIcon";
 import { Settings } from "./components/Settings";
 import { TasksDialog } from "./components/TasksDialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -22,6 +23,18 @@ function Main() {
   const runningTasks = Object.values(app.tasks).filter(
     (t) => t.status === "running" || t.status === "pending",
   ).length;
+  const wsTitle =
+    app.wsState === "unknown"
+      ? "WebSocket: connecting…"
+      : app.wsState === "ok"
+        ? "WebSocket: connected"
+        : "WebSocket: disconnected";
+  const ltmTitle =
+    app.ltmState === "unknown"
+      ? "LTM: status unknown"
+      : app.ltmState === "ok"
+        ? "LTM: healthy"
+        : `LTM: ${app.ltmLastError ?? "unhealthy"}`;
 
   const sidebarProps = {
     sessions: app.sessions,
@@ -66,6 +79,12 @@ function Main() {
         onCwdChange={app.setCurrentCwd}
         onSend={app.send}
         onMenuClick={() => setSidebarOpen(true)}
+        headerRight={
+          <>
+            <HealthIcon kind="ws" state={app.wsState} title={wsTitle} />
+            <HealthIcon kind="ltm" state={app.ltmState} title={ltmTitle} />
+          </>
+        }
       />
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} currentSessionId={app.currentId} />
       <TasksDialog open={tasksOpen} onOpenChange={setTasksOpen} tasks={app.tasks} />

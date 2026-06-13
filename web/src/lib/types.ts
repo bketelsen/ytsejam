@@ -12,6 +12,20 @@ export interface SessionRow {
   cwd?: string;
 }
 
+export interface LtmHealth {
+  reachable: boolean;
+  consecutiveFailures: number;
+  lastTickAt?: string;
+  lastTickStats?: {
+    scannedFiles: number;
+    scannedLines: number;
+    replayed: number;
+    skipped: number;
+    errors: number;
+  };
+  lastError?: { message: string; at: string };
+}
+
 export interface ContentBlock {
   type: string; // "text" | "thinking" | "toolCall" | "image" | ...
   text?: string;

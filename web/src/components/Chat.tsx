@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Folder, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ export function Chat({
   onCwdChange,
   onSend,
   onMenuClick,
+  headerRight,
 }: {
   sessionId: string | null;
   messages: ChatMessage[];
@@ -38,6 +40,7 @@ export function Chat({
   onCwdChange: (cwd: string | undefined) => void;
   onSend: (text: string) => Promise<void>;
   onMenuClick: () => void;
+  headerRight?: React.ReactNode;
 }) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -79,10 +82,18 @@ export function Chat({
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
-      <header className="flex items-center gap-2 border-b border-border px-2 py-1.5 md:hidden">
-        <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open sessions">
+      {/*
+        Header strip is always rendered (the burger button is mobile-only via md:hidden,
+        and headerRight is conditional). Today App.tsx always supplies headerRight, so the
+        desktop strip is never empty. If a future caller mounts <Chat> without headerRight,
+        consider guarding the entire <header> on (mobile || headerRight) to avoid a
+        ~40px empty bar with a bottom border on desktop.
+      */}
+      <header className="flex items-center gap-2 border-b border-border px-2 py-1.5">
+        <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open sessions" className="md:hidden">
           <Menu />
         </Button>
+        {headerRight && <div className="ml-auto flex items-center gap-2">{headerRight}</div>}
       </header>
       {compacting && (
         <div className="flex items-center justify-center border-b border-border px-2 py-1">

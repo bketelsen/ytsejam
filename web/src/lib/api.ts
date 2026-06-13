@@ -1,4 +1,4 @@
-import type { ChatMessage, ModelInfo, ScheduleRow, SessionRow, TaskRow } from "./types";
+import type { ChatMessage, LtmHealth, ModelInfo, ScheduleRow, SessionRow, TaskRow } from "./types";
 
 const TOKEN_KEY = "ytsejam-token";
 
@@ -61,6 +61,7 @@ export const client = {
   savePersona: (content: string) =>
     api<{ ok: true }>("/api/persona", { method: "PUT", body: JSON.stringify({ content }) }),
   getModels: () => api<{ models: ModelInfo[]; defaultModel: string }>("/api/models"),
+  getMemoryHealth: () => api<{ ltm: LtmHealth | null }>("/api/memory/health"),
   listTasks: () => api<{ tasks: TaskRow[] }>("/api/tasks"),
   cancelTask: (id: string) => api<{ ok: true }>(`/api/tasks/${id}/cancel`, { method: "POST" }),
   getTaskTranscript: (id: string) =>
