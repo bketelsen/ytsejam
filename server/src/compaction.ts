@@ -86,7 +86,7 @@ export function decideCompaction(
  * anchors on the last surviving assistant message's `usage.totalTokens` — a
  * value that, immediately post-compaction, is the STALE pre-compaction
  * snapshot from the very turn that triggered compaction. Reading it would
- * tautologically return `tokens_before`.
+ * tautologically return `tokens_before_estimated`.
  *
  * Walks each message and sums `Math.ceil(chars / 4)` over:
  *   - string `.content` (user messages, our synthesized assistant text)
@@ -252,7 +252,7 @@ export interface CompactionEvent {
   contextWindow: number;
   reserveTokens: number;
   keepRecentTokens: number;
-  tokensBefore: number;
+  tokensBeforeEstimated: number;
   tokensAfterEstimated: number;
   summaryTokens: number;
   firstKeptEntryId: string;
@@ -268,7 +268,7 @@ export interface CompactionEvent {
  *
  * Shape:
  *   YYYY-MM-DD HH:MM:SS: compaction in session <id>[ subagent task <tid> (parent session <id>)] —
- *     <trigger>, <model>, ctx <before>→~<after> tokens, summary <S> tokens,
+ *     <trigger>, <model>, ctx ~<before>→~<after> tokens, summary <S> tokens,
  *     files-read [<list>], files-edited [<list>]. Trigger: <reason>.[ FAILED]
  */
 export function formatDevLogLine(e: CompactionEvent): string {
@@ -285,7 +285,7 @@ export function formatDevLogLine(e: CompactionEvent): string {
   const failedMarker = e.succeeded ? "" : " FAILED";
   return (
     `${ts}: compaction in ${sessionPart} — ${e.trigger}, ${e.model}, ` +
-    `ctx ${e.tokensBefore}→~${e.tokensAfterEstimated} tokens, ` +
+    `ctx ~${e.tokensBeforeEstimated}→~${e.tokensAfterEstimated} tokens, ` +
     `summary ${e.summaryTokens} tokens, files-read ${filesReadStr}, ` +
     `files-edited ${filesModStr}. Trigger: ${e.reason}.${failedMarker}`
   );
@@ -311,7 +311,7 @@ export function serializeJsonRecord(
     context_window: e.contextWindow,
     reserve_tokens: e.reserveTokens,
     keep_recent_tokens: e.keepRecentTokens,
-    tokens_before: e.tokensBefore,
+    tokens_before_estimated: e.tokensBeforeEstimated,
     tokens_after_estimated: e.tokensAfterEstimated,
     summary_tokens: e.summaryTokens,
     first_kept_entry_id: e.firstKeptEntryId,
@@ -390,7 +390,7 @@ export function buildCompactionEvent(
     contextWindow: model.contextWindow,
     reserveTokens: computeReserveTokens(model),
     keepRecentTokens: 20_000,
-    tokensBefore:
+    tokensBeforeEstimated:
       pending && pending.tokensBefore > 0
         ? pending.tokensBefore
         : (compactionEntry?.tokensBefore ?? 0),
