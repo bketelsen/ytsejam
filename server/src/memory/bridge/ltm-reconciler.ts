@@ -6,6 +6,7 @@ import {
   computeOrigin,
   mirrorToLtm,
 } from "./ltm-observer.ts";
+import { skipMarkdownNoise } from "../consolidated/open-actions.ts";
 
 type Logger = (level: "warn" | "info", msg: string, meta?: object) => void;
 
@@ -171,14 +172,26 @@ export class LtmReconciler {
         const content = await readFile(file, "utf8");
         // Split on /\r?\n/ AND trim each line so CRLF and trailing-whitespace
         // lines hash to the same origin as the live write path's clean lines.
-        // Filter empties.
-        const lines = content
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
-        for (let i = 0; i < lines.length; i++) {
+        //
+        // Noise classification mirrors the read-side parser
+        // (consolidated/observations-parser.ts): the shared skipMarkdownNoise()
+        // helper drops HTML comments and fenced code blocks (state must
+        // persist across iterations — both can span multiple lines). Lines
+        // that survive noise filtering but don't even look like a list item
+        // (headings, prose, archive bookkeeping) are silently ignored too —
+        // the read-side parser only warns on list items that fail to parse,
+        // and the reconciler must agree (see issue #100). Only `- …` lines
+        // reach processLine, where a truly malformed observation
+        // (`- not-a-date [tag]: …`) still surfaces as a WARN.
+        const state = { inComment: false, inFence: false };
+        const rawLines = content.split(/\r?\n/);
+        for (let i = 0; i < rawLines.length; i++) {
+          const trimmed = rawLines[i]!.trim();
+          if (!trimmed) continue;
+          if (skipMarkdownNoise(trimmed, state)) continue;
+          if (!trimmed.startsWith("- ")) continue;
           stats.scannedLines++;
-          await this.processLine(file, lines[i]!, i, stats);
+          await this.processLine(file, trimmed, i, stats);
         }
         this.mtimeCache.set(file, st.mtimeMs);
       } catch (err) {

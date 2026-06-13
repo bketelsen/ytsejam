@@ -89,7 +89,7 @@ describe("LtmReconciler", () => {
     await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
       join(dataDir, "memory", "personal", "observations.md"),
-      "- 2026-06-10 [a]: good\nMALFORMED\n- 2026-06-11 [b]: also good\n",
+      "- 2026-06-10 [a]: good\n- not-a-date [bad]: malformed\n- 2026-06-11 [b]: also good\n",
     );
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
     const stats = await reconciler.reconcile();
@@ -303,10 +303,13 @@ describe("LtmReconciler", () => {
     // Mix a good line and a malformed line so we can also assert that the
     // per-line WARN path (separate issue #100) is still emitted alongside
     // the new INFO rollup -- the summary line is additive, not a replacement.
+    // The malformed line must LOOK like an observation (leading `- `) so
+    // that it reaches processLine post-#100 fix (lines that don't even look
+    // like list items are now silently skipped to match the read-side parser).
     await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
       join(dataDir, "memory", "personal", "observations.md"),
-      "- 2026-06-10 [a]: good line\nMALFORMED\n",
+      "- 2026-06-10 [a]: good line\n- not-a-date [bad]: malformed\n",
     );
     const logger = vi.fn();
     reconciler = new LtmReconciler({ ltm, dataDir, logger });
@@ -329,5 +332,79 @@ describe("LtmReconciler", () => {
       (c) => c[0] === "warn" && c[1] === "malformed line skipped",
     );
     expect(warnCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---- issue #100 regression: markdown-noise classification ---------------
+
+  it("silently skips markdown noise (HTML comments, headings, archive markers)", async () => {
+    // The exact noise classes that flooded the journal pre-fix: L0 header
+    // comment, section heading, blank line, archive-marker comment. Only
+    // the trailing list item is a real observation.
+    await mkdir(join(dataDir, "memory", "work"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "work", "observations.md"),
+      [
+        "<!-- L0: Timestamped work observations -->",
+        "# Work — Observations",
+        "",
+        "<!-- 8 entries archived 2026-06-13 -> glacier/work/observations-foo.md -->",
+        "",
+        "- 2026-06-13 [test]: the only real observation",
+        "",
+      ].join("\n"),
+    );
+    const logger = vi.fn();
+    reconciler = new LtmReconciler({ ltm, dataDir, logger });
+    const stats = await reconciler.reconcile();
+
+    // Acceptance #1: zero malformed-line warnings against a noise-heavy file.
+    const malformedWarns = logger.mock.calls.filter(
+      (c) => c[0] === "warn" && c[1] === "malformed line skipped",
+    );
+    expect(malformedWarns).toEqual([]);
+
+    // Acceptance: scannedLines counts only lines that survived the noise
+    // filter AND looked like a list item -- exactly one here.
+    expect(stats.scannedLines).toBe(1);
+    expect(stats.replayed).toBe(1);
+    expect(stats.errors).toBe(0);
+  });
+
+  it("still warns on lines that look like observations but don't parse", async () => {
+    // A line shaped like an observation (`- ` prefix) but with a bogus date
+    // is the boundary case the fix must NOT silence -- both
+    // parseObservationLine implementations validate calendar dates via
+    // new Date() round-trip, so "not-a-date" is rejected as malformed.
+    await mkdir(join(dataDir, "memory", "work"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "work", "observations.md"),
+      [
+        "<!-- L0: Timestamped work observations -->",
+        "# Work — Observations",
+        "",
+        "- not-a-date [bad]: this looks like an observation but the date is invalid",
+        "- 2026-06-13 [good]: this one is valid",
+      ].join("\n"),
+    );
+    const logger = vi.fn();
+    reconciler = new LtmReconciler({ ltm, dataDir, logger });
+    const stats = await reconciler.reconcile();
+
+    // Exactly one malformed-line WARN for the bad-date line, no false
+    // positives on the comment or the heading.
+    const malformedWarns = logger.mock.calls.filter(
+      (c) => c[0] === "warn" && c[1] === "malformed line skipped",
+    );
+    expect(malformedWarns).toHaveLength(1);
+    const meta = malformedWarns[0]![2] as { file: string; line: number };
+    expect(meta.file).toBe("work/observations.md");
+    expect(meta.line).toBe(4); // 1-based line number of the bad-date line
+
+    // Both `- …` lines reach processLine; the good one is replayed and the
+    // bad one is counted as an error. Noise lines do NOT contribute to
+    // scannedLines.
+    expect(stats.scannedLines).toBe(2);
+    expect(stats.replayed).toBe(1);
+    expect(stats.errors).toBe(1);
   });
 });
