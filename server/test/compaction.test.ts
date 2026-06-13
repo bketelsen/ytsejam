@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   mkdtemp,
   mkdir,
@@ -10,12 +10,26 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model, AssistantMessage } from "@earendil-works/pi-ai";
+
+vi.mock("@earendil-works/pi-agent-core", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@earendil-works/pi-agent-core")>();
+  return {
+    ...actual,
+    compact: vi.fn(),
+    prepareCompaction: vi.fn(),
+  };
+});
 import type {
   AgentHarness,
   AgentMessage,
   JsonlSessionMetadata,
   JsonlSessionRepo,
   Session,
+} from "@earendil-works/pi-agent-core";
+import {
+  compact,
+  prepareCompaction,
 } from "@earendil-works/pi-agent-core";
 import {
   computeReserveTokens,
@@ -36,6 +50,7 @@ import {
   pruneOldBackups,
   verifySessionLoadable,
   runCompactionIfPending,
+  runInlineCompactionInLoop,
   toOpenedForCompaction,
   type CompactionEvent,
   type CompactionWiringState,
@@ -1080,5 +1095,283 @@ describe("buildSurrenderAgentMessage", () => {
       totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     });
+  });
+});
+
+describe("runInlineCompactionInLoop", () => {
+  let tmp: string;
+  let sessionFilePath: string;
+  let originalContent: string;
+
+  beforeEach(async () => {
+    vi.mocked(prepareCompaction).mockReset();
+    vi.mocked(compact).mockReset();
+
+    tmp = await mkdtemp(join(tmpdir(), "inline-orchestrator-test-"));
+    const sessionDir = join(tmp, "sessions", "--chat--");
+    await mkdir(sessionDir, { recursive: true });
+    sessionFilePath = join(
+      sessionDir,
+      "2026-06-13T00-00-00-000Z_inline-test.jsonl",
+    );
+    originalContent = "original session content\n";
+    await writeFile(sessionFilePath, originalContent);
+  });
+
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const pending = () => ({
+    trigger: "proactive" as const,
+    reason: "inline test",
+    tokensBefore: 900_000,
+    budget: 800_000,
+  });
+
+  const branchEntries = () => [
+    {
+      type: "message",
+      id: "entry-before",
+      parentId: null,
+      timestamp: "2026-06-13T00:00:00.000Z",
+      message: { role: "user", content: [{ type: "text", text: "old" }] },
+    },
+    {
+      type: "message",
+      id: "entry-X",
+      parentId: "entry-before",
+      timestamp: "2026-06-13T00:00:01.000Z",
+      message: { role: "user", content: [{ type: "text", text: "kept" }] },
+    },
+    {
+      type: "message",
+      id: "entry-Y",
+      parentId: "entry-X",
+      timestamp: "2026-06-13T00:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "kept assistant" }],
+        stopReason: "stop",
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "test-model",
+      },
+    },
+  ] as any[];
+
+  const preparation = () => ({
+    firstKeptEntryId: "entry-X",
+    messagesToSummarize: [],
+    turnPrefixMessages: [],
+    isSplitTurn: false,
+    tokensBefore: 100,
+    fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
+    settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 20000 },
+  });
+
+  const makeOpened = (appendImpl?: (...args: any[]) => Promise<string>) => {
+    const appendCompaction = vi.fn(
+      appendImpl ??
+        (async () => {
+          await writeFile(sessionFilePath, "appended compaction\n");
+          return "compaction-entry-1";
+        }),
+    );
+    return {
+      session: {
+        metadata: {
+          id: "inline-test",
+          cwd: "chat",
+          path: sessionFilePath,
+          createdAt: "2026-06-13T00:00:00.000Z",
+        } as JsonlSessionMetadata,
+        appendCompaction,
+      } as unknown as Session<JsonlSessionMetadata> & {
+        metadata: JsonlSessionMetadata;
+      },
+      harness: {
+        getModel: () => fauxModel(1_000_000, 64_000),
+        getApiKeyAndHeaders: async () => ({
+          apiKey: "test-api-key",
+          headers: { "x-test": "1" },
+        }),
+        getThinkingLevel: () => "off",
+      } as unknown as AgentHarness,
+      compaction: { pendingCompaction: pending(), reactiveRetryAttempted: false },
+    } satisfies OpenedForCompaction;
+  };
+
+  const okRepo = { open: async () => ({}) } as unknown as JsonlSessionRepo;
+  const failingRepo = {
+    open: async () => {
+      throw new Error("corrupt");
+    },
+  } as unknown as JsonlSessionRepo;
+
+  it("happy path: writes appendCompaction(..., fromHook:true) and returns newMessages", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: true,
+      value: {
+        summary: "SUM",
+        firstKeptEntryId: "entry-X",
+        tokensBefore: 100,
+        details: { readFiles: [], modifiedFiles: [] },
+      },
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(true);
+    expect(opened.session.appendCompaction).toHaveBeenCalledWith(
+      "SUM",
+      "entry-X",
+      100,
+      { readFiles: [], modifiedFiles: [] },
+      true,
+    );
+    expect(result.compactionEntryId).toBe("compaction-entry-1");
+    expect(result.newMessages?.[0]).toMatchObject({
+      role: "compactionSummary",
+      summary: "SUM",
+      tokensBefore: 100,
+    });
+    expect(result.newMessages?.[1]).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "kept" }],
+    });
+    expect(opened.compaction.pendingCompaction).toBeNull();
+  });
+
+  it("no-op when prepareCompaction returns undefined", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({ ok: true, value: undefined });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(false);
+    expect(opened.session.appendCompaction).not.toHaveBeenCalled();
+    expect(vi.mocked(compact)).not.toHaveBeenCalled();
+  });
+
+  it("error when prepareCompaction returns Result.err", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: false,
+      error: new Error("prep failed") as any,
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.error?.message).toBe("prep failed");
+    expect(opened.session.appendCompaction).not.toHaveBeenCalled();
+  });
+
+  it("error when compact() returns Result.err", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: false,
+      error: new Error("compact failed") as any,
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.error?.message).toBe("compact failed");
+    expect(opened.session.appendCompaction).not.toHaveBeenCalled();
+  });
+
+  it("surrender when appendCompaction throws (backup restored)", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: true,
+      value: {
+        summary: "SUM",
+        firstKeptEntryId: "entry-X",
+        tokensBefore: 100,
+        details: {},
+      },
+    });
+    const opened = makeOpened(async () => {
+      await writeFile(sessionFilePath, "partial corrupt write\n");
+      throw new Error("append failed");
+    });
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      okRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.surrendered).toBe(true);
+    expect(result.error?.message).toBe("append failed");
+    await expect(readFile(sessionFilePath, "utf8")).resolves.toBe(
+      originalContent,
+    );
+  });
+
+  it("surrender when verifySessionLoadable fails post-write (backup restored)", async () => {
+    vi.mocked(prepareCompaction).mockReturnValue({
+      ok: true,
+      value: preparation() as any,
+    });
+    vi.mocked(compact).mockResolvedValue({
+      ok: true,
+      value: {
+        summary: "SUM",
+        firstKeptEntryId: "entry-X",
+        tokensBefore: 100,
+        details: {},
+      },
+    });
+    const opened = makeOpened();
+
+    const result = await runInlineCompactionInLoop(
+      opened,
+      branchEntries() as any,
+      failingRepo,
+    );
+
+    expect(result.fired).toBe(true);
+    expect(result.succeeded).toBe(false);
+    expect(result.surrendered).toBe(true);
+    expect(result.error?.message).toBe("corrupt");
+    await expect(readFile(sessionFilePath, "utf8")).resolves.toBe(
+      originalContent,
+    );
   });
 });

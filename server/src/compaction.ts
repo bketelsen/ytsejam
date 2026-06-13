@@ -6,15 +6,20 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import {
+  buildSessionContext,
+  compact,
   DEFAULT_COMPACTION_SETTINGS,
   estimateContextTokens,
+  prepareCompaction,
   shouldCompact,
   type AgentHarness,
   type AgentMessage,
+  type CompactionPreparation,
   type CompactionSettings,
   type JsonlSessionMetadata,
   type JsonlSessionRepo,
   type Session,
+  type SessionTreeEntry,
 } from "@earendil-works/pi-agent-core";
 
 /**
@@ -527,6 +532,20 @@ export async function snapshotSessionJsonl(
 }
 
 /**
+ * Restore a session JSONL file from a pre-compaction backup.
+ *
+ * Used only on write/verification surrender paths: once a compaction write may
+ * have partially mutated the canonical JSONL, copy the known-good snapshot back
+ * over the canonical file before returning control to the caller.
+ */
+export async function restoreSessionFromBackup(
+  sessionFilePath: string,
+  backupPath: string,
+): Promise<void> {
+  await copyFile(backupPath, sessionFilePath);
+}
+
+/**
  * Keep only the N most recent `.pre-compact-*` backups for a session file.
  *
  * Scans the directory containing the session file for siblings matching
@@ -686,6 +705,234 @@ export interface RunCompactionResult {
  *   - succeeded=false  → caller still writes FAILED observability, then decides whether to surrender
  *   - surrendered=true → JSONL corrupted post-compact; surrender message MUST be emitted by caller
  */
+
+export interface RunInlineCompactionResult {
+  fired: boolean;
+  succeeded?: boolean;
+  surrendered?: boolean;
+  newMessages?: AgentMessage[];
+  compactionEntryId?: string;
+  durationMs?: number;
+  backupPath?: string;
+  pending?: PendingCompaction;
+  error?: Error;
+}
+
+/**
+ * Inner-loop compaction orchestrator. Mirrors `runCompactionIfPending` but
+ * bypasses `harness.compact()`'s `phase === "idle"` guard by calling
+ * pi-agent-core's pure `prepareCompaction` and `compact` functions directly.
+ * Safe to call from `phase === "turn"` (where the `context` hook fires).
+ */
+export async function runInlineCompactionInLoop(
+  opened: OpenedForCompaction,
+  branchEntries: SessionTreeEntry[],
+  repo: JsonlSessionRepo,
+): Promise<RunInlineCompactionResult> {
+  const pending = opened.compaction.pendingCompaction;
+  if (!pending) return { fired: false };
+
+  const pendingSnapshot = { ...pending };
+  opened.compaction.pendingCompaction = null;
+
+  const start = Date.now();
+  const sessionFilePath = opened.session.metadata.path;
+  let backupPath: string;
+
+  try {
+    backupPath = await snapshotSessionJsonl(sessionFilePath);
+  } catch (err) {
+    console.error(
+      `[compaction] backup failed (inline) for session ${opened.session.metadata.id}, ABORTING:`,
+      err,
+    );
+    return {
+      fired: true,
+      succeeded: false,
+      pending: pendingSnapshot,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+
+  void pruneOldBackups(sessionFilePath, 3);
+
+  const prepResult = prepareCompaction(
+    branchEntries,
+    DEFAULT_COMPACTION_SETTINGS,
+  );
+  if (!prepResult.ok) {
+    return {
+      fired: true,
+      succeeded: false,
+      durationMs: Date.now() - start,
+      backupPath,
+      pending: pendingSnapshot,
+      error: prepResult.error,
+    };
+  }
+  if (!prepResult.value) {
+    return { fired: false, durationMs: Date.now() - start, backupPath };
+  }
+  const preparation: CompactionPreparation = prepResult.value;
+
+  const model = opened.harness.getModel();
+  if (!model) {
+    return {
+      fired: true,
+      succeeded: false,
+      durationMs: Date.now() - start,
+      backupPath,
+      pending: pendingSnapshot,
+      error: new Error("no model set for inline compaction"),
+    };
+  }
+
+  const harnessWithAuth = opened.harness as unknown as {
+    getApiKeyAndHeaders?: (
+      model: Model<any>,
+    ) => Promise<{ apiKey: string; headers?: Record<string, string> } | undefined>;
+  };
+  const getAuth = harnessWithAuth.getApiKeyAndHeaders;
+  if (!getAuth) {
+    return {
+      fired: true,
+      succeeded: false,
+      durationMs: Date.now() - start,
+      backupPath,
+      pending: pendingSnapshot,
+      error: new Error("no auth resolver available for inline compaction"),
+    };
+  }
+  const auth = await getAuth.call(opened.harness, model);
+  if (!auth) {
+    return {
+      fired: true,
+      succeeded: false,
+      durationMs: Date.now() - start,
+      backupPath,
+      pending: pendingSnapshot,
+      error: new Error("no auth available for inline compaction"),
+    };
+  }
+
+  const thinkingLevel = opened.harness.getThinkingLevel?.();
+  const compactResult = await compact(
+    preparation,
+    model,
+    auth.apiKey,
+    auth.headers,
+    CUSTOM_INSTRUCTIONS,
+    undefined,
+    thinkingLevel,
+  );
+  if (!compactResult.ok) {
+    return {
+      fired: true,
+      succeeded: false,
+      durationMs: Date.now() - start,
+      backupPath,
+      pending: pendingSnapshot,
+      error: compactResult.error,
+    };
+  }
+  const result = compactResult.value;
+
+  let entryId: string;
+  try {
+    entryId = await opened.session.appendCompaction(
+      result.summary,
+      result.firstKeptEntryId,
+      result.tokensBefore,
+      result.details,
+      true,
+    );
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    console.error(
+      `[compaction] inline appendCompaction failed for session ${opened.session.metadata.id}, restoring from backup:`,
+      e,
+    );
+    await restoreSessionFromBackup(sessionFilePath, backupPath);
+    return {
+      fired: true,
+      succeeded: false,
+      surrendered: true,
+      durationMs: Date.now() - start,
+      backupPath,
+      pending: pendingSnapshot,
+      error: e,
+    };
+  }
+
+  const verify = await verifySessionLoadable(() =>
+    repo.open(opened.session.metadata),
+  );
+  if (!verify.ok) {
+    console.error(
+      `[compaction] inline post-compact load verification FAILED for session ${opened.session.metadata.id}, restoring from backup:`,
+      verify.error,
+    );
+    await restoreSessionFromBackup(sessionFilePath, backupPath);
+    return {
+      fired: true,
+      succeeded: false,
+      surrendered: true,
+      durationMs: Date.now() - start,
+      backupPath,
+      pending: pendingSnapshot,
+      error: verify.error,
+    };
+  }
+
+  const newMessages = buildPostCompactionMessages(
+    result.summary,
+    branchEntries,
+    result.firstKeptEntryId,
+    model,
+    result.tokensBefore,
+  );
+
+  return {
+    fired: true,
+    succeeded: true,
+    durationMs: Date.now() - start,
+    backupPath,
+    pending: pendingSnapshot,
+    newMessages,
+    compactionEntryId: entryId,
+  };
+}
+
+/**
+ * Build the AgentMessage[] that should replace context after an inner-loop
+ * compaction. Result matches pi-agent-core's own session-context projection for
+ * a branch whose leaf is a compaction entry: a canonical compaction summary
+ * message followed by messages from `firstKeptEntryId` forward.
+ */
+export function buildPostCompactionMessages(
+  summary: string,
+  branchEntries: SessionTreeEntry[],
+  firstKeptEntryId: string,
+  _model: Model<any>,
+  tokensBefore = 0,
+): AgentMessage[] {
+  const now = new Date().toISOString();
+  const compactedBranch: SessionTreeEntry[] = [
+    ...branchEntries,
+    {
+      type: "compaction",
+      id: "inline-compaction-context-preview",
+      parentId: branchEntries.at(-1)?.id ?? null,
+      timestamp: now,
+      summary,
+      firstKeptEntryId,
+      tokensBefore,
+      fromHook: true,
+    },
+  ];
+  return buildSessionContext(compactedBranch).messages;
+}
+
 export async function runCompactionIfPending(
   opened: OpenedForCompaction,
   repo: JsonlSessionRepo,
