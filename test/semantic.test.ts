@@ -265,3 +265,24 @@ describe("dormant profile section (RECALL 2)", () => {
     expect(profile.dormant.some((f) => f.predicate === "works_at")).toBe(false);
   });
 });
+
+describe("recordRecall rehearsal persistence (RECALL 3)", () => {
+  it("bumps in memory and persists at powers of two (like bumpAccess)", () => {
+    const dir = tmpDir();
+    const store = SemanticStore.open(dir);
+    store.ingestTurn(turn("I work at Initech.", { timestamp: "2026-01-01T00:00:00.000Z" }));
+    const id = store.activeFacts().find((f) => f.predicate === "works_at")!.id;
+
+    for (let i = 0; i < 3; i++) store.recordRecall(id);
+    expect(store.allFacts().find((f) => f.id === id)!.recallCount).toBe(3);
+
+    // 3 is not a power of two — the last persisted snapshot is recallCount 2.
+    const reopened = SemanticStore.open(dir);
+    expect(reopened.allFacts().find((f) => f.id === id)!.recallCount).toBe(2);
+  });
+
+  it("ignores unknown and non-active facts", () => {
+    const store = SemanticStore.open(tmpDir());
+    store.recordRecall("no-such-fact"); // must not throw
+  });
+});
