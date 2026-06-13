@@ -116,10 +116,25 @@ export class Retriever {
     const meanVector = rawCosines.length
       ? rawCosines.reduce((s, x) => s + x, 0) / rawCosines.length
       : 0;
-    const stdVector = Math.sqrt(
-      rawCosines.reduce((s, x) => s + (x - meanVector) ** 2, 0) / Math.max(1, rawCosines.length),
-    );
+    // Resurrection gate statistics (strong-cue recall): a consolidated
+    // record resurrects only when its cosine is a clear outlier over the
+    // candidate pool. Leave-one-out: each candidate is judged against the
+    // pool EXCLUDING itself, so a strong match is not suppressed by its own
+    // contribution to the mean/std — and two strong matches don't suppress
+    // each other (measured: two cosine-1.0 targets self-included land at
+    // z≈2.1 and neither resurrects; LOO puts both at z≈3).
+    const sumCosines = rawCosines.reduce((s, x) => s + x, 0);
+    const sumSqCosines = rawCosines.reduce((s, x) => s + x * x, 0);
     const rawCosineById = new Map(vectorHits.map((h) => [h.id, Math.max(0, h.score)]));
+    /** LOO z-score of x within the pool; -Infinity when undefined (tiny/flat pool). */
+    const looZ = (x: number): number => {
+      const n = rawCosines.length;
+      if (n < 3) return -Infinity;
+      const mean = (sumCosines - x) / (n - 1);
+      const variance = Math.max(0, (sumSqCosines - x * x) / (n - 1) - mean * mean);
+      const std = Math.sqrt(variance);
+      return std < 1e-6 ? -Infinity : (x - mean) / std;
+    };
     const lexicalById = new Map(lexicalHits.map((h) => [h.id, h.score / maxLexical]));
     const vectorById = new Map(
       vectorHits.map((h) => [h.id, spreadNormalize(h.score, meanVector, maxVector)]),
@@ -138,11 +153,10 @@ export class Retriever {
       if (record.state === "redacted") continue;
       let stale = false;
       if (record.state === "consolidated" && !includeConsolidated) {
-        // Resurrection gate: only a clear semantic outlier over the pool
-        // reaches past consolidation. Zero-variance pools never resurrect.
+        // Only a clear semantic outlier reaches past consolidation; flat or
+        // tiny pools never resurrect.
         const raw = rawCosineById.get(id);
-        if (raw === undefined || stdVector < 1e-6) continue;
-        if ((raw - meanVector) / stdVector < config.resurrectZ) continue;
+        if (raw === undefined || looZ(raw) < config.resurrectZ) continue;
         stale = true;
       }
 

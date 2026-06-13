@@ -390,9 +390,9 @@ function buildRetriever(records: EpisodicRecord[]) {
 const NOW = "2026-06-01T00:00:00.000Z";
 
 describe("vector resurrection of consolidated records (RECALL 7)", () => {
-  // 9 recent active distractors with cosines 0.22..0.30 — with the 1.0
-  // target the pool mean ≈ 0.334, std ≈ 0.223, so the target's z ≈ 2.98 clears
-  // resurrectZ 2.5 while the distractors sit well below (max distractor z ≈ -0.15).
+  // 9 recent active distractors with cosines 0.22..0.30 — with a single 1.0
+  // target, LOO mean ≈ 0.26, std ≈ 0.0258, so the target's LOO z ≈ 28.7 clears
+  // resurrectZ 2.5 while the distractors sit well below (max distractor LOO z ≈ -0.15).
   const distractors = Array.from({ length: 9 }, (_, i) =>
     turnRecord(`d${i}`, 0.22 + i * 0.01, "active", "2026-05-30T00:00:00.000Z"));
 
@@ -433,5 +433,16 @@ describe("vector resurrection of consolidated records (RECALL 7)", () => {
     const { retriever } = buildRetriever([...distractors, middling]);
     const out = await retriever.rank("anything", 20, NOW, true);
     expect(out.some((i) => i.record.id === "old-mid")).toBe(true);
+  });
+
+  it("two strong consolidated matches both resurrect (leave-one-out, no mutual suppression)", async () => {
+    const targets = [
+      turnRecord("old-a", 1.0, "consolidated", "2024-06-01T00:00:00.000Z"),
+      turnRecord("old-b", 1.0, "consolidated", "2024-05-01T00:00:00.000Z"),
+    ];
+    const { retriever } = buildRetriever([...distractors, ...targets]);
+    const out = await retriever.rank("anything", 5, NOW);
+    expect(out.some((i) => i.record.id === "old-a")).toBe(true);
+    expect(out.some((i) => i.record.id === "old-b")).toBe(true);
   });
 });

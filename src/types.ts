@@ -342,9 +342,9 @@ export interface LtmConfig {
   /** Recency scoring half-life in days. */
   recencyHalfLifeDays: number;
   /**
-   * Z-score (over the candidate pool's cosines) a consolidated record must
-   * reach to be resurrected by a semantic match. Calibrated against the
-   * eval (Task RECALL 9); pools with ~zero variance never resurrect.
+   * Z-score (leave-one-out, over the candidate pool's cosines) a consolidated
+   * record must reach to be resurrected by a semantic match. Calibrated
+   * against the eval (Task RECALL 9); flat or tiny pools never resurrect.
    */
   resurrectZ: number;
 }
