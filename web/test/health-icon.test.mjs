@@ -6,8 +6,13 @@ import assert from "node:assert/strict";
 const root = new URL("..", import.meta.url).pathname;
 const src = readFileSync(join(root, "src/components/HealthIcon.tsx"), "utf8");
 
-test("HealthIcon exports a HealthState union with unknown | ok | bad", () => {
-  assert.match(src, /export\s+type\s+HealthState\s*=\s*["']unknown["']\s*\|\s*["']ok["']\s*\|\s*["']bad["']/);
+test("HealthIcon imports HealthState from ../lib/types (single source of truth)", () => {
+  // HealthState was hoisted out of this file (and useApp.ts) into lib/types.ts so
+  // both consumers share one definition. Adding a fourth state takes one edit.
+  // (Issue #117.) The literal union itself is asserted in types.test.mjs.
+  assert.match(src, /import\s+type\s*\{[^}]*\bHealthState\b[^}]*\}\s*from\s*["']\.\.\/lib\/types["']/);
+  // And not redeclared locally.
+  assert.doesNotMatch(src, /export\s+type\s+HealthState\b/);
 });
 
 test("HealthIcon imports Plug and Brain from lucide-react", () => {
