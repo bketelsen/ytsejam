@@ -59,3 +59,15 @@ the library types and a corpus of real transcripts before encoding any shape
 into tests or docs.
 
 _Added: 2026-06-12 | Task: Add estimateKeptSetTokens pure helper for issue #72 fix_
+
+## Pin Documented Design Gaps Not Assumptions
+
+When a test fails, check the plan/design doc before assuming an implementation bug — here `docs/plans/2026-06-13-compaction-pill.md` Open Question #1 (line 771) explicitly documented that a reactive retry-exhaust surrender emits no paired `compaction_end{status:"surrendered"}`, because the prior successful compaction already called `markCompactionEnd(opened, "succeeded")` and `handleCompactionTurnEnd` only calls `emitCompactionSurrender(opened)`. The plan author's own test contradicted that documented choice, so the fix was test-only in `server/test/compaction-events.test.ts` with zero changes to `server/src/manager.ts`. Write tests to pin documented behavior: assert NO `compaction_end{surrendered}` is emitted and that surrender is observable via the assistant diagnostic message instead. Avoid "fixing" server code to satisfy a test that conflicts with the design — and when a plan specifies an assertion that contradicts its own Open Questions, treat the design doc as authoritative and correct the test.
+
+_Added: 2026-06-13 | Task: Task 5 of compaction-pill — server vitest tests_
+
+## Mutation Test Pinned Design Gap Assertions
+
+When reviewing whether test assertions are "strong enough" — especially pinned-design-gap tests like those in `server/test/compaction-events.test.ts` that assert the *absence* of an event (e.g. no `compaction_end{surrendered}` on the reactive retry-exhaust path) — don't rely on code-reading alone; apply mutation testing. Temporarily perturb the implementation (e.g. make `manager.ts:382` erroneously emit `compaction_end{surrendered}`, or suppress a `compaction_start` emit) and confirm each test fails at the expected line for the right reason, then restore the file and verify `git diff` is byte-clean. This catches the class of bug a pure inspection cannot: an assertion that always passes regardless of implementation state (e.g. a `toContain` on a stable string), which looks correct but gives zero regression protection. A guard like `expect(ends).toHaveLength(1)` is only proven to do real work once you've shown it flips to a failure when the gap it pins is "fixed." Bidirectional pins matter because they force a deliberate decision if someone later closes the gap.
+
+_Added: 2026-06-13 | Task: Two-stage review of Task 5 compaction-pill tests_
