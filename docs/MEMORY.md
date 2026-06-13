@@ -209,7 +209,7 @@ Gotcha: done items should not pile up forever. Housekeeping archives completed i
 
 Purpose: keep compact registries of durable nouns: people, projects, tools, organizations, recurring systems, and relationships.
 
-Format: at most three non-blank, non-comment lines per entity: `### Name (relationship)` / `fact one | fact two | [[wiki/optional-detail/index]]` / `status: active | last:YYYY-MM-DD`.
+Format: at most three non-blank, non-comment lines per entity: `### Name (relationship)` / `fact one | fact two | [[wiki/optional-detail]]` / `status: active | last:YYYY-MM-DD`.
 
 Edit pattern: edit in place. The registry should represent the current compact truth, not every historical detail.
 
@@ -299,7 +299,7 @@ Other files reference that fact with wiki-links:
 ```md
 [[domain-path/filename]]
 [[projects/ytsejam/architecture]]
-[[wiki/topics/harness-check/index]]
+[[wiki/topics/harness-check]]
 ```
 
 The purpose is maintenance. When a fact changes, you update one file and sweep references. You do not hunt five stale copies across hot memory, entities, threads, wiki, and glacier.
