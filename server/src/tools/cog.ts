@@ -3,6 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import * as memory from "../memory/index.ts";
 import type { DomainSummaryParams, GitParams } from "../memory/index.ts";
 import { parseObservationLine } from "../memory/bridge/ltm-observer.ts";
+import { recall } from "../memory/recall.ts";
 import { truncate } from "./shell.ts";
 
 /**
@@ -234,6 +235,17 @@ export function createCogTools(): AgentTool<any>[] {
       execute: async (_id, p) => {
         const { query } = p as { query: string };
         const r = await memory.search(query);
+        return jsonResult(r);
+      },
+    },
+    {
+      name: "recall",
+      label: "Recall across cog + LTM",
+      description: "Unified recall across cog memory (full-text search) and long-term memory (semantic retrieval). Returns interleaved hits from both substrates, deduped by origin (cog wins on collision). Each hit is labeled with its source ('cog' or 'ltm'). Use when looking up what you know about a topic — broader and smarter than cog_search alone, especially for past conversations consolidated into LTM.",
+      parameters: searchParams,
+      execute: async (_id, p) => {
+        const { query } = p as { query: string };
+        const r = await recall(query);
         return jsonResult(r);
       },
     },
