@@ -27,12 +27,19 @@ slugify() {
 
 for src in "$@"; do
   src_dir="$(dirname "$src")"
-  # Extract every (target) inside ](target) where target doesn't start with http, mailto, or #.
+  # Extract every (target) inside ](target). External/anchor-only links are
+  # filtered inside the loop rather than via a second `grep -v` pipeline stage,
+  # because under `set -o pipefail` a fully-filtered pipe exits non-zero — which
+  # used to false-fail files with zero relative-path links (see #97). The
+  # leading `grep -oE || true` tolerates files with no markdown link syntax at
+  # all (same pipefail trap, just one stage earlier).
   # grep -oE handles the inline form; we then strip ](  and  ).
-  grep -oE '\]\([^)]+\)' "$src" \
+  { grep -oE '\]\([^)]+\)' "$src" || true; } \
     | sed -E 's/^\]\(//; s/\)$//' \
-    | grep -vE '^(https?|mailto|#)' \
     | while read -r link; do
+        if [[ "$link" =~ ^(https?|mailto|#) ]]; then
+          continue
+        fi
         path="${link%%#*}"
         anchor=""
         if [[ "$link" == *"#"* ]]; then
