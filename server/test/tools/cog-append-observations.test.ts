@@ -87,6 +87,38 @@ describe("cog_append → recordObservation routing for observations.md", () => {
     ).rejects.toThrow(/malformed observation line/);
   });
 
+  it("multi-line atomicity: mid-batch malformed line aborts WITHOUT partial cog or LTM writes", async () => {
+    const cog_append = findTool(createCogTools(), "cog_append");
+    const fileBefore = await readFile(
+      join(memRoot, "personal", "observations.md"),
+      "utf8",
+    ).catch(() => "");
+    expect(fileBefore).toBe("");
+
+    await expect(
+      cog_append.execute("call-atomic", {
+        path: "personal/observations.md",
+        text:
+          "- 2026-06-13 [a]: first ok\n" +
+          "- 2026-06-13 [b]: second ok\n" +
+          "this-third-line-is-malformed\n",
+      }),
+    ).rejects.toThrow(/malformed observation line/);
+
+    // cog SSOT: file must not contain the would-be-written-first-two lines
+    const fileAfter = await readFile(
+      join(memRoot, "personal", "observations.md"),
+      "utf8",
+    ).catch(() => "");
+    expect(fileAfter).toBe("");
+
+    // LTM: must not contain "first ok" or "second ok"
+    const r1 = await ltm!.retrieve("first ok", { k: 5 });
+    expect(r1.items.map((e) => e.record.text)).not.toContain("first ok");
+    const r2 = await ltm!.retrieve("second ok", { k: 5 });
+    expect(r2.items.map((e) => e.record.text)).not.toContain("second ok");
+  });
+
   it("nested-domain path: derives domainPath correctly for projects/ytsejam/observations.md", async () => {
     const cog_append = findTool(createCogTools(), "cog_append");
     await cog_append.execute("call-4", {
