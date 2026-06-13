@@ -360,11 +360,14 @@ fi
 fail=0
 
 slugify() {
-  # GitHub-style slug: lowercase, strip punctuation, spaces → dashes.
+  # GitHub-compatible slug (mirrors Flet/github-slugger):
+  # lowercase, strip everything except a-z 0-9 spaces hyphens, then spaces → hyphens
+  # (consecutive spaces produce consecutive hyphens — em-dashes/section-marks etc. get
+  # stripped but their surrounding spaces remain, e.g. "Foo — bar" → "foo--bar").
   printf '%s' "$1" \
     | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9 §._-]//g' \
-    | sed -E 's/ +/-/g'
+    | sed -E 's/[^a-z0-9 -]//g' \
+    | sed -E 's/ /-/g'
 }
 
 for src in "$@"; do
@@ -424,7 +427,7 @@ chmod +x scripts/check-doc-links.sh
 bash scripts/check-doc-links.sh docs/USAGE.md docs/MEMORY.md README.md
 ```
 
-Expected: `OK: all internal links resolve.` If any are broken, fix them in the source doc (USAGE/MEMORY/README) — typically a heading-slug mismatch (`§2.5` slugifies to `§25` after punctuation stripping, so anchor targets should be written to match, e.g. `#§25-skills--the-catalog`).
+Expected: `OK: all internal links resolve.` If any are broken, fix them in the source doc (USAGE/MEMORY/README) — typically a heading-slug mismatch. The slugify rule matches GitHub: lowercase the heading; strip everything except a-z, 0-9, spaces, and hyphens; convert each space to a single hyphen. Example: `## §2.5 Skills — the catalog` slugifies to `25-skills--the-catalog` (the `§` and `.` are stripped, and the em-dash between two spaces leaves the two surrounding spaces, which both become hyphens — hence `--`).
 
 ### Step 2: Verify the new gate script exists and is executable
 
