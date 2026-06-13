@@ -26,8 +26,11 @@ test("HealthIcon picks the icon by kind (ws → Plug, ltm → Brain)", () => {
   assert.match(src, /ltm:\s*Brain/);
 });
 
-test("HealthIcon renders role='status' with title, aria-label, and data-state from props", () => {
-  assert.match(src, /role=\{?["']status["']/);
+test("HealthIcon renders role='img' (not 'status') with title, aria-label, and data-state from props", () => {
+  // role="img" instead of role="status" so screen readers don't re-announce on every
+  // LTM-poll tooltip change (status is an implicit aria-live region; img is not).
+  assert.match(src, /role=\{?["']img["']/);
+  assert.doesNotMatch(src, /role=\{?["']status["']/);
   assert.match(src, /title=\{title\}/);
   assert.match(src, /aria-label=\{title\}/);
   assert.match(src, /data-state=\{state\}/);
