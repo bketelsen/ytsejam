@@ -250,7 +250,7 @@ describe("MemorySystem.hasObservation", () => {
       expect(mem.hasObservation(origin)).toBe(false);
       await mem.recordObservation({
         text: "hello",
-        timestamp: new Date("2026-06-13T00:00:00.000Z"),
+        timestamp: "2026-06-13T00:00:00.000Z",
         origin,
       });
       expect(mem.hasObservation(origin)).toBe(true);
@@ -266,7 +266,7 @@ describe("MemorySystem.hasObservation", () => {
     try {
       await mem.recordObservation({
         text: "hello",
-        timestamp: new Date("2026-06-13T00:00:00.000Z"),
+        timestamp: "2026-06-13T00:00:00.000Z",
         origin: "cog:personal/observations.md#aaa",
       });
       expect(mem.hasObservation("cog:personal/observations.md#bbb")).toBe(false);
@@ -283,7 +283,7 @@ describe("MemorySystem.hasObservation", () => {
     try {
       await mem.recordObservation({
         text: "persisted",
-        timestamp: new Date("2026-06-13T00:00:00.000Z"),
+        timestamp: "2026-06-13T00:00:00.000Z",
         origin,
       });
     } finally {

@@ -260,6 +260,15 @@ export class MemorySystem {
 
   // -- retrieval ------------------------------------------------------------
 
+  /**
+   * Returns true if any episodic record exists with the given origin
+   * string. Synchronous; backed by the in-memory episodic index.
+   * Used by the cog-LTM bridge to skip already-mirrored observations.
+   */
+  hasObservation(origin: string): boolean {
+    return this.episodic.all().some((r) => r.origin === origin);
+  }
+
   async retrieve(query: string, opts: RetrieveOptions = {}): Promise<RetrievalResult> {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
