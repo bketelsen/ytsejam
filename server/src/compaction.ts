@@ -237,6 +237,40 @@ export function buildSurrenderMessage(
 }
 
 /**
+ * Build the canonical surrender AgentMessage used by both `emitCompactionSurrender`
+ * (in-session canonical persistence) and the inner-loop context hook
+ * (in-context notice appended to a turn).
+ *
+ * `tokens` is the estimated context tokens at the surrender point; pass `0` from
+ * sites that don't have an accurate count (e.g. the inner-loop hook, where we
+ * surrender without computing).
+ */
+export function buildSurrenderAgentMessage(
+  opened: Pick<OpenedForCompaction, "harness">,
+  tokens: number,
+): AgentMessage {
+  const model = opened.harness.getModel();
+  const text = buildSurrenderMessage(tokens, model.contextWindow);
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    stopReason: "stop",
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    timestamp: Date.now(),
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  };
+}
+
+/**
  * Per-compaction event record. Constructed by the manager after the
  * orchestrator returns, using the pending snapshot captured before the
  * eager-clear race with pi's synchronous session_compact event.

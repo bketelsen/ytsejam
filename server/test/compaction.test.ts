@@ -25,6 +25,7 @@ import {
   classifyOverflow,
   CUSTOM_INSTRUCTIONS,
   buildSurrenderMessage,
+  buildSurrenderAgentMessage,
   buildCompactionEvent,
   formatDevLogLine,
   serializeJsonRecord,
@@ -1044,5 +1045,40 @@ describe("runCompactionIfPending", () => {
     expect(r.fired).toBe(true);
     expect(r.succeeded).toBe(false);
     expect(r.error).toBeDefined();
+  });
+});
+
+describe("buildSurrenderAgentMessage", () => {
+  it("returns an AgentMessage matching the canonical surrender shape", () => {
+    const opened = {
+      harness: {
+        getModel: () => ({
+          id: "fake-model",
+          contextWindow: 1_000_000,
+          api: "fake-api",
+          provider: "fake-provider",
+        }),
+      },
+    } as unknown as Parameters<typeof buildSurrenderAgentMessage>[0];
+
+    const msg = buildSurrenderAgentMessage(opened, 0) as AssistantMessage;
+
+    expect(msg.role).toBe("assistant");
+    expect(msg.content).toEqual([
+      { type: "text", text: buildSurrenderMessage(0, 1_000_000) },
+    ]);
+    expect(msg.stopReason).toBe("stop");
+    expect(msg.api).toBe("fake-api");
+    expect(msg.provider).toBe("fake-provider");
+    expect(msg.model).toBe("fake-model");
+    expect(typeof msg.timestamp).toBe("number");
+    expect(msg.usage).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
   });
 });

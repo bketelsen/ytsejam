@@ -28,7 +28,7 @@ import {
   appendDevLogLine,
   appendSessionCompactionJsonl,
   buildCompactionEvent,
-  buildSurrenderMessage,
+  buildSurrenderAgentMessage,
   classifyOverflow,
   compactionEnabled,
   computeReserveTokens,
@@ -467,7 +467,6 @@ export class AgentManager {
   }
 
   private async emitCompactionSurrender(opened: OpenSession): Promise<void> {
-    const model = opened.harness.getModel();
     let tokens = 0;
     try {
       tokens = estimateContextTokens(
@@ -476,24 +475,7 @@ export class AgentManager {
     } catch {
       // Best-effort diagnostic only.
     }
-    const text = buildSurrenderMessage(tokens, model.contextWindow);
-    const message = {
-      role: "assistant",
-      content: [{ type: "text", text }],
-      stopReason: "stop",
-      api: model.api,
-      provider: model.provider,
-      model: model.id,
-      timestamp: Date.now(),
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    } as AgentMessage;
+    const message = buildSurrenderAgentMessage(opened, tokens);
     await opened.harness.appendMessage(message);
     this.recordMessageEnd(opened, message);
     this.opts.bus.emit({
