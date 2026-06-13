@@ -15,6 +15,9 @@ env -u NODE_ENV npm run check
 echo "=== gate: server tests (vitest) ==="
 env -u NODE_ENV npm test --workspace server
 
+echo "=== gate: ltm tests (vitest) ==="
+env -u NODE_ENV npm test --workspace ltm
+
 echo "=== gate: web build + typecheck (tsc -b && vite build) ==="
 env -u NODE_ENV npm run build --workspace web
 
