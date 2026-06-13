@@ -740,65 +740,39 @@ Refs docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md (Task 4)."
 
 ---
 
-## Task 5: Migrate call sites to `recordObservation()`
+## Task 5: Route `cog_append` through `recordObservation()` for observations.md writes
 
-**Files:** discoverable via `grep -rE "observations\.md" server/src/` and `grep -rE "cog_append.*observations" server/src/`.
+**Files:**
+- Modify: `server/src/tools/cog.ts` (cog_append execute body)
+- Test: `server/test/tools/cog-append-observations.test.ts` (new)
 
-### Step 1: Audit
+### Audit (run during brief authoring)
 
-Run:
+`grep -rnE "memory\.append" server/src/` found ONE caller in production:
+`server/src/tools/cog.ts` (the `cog_append` MCP tool exposed to
+subagents). No other production code writes to observations.md
+directly. Original plan assumed multiple call sites; actual scope is
+just the cog_append tool.
 
-```bash
-grep -rnE "observations\.md" server/src/
-grep -rnE "cog_append.*observations" server/src/
-```
+### Behavior
 
-Expected output: a small set (probably ~3-8 call sites). Document the list in the task scratch.
+When `cog_append` receives `path.endsWith("/observations.md")` AND no
+`section`, it now:
+1. Splits `text` on `\n`, filters empty lines.
+2. Parses each via `parseObservationLine`. Throws on first malformed line.
+3. Per line, derives `domainPath = path.slice(0, -"/observations.md".length)`
+   and calls `memory.recordObservation({ domainPath, text, tags, timestamp })`.
+4. The recordObservation call best-effort mirrors to LTM via the bridge.
 
-### Step 2: Migrate each call site
+For non-observation paths or section-targeted writes, the original
+`memory.append` path is preserved unchanged.
 
-For each call site that writes a line to a `<domain>/observations.md`:
+### Test coverage
 
-**Before:**
-```ts
-await memory.append("personal/observations.md", "- 2026-06-13 [tag]: text\n");
-```
-
-**After:**
-```ts
-await memory.recordObservation({
-  domainPath: "personal",
-  text: "text",
-  tags: ["tag"],
-});
-```
-
-If the existing call site composes the line dynamically from `date + tags + text`, extract those values and pass them as args. If the call site uses a different timestamp than now, pass `timestamp: new Date(...)`.
-
-**Do NOT migrate:** any `append()` calls that write to files OTHER than `observations.md`. Those stay on `append()`.
-
-### Step 3: Run tests + gate
-
-Run: `scripts/gate.sh`
-Expected: PASSED. All existing tests that previously asserted observations.md content via `append()` should still pass because the resulting line is byte-identical.
-
-### Step 4: Commit per call site or as one migration commit (use judgment)
-
-If 1-3 call sites: one commit. If more: one commit per file makes the PR diff easier to review.
-
-```bash
-git add <migrated files>
-git commit -m "refactor(memory): migrate observations.md appends to recordObservation()
-
-[list of files]
-
-Mechanical migration; identical line format, no behavior change for the
-cog half. Now gets the LTM bridge for free.
-
-Refs docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md (Task 5)."
-```
-
----
+`server/test/tools/cog-append-observations.test.ts`: 6 tests —
+single-line LTM mirror, multi-line splitting, malformed-line rejection,
+nested domain path (`projects/ytsejam/observations.md`), non-observation
+fallback to `memory.append`, section-specified fallback.
 
 ## Task 6: `LtmReconciler` class
 
