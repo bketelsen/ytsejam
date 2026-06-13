@@ -624,7 +624,7 @@ How:
 1. Pick `wiki/people/`, `wiki/projects/`, `wiki/tools/`, `wiki/topics/`, `wiki/research/`, or `wiki/ideas/`.
 2. Create `wiki/<subtree>/<slug>/index.md`.
 3. Link to it as `[[wiki/<subtree>/<slug>]]`, without `/index` in the link text.
-4. Use frontmatter such as `type:`, `tags:`, `created:`, and `updated:`.
+4. Use frontmatter such as `title:`, `entity_type:` (matches the subtree — `person`, `project`, `tool`, `topic`, `research`, `ideas`), `status:`, `tags:`, and `updated:` (the only date field — see [docs/memory/WIKI-TIER.md](memory/WIKI-TIER.md) for the full schema).
 
 Why: observations are dated facts; wiki pages are editable synthesis. The page becomes the canonical home other files point at.
 
