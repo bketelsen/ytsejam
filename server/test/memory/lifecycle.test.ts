@@ -23,6 +23,13 @@ describe("memory + reconciler lifecycle", () => {
     execFileSync("git", ["config", "user.name", "Test"], { cwd: dataDir });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: dataDir });
     ltmDir = await mkdtemp(join(tmpdir(), "lc-ltm-"));
+    // Belt-and-suspenders: module-level attach state lives between tests in
+    // the same process. afterEach resets, but if a prior test's
+    // reconciler.stop() ever rejected, the reset would have been skipped
+    // and contaminated this test. Reset here too. Mirrors the pattern
+    // record-observation.test.ts already uses for attachLtm.
+    memory.attachReconciler(null);
+    memory.attachLtm(null);
   });
 
   afterEach(async () => {
@@ -63,7 +70,12 @@ describe("memory + reconciler lifecycle", () => {
     // Do not attach anything.
     const h = await memory.health();
     expect(h.ok).toBe(true);
+    // Both assertions are necessary: toBeUndefined() also passes for an
+    // explicitly-injected {ltm: undefined}, which would violate the spec's
+    // "OMIT the field" requirement (and break for...in / JSON serialisation).
+    // "ltm" in h kills that mutant.
     expect(h.ltm).toBeUndefined();
+    expect("ltm" in h).toBe(false);
   });
 
   it("reconcileNow throws when no reconciler is attached", async () => {
@@ -101,6 +113,9 @@ describe("memory + reconciler lifecycle", () => {
     expect(h1.ltm).toBeDefined();
     memory.attachReconciler(null);
     const h2 = await memory.health();
+    // Both assertions for the same reason as the "omits ltm" test above:
+    // toBeUndefined() also accepts {ltm: undefined}; "ltm" in h pins OMIT.
     expect(h2.ltm).toBeUndefined();
+    expect("ltm" in h2).toBe(false);
   });
 });

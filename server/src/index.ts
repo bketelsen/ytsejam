@@ -124,8 +124,11 @@ scheduler.start();
 let ltm: MemorySystem | null = null;
 let reconciler: LtmReconciler | null = null;
 try {
+  // `||` (not `??`) so LTM_STORE_DIR="" coerces to the default rather than
+  // attempting MemorySystem.open({storeDir: ""}). Empty-string env is almost
+  // certainly user misconfiguration, not an intentional override.
   const ltmStoreDir =
-    process.env.LTM_STORE_DIR ?? path.join(config.dataDir, "ltm");
+    process.env.LTM_STORE_DIR || path.join(config.dataDir, "ltm");
   ltm = MemorySystem.open({ storeDir: ltmStoreDir });
   const intervalEnv = Number(process.env.LTM_RECONCILE_INTERVAL_MS);
   const ctorOpts: ConstructorParameters<typeof LtmReconciler>[0] = {
@@ -144,6 +147,23 @@ try {
   console.warn(
     `[memory] LTM bridge init failed (continuing cog-only): ${(err as Error).message}`,
   );
+  // Partial-init guard: MemorySystem.open() acquires a file lock and
+  // registers in a process-static openDirs set inside its constructor.
+  // If anything AFTER a successful open() throws (today only the reconciler
+  // ctor + two assignments, but the surface is one PR change away from
+  // doing real work), we leak the lock + openDirs entry for the process
+  // lifetime AND any future open() of the same dir will throw. Close the
+  // partial-init LTM here so the leak window stays closed.
+  if (ltm) {
+    try {
+      ltm.close();
+    } catch {
+      // already-failed init -- swallow close errors, the warn above is the
+      // operator-facing signal.
+    }
+  }
+  ltm = null;
+  reconciler = null;
 }
 
 // LTM bridge shutdown: drain the reconciler, detach, close the LTM store.
