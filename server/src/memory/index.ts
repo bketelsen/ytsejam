@@ -1,3 +1,4 @@
+import type { MemorySystem } from "ltm";
 import type {
   Cluster,
   ClusterCheckParams,
@@ -43,6 +44,11 @@ import { entityAudit as consolidatedEntityAudit } from "./consolidated/entity-au
 import { linkAudit as consolidatedLinkAudit } from "./consolidated/link-audit.ts";
 import { linkIndexCompute as consolidatedLinkIndexCompute } from "./consolidated/link-index-compute.ts";
 import { scenarioCheck as consolidatedScenarioCheck } from "./consolidated/scenario-check.ts";
+import {
+  parseObservationLine,
+  computeOrigin,
+  mirrorToLtm,
+} from "./bridge/ltm-observer.ts";
 
 export type * from "./types.ts";
 export { Controller, loadManifest } from "./domain/index.ts";
@@ -69,6 +75,78 @@ export async function append(
   options: { section?: string } = {},
 ): Promise<OkResult> {
   return store.append(path, text, options);
+}
+
+// -- ltm bridge -----------------------------------------------------------
+
+let attachedLtm: MemorySystem | null = null;
+
+/**
+ * Attach (or detach via null) an LTM MemorySystem to receive mirrored
+ * observation writes. Module-level state is intentional: the memory
+ * namespace itself is process-global (paths.ts configures via
+ * YTSEJAM_MEMORY_DIR env), and attachLtm follows that pattern.
+ */
+export function attachLtm(ltm: MemorySystem | null): void {
+  attachedLtm = ltm;
+}
+
+/**
+ * First-class observation recording: formats the canonical line,
+ * appends to <domainPath>/observations.md (SSOT), then best-effort
+ * mirrors to attached LTM. Cog write succeeds even when LTM throws
+ * or is not attached.
+ */
+export async function recordObservation(args: {
+  domainPath: string;
+  text: string;
+  tags: string[];
+  timestamp?: Date;
+}): Promise<{
+  cog: { ok: true; line: string };
+  ltm:
+    | { ok: true }
+    | { ok: true; skipped: "ltm-not-attached" }
+    | { ok: false; error: Error };
+}> {
+  if (!args.tags || args.tags.length === 0) {
+    throw new Error(
+      "recordObservation: tags are mandatory (cog SSOT validator requires [...]). Pass at least one tag.",
+    );
+  }
+  const ts = args.timestamp ?? new Date();
+  const date = ts.toISOString().slice(0, 10);
+  const line = `- ${date} [${args.tags.join(",")}]: ${args.text}`;
+
+  const path = `${args.domainPath}/observations.md`;
+  await store.append(path, line + "\n");
+  const cog = { ok: true as const, line };
+
+  if (!attachedLtm) {
+    return { cog, ltm: { ok: true, skipped: "ltm-not-attached" } };
+  }
+  const parsed = parseObservationLine(line);
+  if (!parsed) {
+    // Should be unreachable since we just formatted it ourselves,
+    // but defend rather than crash.
+    return {
+      cog,
+      ltm: {
+        ok: false,
+        error: new Error(
+          `internal: failed to re-parse own formatted line: ${line}`,
+        ),
+      },
+    };
+  }
+  const origin = computeOrigin(args.domainPath, "observations.md", line);
+  const ltmResult = await mirrorToLtm(attachedLtm, parsed, origin);
+  if (!ltmResult.ok) {
+    console.warn(
+      `[memory] ltm bridge: recordObservation mirror failed for ${origin}: ${ltmResult.error.message}`,
+    );
+  }
+  return { cog, ltm: ltmResult };
 }
 
 /** Replace an exact text occurrence in a memory file; filled in PR-1a. */
