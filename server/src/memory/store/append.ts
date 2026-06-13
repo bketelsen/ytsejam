@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { OkResult } from "../types.ts";
 import { atomicWrite } from "./fs.ts";
+import { maybeAutoCommit } from "./auto-commit.ts";
 import { rejectIDAsPath, resolveMemoryPath } from "./paths.ts";
 
 const obsLineRE = /^-\s+\d{4}-\d{2}-\d{2}\s+\[.+\]:\s*.+$/;
@@ -12,6 +13,7 @@ export async function append(path: string, text: string, options: { section?: st
   if (rel.endsWith("observations.md")) validateObsLines(text);
   if (options.section) await appendUnderSection(abs, rel, options.section, text);
   else await appendAtEOF(abs, text);
+  await maybeAutoCommit();
   return { ok: true };
 }
 
