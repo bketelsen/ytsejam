@@ -26,6 +26,13 @@ import { loadContextFiles } from "./context-files.ts";
 import { MemorySystem } from "ltm";
 import * as memory from "./memory/index.ts";
 import { LtmReconciler } from "./memory/bridge/ltm-reconciler.ts";
+import { runCli } from "./cli/dispatch.ts";
+
+// CLI short-circuit: if argv matches a CLI subcommand, run it and exit
+// without booting the server. Returns null when argv doesn't match -- in
+// which case we fall through to normal server boot.
+const cliExit = await runCli(process.argv.slice(2));
+if (cliExit !== null) process.exit(cliExit);
 
 const config = loadConfig();
 
