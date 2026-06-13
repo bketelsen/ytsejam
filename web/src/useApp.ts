@@ -3,12 +3,19 @@ import { client } from "./lib/api";
 import { connectWs } from "./lib/ws";
 import type { ChatMessage, ServerEvent, SessionRow, TaskRow } from "./lib/types";
 
+export type HealthState = "unknown" | "ok" | "bad";
+
+const LTM_UNHEALTHY_THRESHOLD = 3;
+const LTM_POLL_MS = 10_000;
+
 export function useApp() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState<ChatMessage | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [wsState, setWsState] = useState<HealthState>("unknown");
+  const [ltmState, setLtmState] = useState<HealthState>("unknown");
+  const [ltmLastError, setLtmLastError] = useState<string | undefined>(undefined);
   const [tasks, setTasks] = useState<Record<string, TaskRow>>({});
   // Working directory for the currently-open session. Loaded from getSession;
   // the listSessions endpoint does not include it. Undefined while no session
@@ -102,7 +109,7 @@ export function useApp() {
   }, []);
 
   useEffect(() => {
-    wsRef.current = connectWs({ onEvent, onStatus: setConnected });
+    wsRef.current = connectWs({ onEvent, onStatus: (c) => setWsState(c ? "ok" : "bad") });
     void refreshSessions();
     void client.listTasks().then((r) => {
       setTasks(Object.fromEntries(r.tasks.map((t) => [t.id, t])));
@@ -112,6 +119,33 @@ export function useApp() {
     }
     return () => wsRef.current?.close();
   }, [onEvent, refreshSessions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function tick() {
+      try {
+        const r = await client.getMemoryHealth();
+        if (cancelled) return;
+        if (!r.ltm) {
+          setLtmState("unknown");
+          setLtmLastError(undefined);
+          return;
+        }
+        const ltm = r.ltm;
+        const bad = !ltm.reachable || ltm.consecutiveFailures >= LTM_UNHEALTHY_THRESHOLD;
+        setLtmState(bad ? "bad" : "ok");
+        setLtmLastError(ltm.lastError?.message);
+      } catch {
+        if (!cancelled) setLtmState("unknown");
+      }
+    }
+    void tick();
+    const id = setInterval(tick, LTM_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const selectSession = useCallback(async (id: string | null) => {
     setCurrentId(id);
@@ -156,7 +190,9 @@ export function useApp() {
     currentId,
     messages,
     streaming,
-    connected,
+    wsState,
+    ltmState,
+    ltmLastError,
     tasks,
     currentCwd,
     setCurrentCwd,
