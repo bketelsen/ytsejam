@@ -118,15 +118,15 @@ export function promoteFacts(query: string, profile: ProfileSummary): PromotedFa
   // Strong-cue recall: a slot question reaches past the floor. Only
   // predicates with NO above-floor answer fall back to the dormant section
   // (strongest first — profile.dormant is pre-sorted), one fact each.
-  // "name" and "role" are excluded from dormant fallback: they are high-
-  // frequency predicates whose keywords appear in many queries asking about
-  // OTHER slots ("my sister's name", "my project called"), causing false
-  // promotions that displace the correct answer.
+  // Generic keywords ("name" fires on "my sister's name") can promote an
+  // incidental stale identity fact alongside the real answer; that is
+  // bounded — above-floor facts keep priority and MAX_PROMOTED caps the
+  // list — and the alternative (excluding name/role) would block the
+  // canonical "What is my name?" recall entirely.
   const covered = new Set(aboveFloor.map((f) => f.predicate));
-  const DORMANT_EXCLUDED = new Set(["name", "role"]);
   const dormantPicks: SemanticFact[] = [];
   for (const f of profile.dormant) {
-    if (!predicates.has(f.predicate) || covered.has(f.predicate) || DORMANT_EXCLUDED.has(f.predicate)) continue;
+    if (!predicates.has(f.predicate) || covered.has(f.predicate)) continue;
     covered.add(f.predicate);
     dormantPicks.push(f);
   }

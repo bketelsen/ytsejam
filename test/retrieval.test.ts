@@ -256,6 +256,14 @@ describe("dormant promotion (RECALL 4)", () => {
     expect(out).toHaveLength(0);
   });
 
+  it("a direct name question recalls a dormant identity fact", () => {
+    const name = fact({ kind: "identity", predicate: "name", object: "Brian" });
+    const out = promoteFacts("What is my name?", { ...emptyProfile, dormant: [name] });
+    expect(out).toHaveLength(1);
+    expect(out[0].stale).toBe(true);
+    expect(out[0].text).toBe("The user's name is Brian (last mentioned 2026-01-05).");
+  });
+
   it("maps project/codebase/hobby to works_on", () => {
     const proj = fact({ kind: "attribute", predicate: "works_on", object: "Chapterhouse" });
     for (const q of ["What is my project called?", "What's the hobby codebase I keep tinkering with?"]) {
