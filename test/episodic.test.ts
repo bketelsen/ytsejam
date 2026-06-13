@@ -51,6 +51,36 @@ describe("decay", () => {
     expect(salient).toBeGreaterThan(dull);
     expect(accessed).toBeGreaterThan(retention(record(), now, cfg));
   });
+
+  it("per-kind half-life override stretches the base (SEAM 2)", () => {
+    const now = "2027-01-01T00:00:00.000Z"; // 365 days after the record
+    const base = retention(record({ salience: 0.5 }), now, cfg);
+    const overridden = retention(record({ salience: 0.5 }), now, {
+      ...cfg,
+      halfLifeDaysByKind: { turn: 730 },
+    });
+    // halfLife = 730 * (0.5 + 0.5) = 730 → 2^(-365/730) ≈ 0.707
+    expect(overridden).toBeCloseTo(Math.pow(2, -365 / 730), 5);
+    expect(overridden).toBeGreaterThan(base);
+  });
+
+  it("Infinity half-life pins retention at 1 (SEAM 2)", () => {
+    const pinned = retention(record(), "2036-01-01T00:00:00.000Z", {
+      ...cfg,
+      halfLifeDaysByKind: { turn: Infinity },
+    });
+    expect(pinned).toBe(1);
+  });
+
+  it("kinds without an override keep the base half-life (SEAM 2)", () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const plain = retention(record(), now, cfg);
+    const withOther = retention(record(), now, {
+      ...cfg,
+      halfLifeDaysByKind: { consolidated: 730 },
+    });
+    expect(withOther).toBeCloseTo(plain, 12);
+  });
 });
 
 describe("salience", () => {

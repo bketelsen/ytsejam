@@ -7,6 +7,10 @@
  *   halfLife = base * (1 + accessBonus * accessCount) * (0.5 + salience)
  *   retention = 2 ^ (-ageDays / halfLife)
  *
+ * `base` is config.halfLifeDays, overridable per record kind via
+ * config.halfLifeDaysByKind (SEAM 2) — deliberate observations outlive
+ * conversational turns; Infinity pins a kind at retention 1.
+ *
  * Retention multiplies the salience term during ranking and gates
  * consolidation eligibility; nothing is hard-deleted by decay alone.
  */
@@ -21,13 +25,12 @@ export function ageDays(timestamp: string, now: string): number {
 }
 
 export function retention(
-  record: Pick<EpisodicRecord, "timestamp" | "salience" | "accessCount">,
+  record: Pick<EpisodicRecord, "kind" | "timestamp" | "salience" | "accessCount">,
   now: string,
   config: DecayConfig,
 ): number {
+  const base = config.halfLifeDaysByKind?.[record.kind] ?? config.halfLifeDays;
   const halfLife =
-    config.halfLifeDays *
-    (1 + config.accessBonus * record.accessCount) *
-    (0.5 + record.salience);
+    base * (1 + config.accessBonus * record.accessCount) * (0.5 + record.salience);
   return Math.pow(2, -ageDays(record.timestamp, now) / halfLife);
 }

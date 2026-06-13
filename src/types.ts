@@ -299,6 +299,14 @@ export interface DecayConfig {
   halfLifeDays: number;
   /** Additional half-life multiplier per access. */
   accessBonus: number;
+  /**
+   * Per-kind base half-life override (SEAM 2). Deliberate, externally
+   * authored records (kind "observation") should outlive conversational
+   * turns; `Infinity` pins a kind (retention 1 forever). Config is
+   * code-side, so Infinity's JSON-unserializability is not a constraint.
+   * Kinds without an entry use halfLifeDays.
+   */
+  halfLifeDaysByKind?: Partial<Record<EpisodicKind, number>>;
 }
 
 export interface ConsolidationConfig {
