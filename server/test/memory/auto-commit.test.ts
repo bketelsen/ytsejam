@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -74,5 +75,54 @@ describe("memory auto-commit cadence", () => {
     }
     const log = gitLog().trim().split("\n");
     expect(log).toHaveLength(2); // root + one auto-commit, no second auto-commit yet
+  });
+
+  test("startup flush skips when a merge is in progress and warns", async () => {
+    await writeFile(join(root, "merge-target.md"), "base\n");
+    execFileSync("git", ["add", "merge-target.md"], { cwd: root });
+    execFileSync("git", ["commit", "-q", "-m", "base"], { cwd: root });
+
+    execFileSync("git", ["checkout", "-q", "-b", "side"], { cwd: root });
+    await writeFile(join(root, "merge-target.md"), "side change\n");
+    execFileSync("git", ["commit", "-q", "-am", "side"], { cwd: root });
+
+    execFileSync("git", ["checkout", "-q", "-"], { cwd: root });
+    await writeFile(join(root, "merge-target.md"), "main change\n");
+    execFileSync("git", ["commit", "-q", "-am", "main"], { cwd: root });
+
+    try {
+      execFileSync("git", ["merge", "side"], { cwd: root, stdio: "ignore" });
+    } catch {
+      // Expected merge conflict.
+    }
+
+    expect(existsSync(join(root, ".git", "MERGE_HEAD"))).toBe(true);
+    const headBeforeFlush = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await maybeAutoCommit();
+
+    const headAfterFlush = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    expect(headAfterFlush).toBe(headBeforeFlush);
+    expect(existsSync(join(root, ".git", "MERGE_HEAD"))).toBe(true);
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls.some((c) => /git operation in progress/.test(String(c[0])))).toBe(true);
+    warn.mockRestore();
+  });
+
+  test("concurrent burst of 50 writes produces ~5 auto-commits without losing increments", async () => {
+    for (let i = 0; i < 50; i++) {
+      await writeFileAt(`burst-${i}.md`, `x${i}\n`);
+    }
+
+    await Promise.all(Array.from({ length: 50 }, () => maybeAutoCommit()));
+
+    const log = gitLog().trim().split("\n");
+    const autoCommits = log.filter((line) => /auto: 10 memory writes/.test(line));
+    expect(autoCommits.length).toBeGreaterThanOrEqual(4);
+
+    const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim();
+    const dirtyLines = dirty ? dirty.split("\n").length : 0;
+    expect(dirtyLines).toBeLessThan(AUTO_COMMIT_EVERY);
   });
 });
