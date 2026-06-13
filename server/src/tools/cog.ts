@@ -2,6 +2,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import * as memory from "../memory/index.ts";
 import type { DomainSummaryParams, GitParams } from "../memory/index.ts";
+import { parseObservationLine } from "../memory/bridge/ltm-observer.ts";
 import { truncate } from "./shell.ts";
 
 /**
@@ -165,6 +166,40 @@ export function createCogTools(): AgentTool<any>[] {
       parameters: appendParams,
       execute: async (_id, p) => {
         const { path, text, section } = p as { path: string; text: string; section?: string };
+
+        // Route observations.md writes through recordObservation so the
+        // LTM bridge mirrors live writes. Non-observation files and section-
+        // targeted writes use the unchanged memory.append path.
+        if (path.endsWith("/observations.md") && !section) {
+          const domainPath = path.slice(0, -"/observations.md".length);
+          const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+
+          // Validate ALL lines BEFORE any write, so a mid-batch malformed
+          // line aborts without partial commits across cog SSOT + LTM.
+          // (Preserves the prior memory.append atomicity guarantee on
+          // multi-line input — see issue notes for Task 5.)
+          const parsedAll: ReturnType<typeof parseObservationLine>[] = [];
+          for (const line of lines) {
+            const parsed = parseObservationLine(line);
+            if (!parsed) {
+              throw new Error(
+                `cog_append: malformed observation line for ${path}: ${JSON.stringify(line)}`,
+              );
+            }
+            parsedAll.push(parsed);
+          }
+
+          for (const parsed of parsedAll) {
+            await memory.recordObservation({
+              domainPath,
+              text: parsed!.text,
+              tags: parsed!.tags,
+              timestamp: new Date(parsed!.timestamp),
+            });
+          }
+          return jsonResult({ ok: true });
+        }
+
         const r = await memory.append(path, text, { section });
         return jsonResult(r);
       },

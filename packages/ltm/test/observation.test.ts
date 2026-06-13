@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { join } from "node:path";
 import { MemorySystem } from "../src/api/memory-system.ts";
 import { retention } from "../src/episodic/decay.ts";
 import { DEFAULT_CONFIG } from "../src/types.ts";
@@ -152,5 +155,63 @@ describe("recordObservation re-ingest is fact-idempotent (SEAM 5 review)", () =>
     const rec = mem.listEpisodic().find((r) => r.text.includes("forgejo"))!;
     expect(rec.tags).toEqual(["projects:ytsejam"]); // metadata updated
     mem.close();
+  });
+});
+
+describe("MemorySystem.hasObservation", () => {
+  it("returns false before record, true after", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ltm-has-"));
+    const mem = MemorySystem.open({ storeDir: dir });
+    try {
+      const origin = "cog:personal/observations.md#abc123def456";
+      expect(mem.hasObservation(origin)).toBe(false);
+      await mem.recordObservation({
+        text: "hello",
+        timestamp: "2026-06-13T00:00:00.000Z",
+        origin,
+      });
+      expect(mem.hasObservation(origin)).toBe(true);
+    } finally {
+      mem.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns false for origins from other records", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ltm-has-"));
+    const mem = MemorySystem.open({ storeDir: dir });
+    try {
+      await mem.recordObservation({
+        text: "hello",
+        timestamp: "2026-06-13T00:00:00.000Z",
+        origin: "cog:personal/observations.md#aaa",
+      });
+      expect(mem.hasObservation("cog:personal/observations.md#bbb")).toBe(false);
+    } finally {
+      mem.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("survives a close/reopen cycle", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ltm-has-"));
+    const origin = "cog:projects/ytsejam/observations.md#deadbeef1234";
+    let mem = MemorySystem.open({ storeDir: dir });
+    try {
+      await mem.recordObservation({
+        text: "persisted",
+        timestamp: "2026-06-13T00:00:00.000Z",
+        origin,
+      });
+    } finally {
+      mem.close();
+    }
+    mem = MemorySystem.open({ storeDir: dir });
+    try {
+      expect(mem.hasObservation(origin)).toBe(true);
+    } finally {
+      mem.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

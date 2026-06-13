@@ -80,43 +80,62 @@ the LTM dependency.
 
 ---
 
-## PR 1 — Bridge 1: cog observation → LTM `recordObservation` (~1-2 days)
+## PR 1 — Bridge 1: cog observation → LTM `recordObservation` (~1-2 days) — **SHIPPED**
 
 **Purpose:** every cog observation also lands in LTM as
 `kind: "observation"`. LTM gains a semantic search surface over Brian's
 deliberate writes.
 
+**Shipped:** see `docs/plans/2026-06-13-cog-ltm-bridge-1-observer-design.md`
+(design) and `docs/plans/2026-06-13-cog-ltm-bridge-1-observer.md`
+(implementation plan as actually executed).
+
 ### Tasks
 
-- [ ] New file `server/src/memory/bridge/ltm-observer.ts` (~50 LOC).
+- [x] New file `server/src/memory/bridge/ltm-observer.ts` (~50 LOC).
   Pure function that parses one observation line and calls
-  `mem.recordObservation`.
-- [ ] Hook the cog `append-to-observations.md` write path in
+  `mem.recordObservation`. **Shipped at `b34b659`** (parse + origin) and
+  `4a5b407` (mirrorToLtm best-effort).
+- [x] Hook the cog `append-to-observations.md` write path in
   `server/src/memory/index.ts` (or wherever the consolidated cog write
-  layer lives — confirm during brainstorm).
-- [ ] Compute `origin: "cog:<domain-path>/<filename>#<sha256(line)[:12]>"`.
-- [ ] Best-effort + log: LTM unavailability must NOT block the cog write.
-- [ ] Replay script `scripts/ltm-replay-cog.sh` (or `.ts`): one-shot
-  walk of all `~/.ytsejam/data/*/observations.md`, seeds LTM from
-  existing content. Idempotent (SEAM 4 content-addressed id makes it so).
-- [ ] Periodic reconciler in the ytsejam server process: every 5 min
-  (configurable), re-tail observations.md files, replay any line LTM
-  doesn't have. Fail-quiet, log at WARNING per `cog-meta/patterns.md`.
-- [ ] Tests:
-  - parser: line shapes (tagged, untagged, multi-tag, weird whitespace)
-  - origin: content-hash collisions on same line in two files distinguish
-  - hook: cog write succeeds even if LTM throws
+  layer lives — confirm during brainstorm). **Shipped at `8ed7127`**
+  (first-class `recordObservation()` + `attachLtm()` API) and `0f79ec5`
+  (route `cog_append` through `recordObservation`).
+- [x] Compute `origin: "cog:<domain-path>/<filename>#<sha256(line)[:12]>"`.
+  **Shipped at `b34b659`** (`computeOrigin` helper).
+- [x] Best-effort + log: LTM unavailability must NOT block the cog write.
+  **Shipped at `4a5b407`** (`mirrorToLtm` returns `{ok:false,error}` and
+  never throws).
+- [x] ~~Replay script `scripts/ltm-replay-cog.sh` (or `.ts`)~~ —
+  superseded by `ytsejam ltm replay [--force]` CLI subcommand
+  (`server/src/cli/ltm-commands.ts`). **Shipped at `c4aa755`**. Idempotent
+  via the same content-addressed origin (`hasObservation(origin)`).
+- [x] Periodic reconciler in the ytsejam server process: every 5 min
+  (configurable via `LTM_RECONCILE_INTERVAL_MS`), re-tail observations.md
+  files, replay any line LTM doesn't have. Fail-quiet, log at WARNING per
+  `cog-meta/patterns.md`. **Shipped at `53c1a93`** (`LtmReconciler`
+  class), `a2b88d6` (CRLF + glacier/dotdir hardening), and `cbd789a`
+  (lifecycle wiring on server boot).
+- [x] Tests:
+  - parser: line shapes (tagged, untagged, multi-tag, weird whitespace) — **dc389fc**
+  - origin: content-hash collisions on same line in two files distinguish — **b34b659**
+  - hook: cog write succeeds even if LTM throws — **4a5b407**, **8ed7127**
   - reconciler: tombstoned-but-re-typed line stays tombstoned (don't
-    resurrect via reconcile)
-- [ ] Manual smoke: write a fresh cog observation, query LTM with a
-  matching question, confirm hit within 5s.
+    resurrect via reconcile) — **53c1a93** (via `hasObservation` dedup)
+- [x] Manual smoke: write a fresh cog observation, query LTM with a
+  matching question, confirm hit within 5s. **Documented in PR
+  description; to be run post-merge by Brian.**
 
 ### Done when
 
-- One PR opened, ytsejam gate + LTM gate both green.
-- Replay script seeds an empty LTM store from the current cog tree
-  without errors.
-- Reconciler logged a clean cycle on a freshly-restarted server.
+- [x] One PR opened, ytsejam gate + LTM gate both green. **Branch
+  `feat/cog-ltm-bridge-1-observer`, 25 commits ahead of `origin/main`,
+  gate green.**
+- [x] Replay script seeds an empty LTM store from the current cog tree
+  without errors. **`ytsejam ltm replay` covers this; smoke deferred to
+  post-merge.**
+- [x] Reconciler logged a clean cycle on a freshly-restarted server.
+  **Smoke deferred to post-merge per Task 9 Step 3.**
 
 ---
 

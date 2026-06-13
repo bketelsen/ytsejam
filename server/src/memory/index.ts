@@ -1,3 +1,4 @@
+import type { MemorySystem } from "ltm";
 import type {
   Cluster,
   ClusterCheckParams,
@@ -43,6 +44,11 @@ import { entityAudit as consolidatedEntityAudit } from "./consolidated/entity-au
 import { linkAudit as consolidatedLinkAudit } from "./consolidated/link-audit.ts";
 import { linkIndexCompute as consolidatedLinkIndexCompute } from "./consolidated/link-index-compute.ts";
 import { scenarioCheck as consolidatedScenarioCheck } from "./consolidated/scenario-check.ts";
+import {
+  parseObservationLine,
+  computeOrigin,
+  mirrorToLtm,
+} from "./bridge/ltm-observer.ts";
 
 export type * from "./types.ts";
 export { Controller, loadManifest } from "./domain/index.ts";
@@ -69,6 +75,133 @@ export async function append(
   options: { section?: string } = {},
 ): Promise<OkResult> {
   return store.append(path, text, options);
+}
+
+// -- ltm bridge -----------------------------------------------------------
+
+let attachedLtm: MemorySystem | null = null;
+
+/**
+ * Attach (or detach via null) an LTM MemorySystem to receive mirrored
+ * observation writes. Module-level state is intentional: the memory
+ * namespace itself is process-global (paths.ts configures via
+ * YTSEJAM_MEMORY_DIR env), and attachLtm follows that pattern.
+ */
+export function attachLtm(ltm: MemorySystem | null): void {
+  attachedLtm = ltm;
+}
+
+// Type-only structural reference to LtmReconciler -- avoids a cycle if
+// memory/index.ts is imported by bridge code in the future.
+type ReconcilerLike = {
+  health(): {
+    reachable: boolean;
+    consecutiveFailures: number;
+    lastTickAt?: string;
+    lastTickStats?: {
+      scannedFiles: number;
+      scannedLines: number;
+      replayed: number;
+      skipped: number;
+      errors: number;
+    };
+    lastError?: { message: string; at: string };
+  };
+  reconcile(opts?: { force?: boolean }): Promise<{
+    scannedFiles: number;
+    scannedLines: number;
+    replayed: number;
+    skipped: number;
+    errors: number;
+  }>;
+};
+
+let attachedReconciler: ReconcilerLike | null = null;
+
+/**
+ * Attach (or detach with null) an LtmReconciler instance to the memory
+ * namespace. The reconciler's health is then included in memory.health().
+ * Module-level state, last write wins -- same contract as attachLtm.
+ */
+export function attachReconciler(r: ReconcilerLike | null): void {
+  attachedReconciler = r;
+}
+
+/**
+ * Pass-through to the attached reconciler's reconcile(opts). Throws if no
+ * reconciler is attached (the CLI handles this and prints a friendly
+ * 'no reconciler attached' message).
+ */
+export async function reconcileNow(opts?: { force?: boolean }) {
+  if (!attachedReconciler) {
+    throw new Error("memory.reconcileNow: no reconciler attached");
+  }
+  return attachedReconciler.reconcile(opts);
+}
+
+/**
+ * First-class observation recording: formats the canonical line,
+ * appends to <domainPath>/observations.md (SSOT), then best-effort
+ * mirrors to attached LTM. Cog write succeeds even when LTM throws
+ * or is not attached.
+ */
+export async function recordObservation(args: {
+  domainPath: string;
+  text: string;
+  tags: string[];
+  timestamp?: Date;
+}): Promise<{
+  cog: { ok: true; line: string };
+  ltm:
+    | { ok: true }
+    | { ok: true; skipped: "ltm-not-attached" }
+    | { ok: false; error: Error };
+}> {
+  if (!args.tags || args.tags.length === 0) {
+    throw new Error("recordObservation requires at least one tag");
+  }
+  // Reject embedded newlines/CR in text up front. Otherwise a multi-line
+  // text formats as multiple cog observation lines (the SSOT validator
+  // accepts each independently), but the bridge's single-line parser only
+  // sees the first → silent cog/LTM divergence (cog writes N, LTM writes 0).
+  if (/[\r\n]/.test(args.text)) {
+    throw new Error(
+      "recordObservation: text may not contain newlines (would split into multiple cog observations)",
+    );
+  }
+  const ts = args.timestamp ?? new Date();
+  const date = ts.toISOString().slice(0, 10);
+  const line = `- ${date} [${args.tags.join(",")}]: ${args.text}`;
+
+  const path = `${args.domainPath}/observations.md`;
+  await store.append(path, line + "\n");
+  const cog = { ok: true as const, line };
+
+  if (!attachedLtm) {
+    return { cog, ltm: { ok: true, skipped: "ltm-not-attached" } };
+  }
+  const parsed = parseObservationLine(line);
+  if (!parsed) {
+    // Should be unreachable since we just formatted it ourselves,
+    // but defend rather than crash.
+    return {
+      cog,
+      ltm: {
+        ok: false,
+        error: new Error(
+          `internal: failed to re-parse own formatted line: ${line}`,
+        ),
+      },
+    };
+  }
+  const origin = computeOrigin(args.domainPath, "observations.md", line);
+  const ltmResult = await mirrorToLtm(attachedLtm, parsed, origin);
+  if (!ltmResult.ok) {
+    console.warn(
+      `[memory] ltm bridge: recordObservation mirror failed for ${origin}: ${ltmResult.error.message}`,
+    );
+  }
+  return { cog, ltm: ltmResult };
 }
 
 /** Replace an exact text occurrence in a memory file; filled in PR-1a. */
@@ -103,7 +236,9 @@ export async function stats(prefix?: string): Promise<StatsResult> {
 
 /** Report memory store health and last commit metadata; filled in PR-1a. */
 export async function health(): Promise<HealthResult> {
-  return store.health();
+  const base = await store.health();
+  if (!attachedReconciler) return base;
+  return { ...base, ltm: attachedReconciler.health() };
 }
 
 /** Run a supported git operation against the memory store; filled in PR-1a. */

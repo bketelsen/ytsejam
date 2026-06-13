@@ -104,9 +104,10 @@ export interface EpisodicRecord {
   tags?: string[];
   /**
    * Opaque provenance key for externally sourced records (SEAM 4),
-   * convention `cog:<path>#<date>:<digest12>`. Drives redaction cascade
-   * via RedactionSelector { originPrefix } — prefer date + content digest
-   * over line numbers, which drift in human-edited files.
+   * convention `cog:<path>#<digest12>` (12-hex-char content hash; see
+   * server/src/memory/bridge/ltm-observer.ts computeOrigin). Drives
+   * redaction cascade via RedactionSelector { originPrefix } — prefer
+   * content digest over line numbers, which drift in human-edited files.
    */
   origin?: string;
 }
