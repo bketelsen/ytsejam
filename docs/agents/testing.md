@@ -102,3 +102,27 @@ _Added: 2026-06-13 | Task: D7 auto-commit cadence for server/src/memory/git/_
 When writing a parser (e.g. `parseObservationLine` in `server/src/memory/bridge/ltm-observer.ts`), match its validation to the authoritative write validator rather than the prose spec — here the cog SSOT regex at `server/src/memory/store/append.ts:7` (`/^-\s+\d{4}-\d{2}-\d{2}\s+\[.+\]:\s*.+$/`) requires non-empty tags and a non-empty body, so the parser must reject empty/whitespace-only tags, not treat them as optional. Shape-only date regexes (`\d{4}-\d{2}-\d{2}`) are insufficient: round-trip-validate calendar correctness via `const d = new Date(\`${date}T00:00:00.000Z\`); if (Number.isNaN(d.getTime()) || d.toISOString().slice(0,10) !== date) return null;`, copying the existing sibling parser at `server/src/memory/consolidated/observations-parser.ts:11-12` instead of reinventing it. Skipping these checks lets semantically-invalid values (`2026-13-99`, `2026-02-30`, `tags: []`) flow downstream where `new Date(...).toISOString()` throws "Invalid time value" or the cog write is rejected, silently breaking the mirror so the reconciler retries forever — the exact failure the self-healing design exists to prevent. Before implementing, check for an existing parser/validator in the repo and reuse its logic, and add negative tests (untagged-fails, empty/whitespace-only tags, invalid-date, Feb-30, embedded-newline) so permissive parsing can't regress.
 
 _Added: 2026-06-13 | Task: Task 1 of 9 for PR 1 of the cog-LTM bridge roadmap_
+
+## Normalize Whitespace Before Content-Addressed Dedup
+
+Content-addressed dedup (e.g. `cog:<path>#<sha256-12>` in `server/src/memory/bridge/ltm-observer.ts`) breaks silently on CRLF when the producer and consumer split on `\n` but not `\r?\n`: the inline `recordObservation` path sees `line` without `\r`, but a reconciler reading the same file from disk and splitting on `\n` keeps the trailing `\r`, hashes a different string, and either re-mirrors forever or overwrites the dedup record's origin with the `\r` variant — defeating dedup on BOTH paths permanently. ALWAYS normalize (`split(/\r?\n/)` + `.trim()`) BEFORE the line crosses the hash boundary, and mutation-test the dedup assertion: change `split("\n")` to `split(/\r?\n/)`, write a CRLF fixture, assert per-tick replay count stays at zero on a second run. Generalizes to ANY hashed identifier derived from text the OS / user may newline-mangle.
+
+_Added: 2026-06-13 | Task: Task 6 of 9 for PR 1 of the cog-LTM bridge roadmap_
+
+## toBeUndefined Is Mutant-Weak for OMIT Semantics
+
+When the spec says "field X is OMITTED (not set to undefined)" — common for backward-compat extensions like `memory.health()`'s new `ltm` field — `expect(h.ltm).toBeUndefined()` passes BOTH for the correct OMIT path AND for a buggy `return {...base, ltm: undefined}` mutant. Pair every `toBeUndefined()` against an OMIT contract with `expect("ltm" in h).toBe(false)` (when no reconciler is attached) — that mutant-kills the explicit-undefined-set bug. Mutation-test the assertion locally before shipping: temporarily change the code to `return {...base, ltm: attached ? snap : undefined}` and verify the test now fails. Generalizes to TypeScript optional fields, JSON serialization fields, and HTTP response envelopes where presence matters.
+
+_Added: 2026-06-13 | Task: Task 7 of 9 for PR 1 of the cog-LTM bridge roadmap_
+
+## Mutation-Test Defensive Try/Catch Assertions
+
+A test that says "we handle X gracefully" — typically a `try/catch` with a log line — may be asserting on a path that runs even WITHOUT the protection (e.g. the operation never threw in the first place because the input was benign). Before trusting any such test, temporarily REMOVE the catch (or change the log wording) and verify the test fails. For `LtmReconciler`'s tick-level error accounting (`consecutiveFailures++` on rejected mtime stat) we proved it by making the catch a no-op and watching the test still pass on the happy path — meaning the assertion's truth was structural, not protective. Apply the same mutant check to any "handles malformed input" / "logs warning on failure" / "tolerates X" test.
+
+_Added: 2026-06-13 | Task: Task 6 of 9 for PR 1 of the cog-LTM bridge roadmap_
+
+## Multi-Store Live Write Paths Must Preserve Atomicity
+
+When migrating a call site from a single-store write to a multi-store write (e.g. cog observation → cog SSOT + best-effort LTM mirror in `server/src/tools/cog.ts`), the migration must preserve PER-INVOCATION atomicity: if the original `append("observations.md", text)` accepted multi-line `text` and committed as one append, the migrated path must PARSE all lines first, THEN write all lines through `recordObservation()` — never parse-then-write per line, which produces partial writes on the first parse error and leaves the cog SSOT inconsistent with what LTM sees. Tests must drive the multi-line case through the full migrated path, not just single-line happy paths. Generalizes to any "fanout from N writes to N×M sub-writes" refactor: the outer invariant (atomicity, dedup, ordering) must survive the fanout.
+
+_Added: 2026-06-13 | Task: Task 5 of 9 for PR 1 of the cog-LTM bridge roadmap_
