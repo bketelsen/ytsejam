@@ -74,6 +74,12 @@ export class Retriever {
     if (record.state === "active" && record.text) {
       if (record.embedding) this.vectors.set(record.id, record.embedding);
       this.lexical.add(record.id, record.text);
+    } else if (record.state === "consolidated" && record.text && record.embedding) {
+      // Consolidated records stay vector-searchable so a strong semantic
+      // match can resurrect them (strong-cue recall). Lexical stays
+      // excluded: verbatim-term queries already reach the summaries.
+      this.vectors.set(record.id, record.embedding);
+      this.lexical.remove(record.id);
     } else {
       this.vectors.delete(record.id);
       this.lexical.remove(record.id);
@@ -110,6 +116,10 @@ export class Retriever {
     const meanVector = rawCosines.length
       ? rawCosines.reduce((s, x) => s + x, 0) / rawCosines.length
       : 0;
+    const stdVector = Math.sqrt(
+      rawCosines.reduce((s, x) => s + (x - meanVector) ** 2, 0) / Math.max(1, rawCosines.length),
+    );
+    const rawCosineById = new Map(vectorHits.map((h) => [h.id, Math.max(0, h.score)]));
     const lexicalById = new Map(lexicalHits.map((h) => [h.id, h.score / maxLexical]));
     const vectorById = new Map(
       vectorHits.map((h) => [h.id, spreadNormalize(h.score, meanVector, maxVector)]),
@@ -126,7 +136,15 @@ export class Retriever {
       const record = store.get(id);
       if (!record || !record.text) continue;
       if (record.state === "redacted") continue;
-      if (record.state === "consolidated" && !includeConsolidated) continue;
+      let stale = false;
+      if (record.state === "consolidated" && !includeConsolidated) {
+        // Resurrection gate: only a clear semantic outlier over the pool
+        // reaches past consolidation. Zero-variance pools never resurrect.
+        const raw = rawCosineById.get(id);
+        if (raw === undefined || stdVector < 1e-6) continue;
+        if ((raw - meanVector) / stdVector < config.resurrectZ) continue;
+        stale = true;
+      }
 
       const w = config.weights;
       const ret = retention(record, now, config.decay);
@@ -144,12 +162,12 @@ export class Retriever {
         total: 0,
       };
       breakdown.total =
-        w.vector * Math.max(0, breakdown.vector) +
+        w.vector * breakdown.vector +
         w.lexical * breakdown.lexical +
         w.recency * breakdown.recency +
         w.salience * breakdown.salience * ret +
         w.graph * breakdown.graph;
-      scored.push({ record, score: breakdown.total, breakdown });
+      scored.push({ record, score: breakdown.total, breakdown, ...(stale ? { stale: true } : {}) });
     }
 
     scored.sort((a, b) => b.score - a.score);

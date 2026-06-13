@@ -7,8 +7,12 @@ import { Bm25Index } from "../src/retrieval/lexical.ts";
 import { MemorySystem } from "../src/api/memory-system.ts";
 import { generateFixtures } from "../src/eval/synthetic.ts";
 import { promoteFacts } from "../src/retrieval/promote.ts";
-import { spreadNormalize } from "../src/retrieval/retriever.ts";
-import type { SemanticFact } from "../src/types.ts";
+import { spreadNormalize, Retriever } from "../src/retrieval/retriever.ts";
+import { EpisodicStore } from "../src/episodic/store.ts";
+import { PreferenceGraph } from "../src/semantic/graph.ts";
+import { mergeConfig } from "../src/types.ts";
+import type { SemanticFact, EpisodicRecord } from "../src/types.ts";
+import type { Embedder } from "../src/embedding/embedder.ts";
 
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ltm-test-"));
@@ -356,5 +360,78 @@ describe("mean-relative vector normalization (RECALL 6)", () => {
   it("degenerate pools fall back to max-ratio", () => {
     expect(spreadNormalize(0.5, 0.5, 0.5)).toBeCloseTo(1, 9); // all equal
     expect(spreadNormalize(0, 0, 0)).toBe(0); // empty/zero pool
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Vector resurrection of consolidated records (RECALL 7)
+// ---------------------------------------------------------------------------
+
+function unitVec(c: number): number[] {
+  return [c, Math.sqrt(1 - c * c), 0, 0];
+}
+
+function turnRecord(id: string, cos: number, state: "active" | "consolidated", timestamp: string): EpisodicRecord {
+  return {
+    id, kind: "turn", sessionId: "s1", entryId: id, role: "user",
+    text: `turn ${id}`, timestamp, salience: 0.5, accessCount: 0, state,
+    embedding: unitVec(cos),
+  };
+}
+
+const stubEmbedder: Embedder = { dimension: 4, embed: () => Promise.resolve([1, 0, 0, 0]) };
+
+function buildRetriever(records: EpisodicRecord[]) {
+  const store = EpisodicStore.open(fs.mkdtempSync(path.join(os.tmpdir(), "ltm-res-")));
+  store.upsertMany(records);
+  return { store, retriever: new Retriever({ store, embedder: stubEmbedder, graph: PreferenceGraph.build([], []), config: mergeConfig() }) };
+}
+
+const NOW = "2026-06-01T00:00:00.000Z";
+
+describe("vector resurrection of consolidated records (RECALL 7)", () => {
+  // 9 recent active distractors with cosines 0.22..0.30 — with the 1.0
+  // target the pool mean ≈ 0.334, std ≈ 0.223, so the target's z ≈ 2.98 clears
+  // resurrectZ 2.5 while the distractors sit well below (max distractor z ≈ -0.15).
+  const distractors = Array.from({ length: 9 }, (_, i) =>
+    turnRecord(`d${i}`, 0.22 + i * 0.01, "active", "2026-05-30T00:00:00.000Z"));
+
+  it("an outlier consolidated record resurrects, marked stale", async () => {
+    const target = turnRecord("old-target", 1.0, "consolidated", "2024-06-01T00:00:00.000Z");
+    const { retriever } = buildRetriever([...distractors, target]);
+    const out = await retriever.rank("anything", 5, NOW);
+    const hit = out.find((i) => i.record.id === "old-target");
+    expect(hit).toBeDefined();
+    expect(hit!.stale).toBe(true);
+    expect(out[0].record.id).toBe("old-target"); // spread-normalized vector wins
+  });
+
+  it("a mid-pool consolidated record stays excluded", async () => {
+    const middling = turnRecord("old-mid", 0.3, "consolidated", "2024-06-01T00:00:00.000Z");
+    const { retriever } = buildRetriever([...distractors, middling]);
+    const out = await retriever.rank("anything", 5, NOW);
+    expect(out.some((i) => i.record.id === "old-mid")).toBe(false);
+  });
+
+  it("a zero-variance pool never resurrects", async () => {
+    const flat = Array.from({ length: 9 }, (_, i) =>
+      turnRecord(`f${i}`, 0.25, "active", "2026-05-30T00:00:00.000Z"));
+    const sameOld = turnRecord("old-flat", 0.25, "consolidated", "2024-06-01T00:00:00.000Z");
+    const { retriever } = buildRetriever([...flat, sameOld]);
+    const out = await retriever.rank("anything", 5, NOW);
+    expect(out.some((i) => i.record.id === "old-flat")).toBe(false);
+  });
+
+  it("active records never carry stale", async () => {
+    const { retriever } = buildRetriever(distractors);
+    const out = await retriever.rank("anything", 5, NOW);
+    expect(out.every((i) => i.stale === undefined)).toBe(true);
+  });
+
+  it("explain-style includeConsolidated still returns everything ungated", async () => {
+    const middling = turnRecord("old-mid", 0.3, "consolidated", "2024-06-01T00:00:00.000Z");
+    const { retriever } = buildRetriever([...distractors, middling]);
+    const out = await retriever.rank("anything", 20, NOW, true);
+    expect(out.some((i) => i.record.id === "old-mid")).toBe(true);
   });
 });
