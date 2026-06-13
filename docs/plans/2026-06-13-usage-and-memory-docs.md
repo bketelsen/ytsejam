@@ -100,7 +100,7 @@ git commit -m "docs(usage): add §2 tour (sessions, tools, skills, subagents, sc
 
 - **§3.1 The north star: ytsejam is a harness, not a chat app.** Skills are cheap (markdown); server code is expensive and sticky (TypeScript, gate, deploy). As a user this means: before asking for a new feature, ask whether a skill or a memory pattern does the job. Resist (a) adding more to the server and (b) abandoning ytsejam for the next shiny thing — both killed predecessors.
 - **§3.2 The harness-check.** Before adding/asking for something new, ask: does this generalize across projects? Does it survive the next agent fad? Does it earn its place vs an existing skill? Link to the harness-check wiki topic if available; otherwise quote the gist.
-- **§3.3 The operating cadence.** Weekly: `/housekeeping` then `/reflect` in the same session (cleaned state → reflection sees it). Monthly: `/evolve`. `/foresight` weekly or on demand. **Burst caveat (one-liner with pointer):** "Weekly is the floor, not the ceiling. When you're burning a lot of tokens — a multi-day push, a research blitz — run the pair more often. See [MEMORY §1.7](MEMORY.md#17-the-pipeline--narrative) for the signal and why." Anti-pattern: running every skill every day during a *normal week* is theatrical.
+- **§3.3 The operating cadence.** Weekly: `/housekeeping` then `/reflect` in the same session (cleaned state → reflection sees it). Monthly: `/evolve`. `/foresight` weekly or on demand. **Burst caveat (one-liner with pointer):** acknowledge that heavy work bursts are different — when observation volume rises (multi-day push, research blitz, shipping burst), run the pair more often. Anchor the canonical signal with a pointer to [MEMORY §1.7](MEMORY.md#17-the-pipeline--narrative); do NOT duplicate the canonical "burning a lot of tokens" sentence here. Anti-pattern: running every skill every day during a *normal week* is theatrical.
 - **§3.4 What NOT to ask it to do.** Don't ask it to restart itself if it's the live process (self-modification hazard — kills your live session mid-turn). Don't ask it to do destructive things without staging them. Don't expect it to remember a single off-hand remark forever — surface important facts so it captures them properly. Don't run pipeline skills daily in steady state.
 - **§3.5 Self-modification footnote.** Only relevant if ytsejam is your substrate (you're running the agent that's editing itself). Source edits to the repo are safe; `systemctl --user restart ytsejam` kills the live session. Normally Brian's gotcha, flagged here for any friend who decides to fork and run as their own substrate.
 
@@ -472,8 +472,10 @@ grep -q '| brainstorm ' docs/USAGE.md && grep -q '| housekeeping ' docs/USAGE.md
 # 3. MEMORY §1.7 contains the burst caveat
 grep -q 'burning a lot of tokens' docs/MEMORY.md && echo "AC3 ok"
 
-# 4. USAGE §3.3 references the burst caveat with a pointer to MEMORY
-grep -q 'Weekly is the floor' docs/USAGE.md && echo "AC4 ok"
+# 4. USAGE §3.3 references the burst caveat with a pointer to MEMORY §1.7
+# (Final wording diverged from the brainstorm draft "Weekly is the floor" —
+# the semantic AC is satisfied by ANY burst caveat + the §1.7 anchor.)
+grep -qE 'burst|heavy work' docs/USAGE.md && grep -q 'MEMORY.md#17-the-pipeline--narrative' docs/USAGE.md && echo "AC4 ok"
 
 # 5. README points to USAGE
 grep -q 'docs/USAGE.md' README.md && echo "AC5 ok"
