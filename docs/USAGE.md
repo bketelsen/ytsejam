@@ -511,7 +511,7 @@ looking nudge, not as an oracle.
 There is one caveat: heavy work bursts are different. In a shipping burst,
 research blitz, or multi-day implementation push, the rate can go higher
 because observation volume is higher. Full burst-cadence rules in
-[MEMORY.md §2.2](MEMORY.md#22-the-burst-cadence-caveat). The cadence rule
+[MEMORY.md §1.7](MEMORY.md#17-the-pipeline--narrative). The cadence rule
 here is the steady state; the burst is the exception.
 
 So: boring weekly pair, boring monthly audit, occasional foresight. The
