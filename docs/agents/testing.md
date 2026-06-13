@@ -96,3 +96,9 @@ behavior observable, verify it isn't inflating results by running the OLD
 buggy code with the same hook and confirming the old failure still reproduces.
 
 _Added: 2026-06-13 | Task: D7 auto-commit cadence for server/src/memory/git/_
+
+## Validate Parser Inputs Against SSOT Constraints
+
+When writing a parser (e.g. `parseObservationLine` in `server/src/memory/bridge/ltm-observer.ts`), match its validation to the authoritative write validator rather than the prose spec — here the cog SSOT regex at `server/src/memory/store/append.ts:7` (`/^-\s+\d{4}-\d{2}-\d{2}\s+\[.+\]:\s*.+$/`) requires non-empty tags and a non-empty body, so the parser must reject empty/whitespace-only tags, not treat them as optional. Shape-only date regexes (`\d{4}-\d{2}-\d{2}`) are insufficient: round-trip-validate calendar correctness via `const d = new Date(\`${date}T00:00:00.000Z\`); if (Number.isNaN(d.getTime()) || d.toISOString().slice(0,10) !== date) return null;`, copying the existing sibling parser at `server/src/memory/consolidated/observations-parser.ts:11-12` instead of reinventing it. Skipping these checks lets semantically-invalid values (`2026-13-99`, `2026-02-30`, `tags: []`) flow downstream where `new Date(...).toISOString()` throws "Invalid time value" or the cog write is rejected, silently breaking the mirror so the reconciler retries forever — the exact failure the self-healing design exists to prevent. Before implementing, check for an existing parser/validator in the repo and reuse its logic, and add negative tests (untagged-fails, empty/whitespace-only tags, invalid-date, Feb-30, embedded-newline) so permissive parsing can't regress.
+
+_Added: 2026-06-13 | Task: Task 1 of 9 for PR 1 of the cog-LTM bridge roadmap_
