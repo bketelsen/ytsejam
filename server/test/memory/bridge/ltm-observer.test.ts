@@ -98,3 +98,51 @@ describe("computeOrigin", () => {
     expect(a).toBe(b);
   });
 });
+
+import { MemorySystem } from "ltm";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mirrorToLtm } from "../../../src/memory/bridge/ltm-observer.ts";
+
+describe("mirrorToLtm", () => {
+  it("records the observation in LTM and returns ok", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ltm-mirror-"));
+    const mem = MemorySystem.open({ storeDir: dir });
+    try {
+      const origin = "cog:personal/observations.md#aaa111bbb222";
+      const r = await mirrorToLtm(
+        mem,
+        {
+          text: "shipped Bridge 1",
+          timestamp: "2026-06-13T00:00:00.000Z",
+          tags: ["ltm", "bridge"],
+        },
+        origin,
+      );
+      expect(r).toEqual({ ok: true });
+      expect(mem.hasObservation(origin)).toBe(true);
+    } finally {
+      mem.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns {ok:false,error} on LTM throw, NEVER throws", async () => {
+    const fakeLtm = {
+      recordObservation: async () => {
+        throw new Error("disk full");
+      },
+    } as unknown as MemorySystem;
+    const r = await mirrorToLtm(
+      fakeLtm,
+      { text: "x", timestamp: "2026-06-13T00:00:00.000Z", tags: ["bug"] },
+      "cog:x/observations.md#deadbeef0000",
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toBeInstanceOf(Error);
+      expect(r.error.message).toBe("disk full");
+    }
+  });
+});

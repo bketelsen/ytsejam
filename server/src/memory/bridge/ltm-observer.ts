@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { MemorySystem } from "ltm";
 
 export type ParsedObservation = {
   text: string;
@@ -42,4 +43,30 @@ export function computeOrigin(
   const basis = `${domainPath}/${filename}\u0000${rawLine}`;
   const hash = createHash("sha256").update(basis, "utf8").digest("hex").slice(0, 12);
   return `cog:${domainPath}/${filename}#${hash}`;
+}
+
+// -- LTM mirror -----------------------------------------------------------
+
+const SALIENCE_COG_OBSERVATION = 0.85;
+
+export async function mirrorToLtm(
+  ltm: MemorySystem,
+  parsed: ParsedObservation,
+  origin: string,
+): Promise<{ ok: true } | { ok: false; error: Error }> {
+  try {
+    await ltm.recordObservation({
+      text: parsed.text,
+      timestamp: parsed.timestamp,
+      tags: parsed.tags,
+      origin,
+      salience: SALIENCE_COG_OBSERVATION,
+    });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
 }
