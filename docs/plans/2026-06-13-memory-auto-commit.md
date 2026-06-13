@@ -464,14 +464,21 @@ git commit -m "feat(memory): call maybeAutoCommit from write/append/patch/move"
 
 ---
 
-## Task 3: Startup flush + failure isolation + concurrency tests
+## Task 3: Startup-flush end-to-end coverage (narrowed)
 
 **Files:**
 - Test: `server/test/memory/auto-commit.test.ts` (extend)
 
+**Scope note.** Task 3 was originally specified as four tests: startup flush of tracked dirt, untracked-only ride-along, commit-failure warning, and concurrency mutex. After Task 1's fix cycle and Task 2's negative-path additions, only the first two remain un-written:
+
+- **Test 3 (commit failure → warn, no throw)** is already covered by the Task 1 fix-cycle test `"startup flush skips when a merge is in progress and warns"` AND, end-to-end through the live primitives, by the 16 swallowed `fatal: not a git repository` warnings the `store.test.ts` suite emits while still passing (now suppressed via `vi.spyOn` for output hygiene but functionally identical).
+- **Test 4 (concurrent burst → mutex coalesces)** is already covered by the Task 1 fix-cycle test `"concurrent burst of 50 writes produces ~5 auto-commits without losing increments"`.
+
+Re-running them verbatim would add duplicate coverage; the remaining gap is the AMENDED tracked-only semantic of the startup flush, which has no end-to-end test through the real `memory.append` surface yet.
+
 ### Step 1: Write the failing tests
 
-Append three more tests to `server/test/memory/auto-commit.test.ts` (inside the describe block):
+Append TWO tests to `server/test/memory/auto-commit.test.ts` (inside the existing describe block, AFTER the 9 tests from Tasks 1 and 2). Use these EXACT shapes:
 
 ```typescript
   test("startup flush: pre-existing dirty TRACKED file is committed before first auto-commit increments", async () => {
@@ -519,46 +526,17 @@ Append three more tests to `server/test/memory/auto-commit.test.ts` (inside the 
     const cadenceCommit = execFileSync("git", ["show", "--stat", "HEAD"], { cwd: root, encoding: "utf8" });
     expect(cadenceCommit).toMatch(/new-prev\.md/); // untracked-prev ride along
   });
-
-  test("commit failure (not a git repo) logs a warning and the write succeeds", async () => {
-    // Tear down git in the tmp root.
-    await rm(join(root, ".git"), { recursive: true, force: true });
-    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
-    const memory = await import("../../src/memory/index.ts");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    // Do 10 appends — none should throw; we should see a warning.
-    for (let i = 0; i < AUTO_COMMIT_EVERY; i++) {
-      await memory.append(`f${i}.md`, "x\n");
-    }
-    expect(warn).toHaveBeenCalled();
-    expect(warn.mock.calls[0][0]).toMatch(/ytsejam memory auto-commit:/);
-    warn.mockRestore();
-  });
-
-  test("concurrent burst of N writes produces exactly one commit (mutex coalesces)", async () => {
-    await writeFile(join(root, "domains.yml"), "version: 1\ndomains: []\n");
-    const memory = await import("../../src/memory/index.ts");
-    // Fire N appends in parallel.
-    await Promise.all(
-      Array.from({ length: AUTO_COMMIT_EVERY }, (_, i) => memory.append(`p${i}.md`, "x\n")),
-    );
-    // After the burst, exactly one auto-commit should exist on top of root.
-    const log = gitLog().trim().split("\n");
-    expect(log.length).toBeLessThanOrEqual(2);
-    expect(log.length).toBeGreaterThanOrEqual(2); // 1 auto + root
-    expect(log[0]).toContain("auto:");
-  });
 ```
 
-### Step 2: Run tests to verify they fail or assert the design
+### Step 2: Run tests
 
 Run: `npm test --workspace server -- auto-commit`
-Expected:
-- "startup flush" — already PASSING IF the implementation in Task 1 was correct. If FAIL, fix the implementation. The likely failure mode is that startup flush runs but the warning path swallowed an error — investigate the warning shape.
-- "commit failure" — PASSING (the implementation already swallows commit errors).
-- "concurrent burst" — likely PASSING but verify the mutex behavior. If the test sees MORE than 2 commits, the mutex is broken; if it sees only 1 commit (no auto-commit fired), the counter races are wrong.
+Expected: BOTH new tests pass on the existing implementation (the startup-flush logic was already correctly implemented in Task 1 — these tests are belt-and-suspenders end-to-end coverage through `memory.append`, not regression bait).
 
-If a test fails, fix `auto-commit.ts` minimally — DO NOT change the public API.
+If a test FAILS, do NOT change the implementation reflexively. First inspect carefully:
+- Is the test wrong (e.g. wrong expected commit count, wrong allow-listed path)? If so, fix the test only.
+- Is the implementation wrong (e.g. startup flush fires on untracked-only dirt)? If so, fix `auto-commit.ts` minimally — do NOT change the public API (`maybeAutoCommit`, `__resetAutoCommitForTests`, `AUTO_COMMIT_EVERY` are stable exports).
+- If you can't tell, STOP and report — the test shapes here are canonical; the implementation in Task 1 has already passed a quality review.
 
 ### Step 3: Run the full gate to confirm no regression
 
@@ -569,9 +547,11 @@ Expected: `=== gate: PASSED ===`
 
 ```bash
 cd /tmp/feat-memory-auto-commit
-git add server/test/memory/auto-commit.test.ts server/src/memory/store/auto-commit.ts
-git commit -m "test(memory): cover startup flush, commit failure, concurrency"
+git add server/test/memory/auto-commit.test.ts
+git commit -m "test(memory): end-to-end startup flush coverage via memory surface"
 ```
+
+If you had to modify `server/src/memory/store/auto-commit.ts` to make a test pass, include it in the `git add` line and the commit message should be `test+fix(memory): end-to-end startup flush coverage and <minimal-fix-description>`.
 
 ---
 
