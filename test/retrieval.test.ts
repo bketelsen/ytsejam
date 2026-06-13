@@ -345,6 +345,18 @@ describe("strong-cue recall end to end (RECALL 5)", () => {
     expect(fact?.recallCount ?? 0).toBe(0);
     mem.close();
   });
+
+  it("the retrieval trace records stale", async () => {
+    const work = tmpDir();
+    const truth = generateFixtures({ outDir: path.join(work, "sessions"), sessions: 24, turnsPerSession: 12, intervalDays: 30, seed: 7 });
+    const tracePath = path.join(work, "trace.jsonl");
+    const mem = MemorySystem.open({ storeDir: path.join(work, "store"), now: () => truth.horizonEnd, retrievalLog: tracePath });
+    await mem.ingestSessionDir(path.join(work, "sessions"));
+    await mem.retrieve("Tell me about my sibling.");
+    const line = JSON.parse(fs.readFileSync(tracePath, "utf8").trim().split("\n").at(-1)!);
+    expect(line.returned.some((r: { stale?: boolean }) => r.stale === true)).toBe(true);
+    mem.close();
+  });
 });
 
 describe("mean-relative vector normalization (RECALL 6)", () => {

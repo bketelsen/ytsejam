@@ -109,7 +109,13 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
           const b = item.breakdown;
           const f = (x: number) => x.toFixed(2);
           out(
-            `${String(i + 1).padStart(4)}  ${f(b.total)}  ${f(b.vector)}  ${f(b.lexical)}  ${f(b.recency)}  ${f(b.salience)}  ${f(b.graph)}  ${f(b.retention)}  ${item.record.id}`,
+            `${String(i + 1).padStart(4)}  ${f(b.total)}  ${f(b.vector)}  ${f(b.lexical)}  ${f(b.recency)}  ${f(b.salience)}  ${f(b.graph)}  ${f(b.retention)}  ${item.record.id}${
+              item.stale
+                ? " [stale]"
+                : "state" in item.record && item.record.state === "consolidated"
+                  ? " [consolidated]"
+                  : ""
+            }`,
           );
           out(`      ${item.record.text.slice(0, 100).replace(/\n/g, " ")}`);
         });
