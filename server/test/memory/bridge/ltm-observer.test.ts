@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseObservationLine,
   computeOrigin,
-} from "../../../src/memory/bridge/ltm-observer.js";
+} from "../../../src/memory/bridge/ltm-observer.ts";
 
 describe("parseObservationLine", () => {
   it("parses a tagged single-line observation", () => {
