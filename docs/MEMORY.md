@@ -690,7 +690,7 @@ Why: `wiki/index.md` is the L0 catalog for the narrative tier. It lets agents de
 
 Direct edits are allowed because memory is plain markdown, but each file shape has a different safety rule. When in doubt, preserve audit trails and patch the smallest stable text that proves the edit.
 
-#### §2.6.1 Safe direct edits
+#### §2.6.1 Match the edit to the file shape
 
 Use the file's edit pattern, not your preferred editor habit. The Appendix has the canonical bare table; this table adds the reason for in-flow lookup.
 
@@ -712,7 +712,7 @@ Safe defaults:
 
 Why: the tools depend on stable shapes. A whole-file rewrite of observations destroys temporal discipline; a tiny patch to action-items preserves line identity; a hot-memory rewrite is fine because hot-memory is supposed to be the current working set.
 
-#### §2.6.2 The auto-commit cadence
+#### §2.6.2 Trust the auto-commit cadence
 
 Memory commits itself. The cadence is `auto: 10 memory writes`, plus a startup flush that commits tracked dirty files when the server starts in a safe git state.
 
