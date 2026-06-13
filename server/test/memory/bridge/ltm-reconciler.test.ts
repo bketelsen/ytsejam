@@ -130,14 +130,61 @@ describe("LtmReconciler", () => {
   });
 
   it("start()/stop() timer lifecycle is idempotent and safe", async () => {
+    // start() now kicks an immediate tick. Give it a valid (empty) memory
+    // root so that first tick succeeds and reachable stays true; without
+    // this, the immediate tick would fail readdir and flip reachable=false.
+    await mkdir(join(dataDir, "memory"), { recursive: true });
     reconciler = new LtmReconciler({ ltm, dataDir, intervalMs: 1000, logger: noopLogger });
     await reconciler.stop(); // before start
     reconciler.start();
     reconciler.start(); // second call must not stack
+    await reconciler.stop(); // waits for inFlight immediate tick
     expect(reconciler.health().reachable).toBe(true);
-    await reconciler.stop();
     const stats = await reconciler.reconcile();
     expect(stats.scannedFiles).toBeGreaterThanOrEqual(0);
+  });
+
+  it("start() kicks an immediate first tick (no waiting for intervalMs)", async () => {
+    // Cold-restart UX: a freshly-armed reconciler must back-fill within
+    // microtasks, not after intervalMs. Use a 60-second intervalMs and
+    // assert reconcile() is called once shortly after start() returns,
+    // with no second call before the interval elapses. We never actually
+    // wait the 60s -- the test asserts the call happens FAR earlier than
+    // the scheduled tick would.
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-13 [boot]: should mirror immediately\n",
+    );
+    reconciler = new LtmReconciler({
+      ltm,
+      dataDir,
+      intervalMs: 60_000,
+      logger: noopLogger,
+    });
+    const spy = vi.spyOn(reconciler, "reconcile");
+    const tStart = Date.now();
+    reconciler.start();
+    // Capture the spy's first invocation promise and await it directly so
+    // the immediate tick's reconcile() fully completes (inFlight cleared).
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1), {
+      timeout: 1000,
+    });
+    const firstResult = spy.mock.results[0]?.value as
+      | Promise<unknown>
+      | undefined;
+    if (firstResult) await firstResult;
+    const elapsedAfterFirst = Date.now() - tStart;
+    // The immediate tick must have happened FAR before the 60s interval.
+    expect(elapsedAfterFirst).toBeLessThan(5_000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Wait 200ms of real time -- nowhere near the 60s interval, so no new
+    // scheduled tick should have fired. Catches the regression where someone
+    // misuses setInterval (e.g. fires immediately AND on schedule from t=0).
+    await new Promise((r) => setTimeout(r, 200));
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Mirror landed?
+    expect(spy.mock.results[0]?.value).toBeDefined();
   });
 
   it("health: per-line LTM failure surfaces as stats.errors but does NOT bump consecutiveFailures", async () => {
