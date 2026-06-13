@@ -15,19 +15,14 @@
  * overridable via OLLAMA_BASE_URL). Mutually exclusive with --semantic —
  * one source of truth per run.
  *
- * Neither mode raises any band threshold. PLAN-OLLAMA Task O2 planned a
- * medium-band paraphrase raise to 0.80 for real-embedder modes; measurement
- * said no: medium-band paraphrase recall@5 is 0% with nomic-embed-text,
- * mxbai-embed-large, AND HashEmbedder alike, because those probes target
- * facts past their decay horizon at 24 months — the misses are decay-bound,
- * not similarity-bound, so better embeddings cannot buy them back (the
- * BANDS docs in harness.ts predict exactly this). The real lift lands on
- * the short band (hash: 75% on every seed measured; nomic: 75–100%
- * depending on seed), but its minimum across seeds equals the hash
- * baseline, so the measured-minus-5pp discipline leaves every threshold at
- * the band default. A raise that holds only on the gate's default seed
- * would overfit one seed; the defaults already fail a garbage embedder
- * (short-band paraphrase threshold 0.70 vs ~0 for noise vectors).
+ * Neither mode raises any band threshold. Strong-cue recall (RECALL 9)
+ * lifted medium/long paraphrase recall@5 from 0% to a 75% hash floor —
+ * already enforced band-wide by BANDS (harness.ts). Real embedders measure
+ * higher on most seeds (nomic: 75–100%, 88% on the default seed), but the
+ * nomic seed MINIMUM equals the hash floor, so measured-minus-5pp leaves a
+ * mode-specific raise with nothing to add. A raise that holds only on the
+ * gate's default seed would overfit one seed; the defaults already fail a
+ * garbage embedder (paraphrase thresholds 0.70 vs ~0 for noise vectors).
  */
 
 import path from "node:path";
