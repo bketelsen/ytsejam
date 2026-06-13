@@ -6,6 +6,7 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import {
+  DEFAULT_COMPACTION_SETTINGS,
   estimateContextTokens,
   shouldCompact,
   type AgentHarness,
@@ -43,7 +44,7 @@ export function buildSettings(model: Model<any>): CompactionSettings {
   return {
     enabled: true,
     reserveTokens: computeReserveTokens(model),
-    keepRecentTokens: 20_000,
+    keepRecentTokens: DEFAULT_COMPACTION_SETTINGS.keepRecentTokens,
   };
 }
 
@@ -389,7 +390,7 @@ export function buildCompactionEvent(
     model: `${model.provider}/${model.id}`,
     contextWindow: model.contextWindow,
     reserveTokens: computeReserveTokens(model),
-    keepRecentTokens: 20_000,
+    keepRecentTokens: buildSettings(model).keepRecentTokens,
     tokensBeforeEstimated:
       pending && pending.tokensBefore > 0
         ? pending.tokensBefore
