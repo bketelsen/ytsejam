@@ -383,7 +383,7 @@ export class TaskManager {
     // see #72: that helper anchors on the last surviving assistant's
     // usage.totalTokens, which is the stale pre-compact snapshot from the
     // very turn that triggered compaction and would tautologically return
-    // tokens_before. Best-effort: any throw falls back to 0.
+    // tokens_before_estimated. Best-effort: any throw falls back to 0.
     let tokensAfterEstimated = 0;
     try {
       const messages = (await active.session.buildContext()).messages;

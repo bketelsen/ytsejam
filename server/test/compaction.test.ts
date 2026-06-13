@@ -363,7 +363,7 @@ describe("formatDevLogLine", () => {
     contextWindow: 1_000_000,
     reserveTokens: 80_000,
     keepRecentTokens: 20_000,
-    tokensBefore: 947_112,
+    tokensBeforeEstimated: 947_112,
     tokensAfterEstimated: 184_309,
     summaryTokens: 4_821,
     firstKeptEntryId: "evt_8f12",
@@ -381,7 +381,7 @@ describe("formatDevLogLine", () => {
       /^2026-06-12.*: compaction in session abc123 — proactive/,
     );
     expect(line).toMatch(/anthropic\/claude-sonnet-4-6/);
-    expect(line).toMatch(/ctx 947112→~184309 tokens/);
+    expect(line).toMatch(/ctx ~947112→~184309 tokens/);
     expect(line).toMatch(/summary 4821 tokens/);
     expect(line).toMatch(/Trigger: above 920000 budget/);
   });
@@ -433,7 +433,7 @@ describe("buildCompactionEvent", () => {
 
     expect(event.trigger).toBe("proactive");
     expect(event.reason).toBe("above 800000 budget");
-    expect(event.tokensBefore).toBe(850_000);
+    expect(event.tokensBeforeEstimated).toBe(850_000);
     expect(formatDevLogLine(event)).toContain("proactive");
     expect(formatDevLogLine(event)).toContain("Trigger: above 800000 budget");
   });
@@ -477,7 +477,7 @@ describe("buildCompactionEvent", () => {
       { tokensBefore: 12_345 },
     );
 
-    expect(event.tokensBefore).toBe(12_345);
+    expect(event.tokensBeforeEstimated).toBe(12_345);
   });
 
   it("records succeeded:false correctly when result.succeeded is false", () => {
@@ -626,7 +626,7 @@ describe("serializeJsonRecord", () => {
       contextWindow: 1000,
       reserveTokens: 100,
       keepRecentTokens: 50,
-      tokensBefore: 950,
+      tokensBeforeEstimated: 950,
       tokensAfterEstimated: 200,
       summaryTokens: 10,
       firstKeptEntryId: "evt",
@@ -644,7 +644,7 @@ describe("serializeJsonRecord", () => {
     expect(parsed.trigger).toBe("proactive");
     expect(parsed.context_window).toBe(1000);
     expect(parsed.reserve_tokens).toBe(100);
-    expect(parsed.tokens_before).toBe(950);
+    expect(parsed.tokens_before_estimated).toBe(950);
     expect(parsed.tokens_after_estimated).toBe(200);
     expect(parsed.summary_tokens).toBe(10);
     expect(parsed.files_read).toEqual([]);

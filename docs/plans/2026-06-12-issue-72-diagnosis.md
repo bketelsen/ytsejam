@@ -1,5 +1,7 @@
 # Issue #72 diagnosis: `tokens_after == tokens_before` is a measurement bug, not a trim bug
 
+> **Note (post-#77):** This diagnosis predates the `tokensBefore` → `tokensBeforeEstimated` rename. Throughout this doc, `tokens_before` refers to what is now logged as `tokens_before_estimated` — both are estimates from the same `estimateContextTokens` path.
+
 ## Root cause (one sentence)
 
 `recordCompactionEvent` measures `tokens_after` by calling `estimateContextTokens()` on the post-compaction `buildContext()` output *before any new provider turn has run*, but `estimateContextTokens()` trusts the last surviving assistant message's `usage.totalTokens` as its primary signal — and that value is a stale historical snapshot from when the provider was billed for the *full pre-compaction prompt*, so the function returns the pre-compaction count even though the kept-set actually was trimmed correctly.
