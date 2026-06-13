@@ -7,6 +7,7 @@ import { Bm25Index } from "../src/retrieval/lexical.ts";
 import { MemorySystem } from "../src/api/memory-system.ts";
 import { generateFixtures } from "../src/eval/synthetic.ts";
 import { promoteFacts } from "../src/retrieval/promote.ts";
+import { spreadNormalize } from "../src/retrieval/retriever.ts";
 import type { SemanticFact } from "../src/types.ts";
 
 function tmpDir(): string {
@@ -339,5 +340,21 @@ describe("strong-cue recall end to end (RECALL 5)", () => {
     const fact = mem.listFacts().find((f) => f.predicate === "rel_sister");
     expect(fact?.recallCount ?? 0).toBe(0);
     mem.close();
+  });
+});
+
+describe("mean-relative vector normalization (RECALL 6)", () => {
+  it("spreads a compressed cosine cluster: top=1, runner-up near 0", () => {
+    const pool = [0.62, 0.6, 0.59, 0.58];
+    const mean = pool.reduce((s, x) => s + x, 0) / pool.length; // 0.5975
+    const max = 0.62;
+    expect(spreadNormalize(0.62, mean, max)).toBeCloseTo(1, 9);
+    expect(spreadNormalize(0.6, mean, max)).toBeLessThan(0.2);
+    expect(spreadNormalize(0.5, mean, max)).toBe(0); // below mean clamps to 0
+  });
+
+  it("degenerate pools fall back to max-ratio", () => {
+    expect(spreadNormalize(0.5, 0.5, 0.5)).toBeCloseTo(1, 9); // all equal
+    expect(spreadNormalize(0, 0, 0)).toBe(0); // empty/zero pool
   });
 });

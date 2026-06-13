@@ -27,6 +27,23 @@ import type { EpisodicStore } from "../episodic/store.ts";
 const CANDIDATE_POOL = 50;
 
 /**
+ * Vector-channel normalization: mean-relative spread over the candidate
+ * pool, clamped to [0,1]. Real embedders cluster cosines tightly (e.g.
+ * nomic ~0.55-0.62 across a conversational corpus), so the previous
+ * pool-max ratio left the best match ~0.02 ahead of distractors — less
+ * than the recency weight, which is why fresh chatter outranked perfect
+ * semantic matches. Mean-relative spread gives the pool's best match the
+ * full vector weight and typical distractors ~0. Degenerate pools
+ * (max ≈ mean) fall back to the old max-ratio.
+ */
+export function spreadNormalize(cos: number, mean: number, max: number): number {
+  const c = Math.max(0, cos);
+  const range = max - mean;
+  if (range < 1e-9) return max > 1e-9 ? Math.min(1, c / max) : 0;
+  return Math.min(1, Math.max(0, (c - mean) / range));
+}
+
+/**
  * rank() output before fact promotion: every record comes from the episodic
  * store, so scoring/MMR may rely on EpisodicRecord-only fields (embedding)
  * that the wider RetrievedMemory union (which admits PromotedFact) lacks.
@@ -81,16 +98,21 @@ export class Retriever {
     const lexicalHits = this.lexical.search(query, CANDIDATE_POOL);
     const graphBoosts = graph.activate(query);
 
-    // Both content channels are normalized to their own pool max so the
-    // configured weights compare like with like. Raw cosine tops out around
-    // 0.1–0.7 for the hash embedder while BM25 was already max-normalized —
-    // unnormalized, vector's effective weight was a fraction of its
-    // documented share.
+    // Both content channels are normalized so the configured weights compare
+    // like with like (PLAN 2.2). Lexical normalizes to its pool max (BM25
+    // spreads naturally); the vector channel uses mean-relative spread — see
+    // spreadNormalize.
+    // VectorIndex.search returns hits sorted descending, so rawCosines[0] is
+    // the pool maximum after the non-negative clamp.
     const maxLexical = lexicalHits[0]?.score || 1;
-    const maxVector = Math.max(vectorHits[0]?.score ?? 0, 1e-9);
+    const rawCosines = vectorHits.map((h) => Math.max(0, h.score));
+    const maxVector = rawCosines[0] ?? 0;
+    const meanVector = rawCosines.length
+      ? rawCosines.reduce((s, x) => s + x, 0) / rawCosines.length
+      : 0;
     const lexicalById = new Map(lexicalHits.map((h) => [h.id, h.score / maxLexical]));
     const vectorById = new Map(
-      vectorHits.map((h) => [h.id, Math.max(0, h.score) / maxVector]),
+      vectorHits.map((h) => [h.id, spreadNormalize(h.score, meanVector, maxVector)]),
     );
 
     const candidateIds = new Set<string>([
@@ -112,7 +134,7 @@ export class Retriever {
         vector:
           vectorById.get(id) ??
           (record.embedding
-            ? Math.min(1, Math.max(0, cosine(queryVector, record.embedding)) / maxVector)
+            ? spreadNormalize(cosine(queryVector, record.embedding), meanVector, maxVector)
             : 0),
         lexical: lexicalById.get(id) ?? 0,
         recency: Math.pow(2, -ageDays(record.timestamp, now) / config.recencyHalfLifeDays),
