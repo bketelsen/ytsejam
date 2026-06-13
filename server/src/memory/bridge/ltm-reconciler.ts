@@ -95,6 +95,9 @@ export class LtmReconciler {
       void this.tickSafe();
     }, this.intervalMs);
     if (typeof this.timer.unref === "function") this.timer.unref();
+    // Kick off an immediate first tick so cold-restart back-fill doesn't
+    // wait the full intervalMs. tickSafe() is idempotent (inFlight guard).
+    void this.tickSafe();
   }
 
   async stop(): Promise<void> {
