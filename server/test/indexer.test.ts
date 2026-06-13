@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { Indexer, type SessionRow } from "../src/indexer.ts";
 import type { TaskRow } from "../src/tasks.ts";
 import type { ScheduleRow } from "../src/schedules.ts";
@@ -132,5 +132,68 @@ describe("schedules table", () => {
     });
     expect(idx.listSchedules().map((s) => s.id)).toEqual(["sch2", "sch1"]); // newest first
     expect(idx.getSchedule("missing")).toBeUndefined();
+  });
+
+  describe("WAL checkpoint (issue #99)", () => {
+    // sqlite's built-in wal_autocheckpoint is PASSIVE-only, which resets the
+    // WAL head pointer but never truncates the on-disk file -- it just
+    // oscillates around `wal_autocheckpoint * page_size` (~4 MB at defaults).
+    // The Indexer now runs a periodic `wal_checkpoint(TRUNCATE)` to keep the
+    // -wal file small while the process runs. See issue #99.
+
+    test("periodic timer runs checkpointWal() on the configured cadence", () => {
+      vi.useFakeTimers();
+      try {
+        const idx = new Indexer(tempDb(), { checkpointIntervalMs: 1000 });
+        const spy = vi.spyOn(idx, "checkpointWal");
+        vi.advanceTimersByTime(3500); // 3 full ticks
+        expect(spy).toHaveBeenCalledTimes(3);
+        idx.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("close() cancels the periodic timer", () => {
+      vi.useFakeTimers();
+      try {
+        const idx = new Indexer(tempDb(), { checkpointIntervalMs: 1000 });
+        const spy = vi.spyOn(idx, "checkpointWal");
+        vi.advanceTimersByTime(1500); // 1 tick
+        expect(spy).toHaveBeenCalledTimes(1);
+        idx.close();
+        vi.advanceTimersByTime(10_000); // 10 more ticks would fire if not cancelled
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("checkpointIntervalMs=0 disables the timer", () => {
+      vi.useFakeTimers();
+      try {
+        const idx = new Indexer(tempDb(), { checkpointIntervalMs: 0 });
+        const spy = vi.spyOn(idx, "checkpointWal");
+        vi.advanceTimersByTime(60_000); // a full minute, no timer should fire
+        expect(spy).not.toHaveBeenCalled();
+        idx.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("checkpointWal() swallows errors so the timer never throws", () => {
+      const idx = new Indexer(tempDb(), { checkpointIntervalMs: 0 });
+      idx.close(); // db is now closed; further checkpointWal() must throw inside and be caught
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        expect(() => idx.checkpointWal()).not.toThrow();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("wal_checkpoint(TRUNCATE) failed"),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

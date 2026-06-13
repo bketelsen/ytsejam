@@ -55,12 +55,30 @@ interface ScheduleDbRow {
   fired_count: SqliteInteger;
 }
 
+/** Default WAL truncation cadence (5 min). See `IndexerOptions.checkpointIntervalMs`. */
+export const DEFAULT_WAL_CHECKPOINT_INTERVAL_MS = 5 * 60 * 1000;
+
+export interface IndexerOptions {
+  /**
+   * Cadence for periodic `PRAGMA wal_checkpoint(TRUNCATE)`. Default 5 min.
+   * Pass `0` to disable the timer entirely (sqlite's `db.close()` already
+   * finalizes and removes the `-wal` file at shutdown -- this option only
+   * controls the long-running cadence).
+   * SQLite's built-in auto-checkpoint is PASSIVE-only and never shrinks the
+   * `-wal` file -- it just oscillates around `wal_autocheckpoint * page_size`
+   * (~4 MB at defaults). A periodic TRUNCATE keeps the on-disk shape honest
+   * for backups and `ls -lah` health checks. See issue #99.
+   */
+  checkpointIntervalMs?: number;
+}
+
 export class Indexer {
   private db: DatabaseSync;
+  private checkpointTimer: NodeJS.Timeout | null = null;
   /** true when the constructor wiped a stale/corrupt index — caller should rebuild from JSONL */
   public wasReset = false;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: IndexerOptions = {}) {
     this.db = new DatabaseSync(dbPath);
     this.db.exec("PRAGMA journal_mode = WAL");
     try {
@@ -72,6 +90,28 @@ export class Indexer {
     } catch {
       this.recreateSchema();
       this.wasReset = true;
+    }
+
+    const intervalMs = options.checkpointIntervalMs ?? DEFAULT_WAL_CHECKPOINT_INTERVAL_MS;
+    if (intervalMs > 0) {
+      this.checkpointTimer = setInterval(() => this.checkpointWal(), intervalMs);
+      // Never hold the event loop open just to run a maintenance checkpoint.
+      this.checkpointTimer.unref();
+    }
+  }
+
+  /**
+   * Run `PRAGMA wal_checkpoint(TRUNCATE)`.
+   * Errors are caught and logged at WARN -- this is best-effort maintenance.
+   * Exposed for tests; production callers don't need it (the timer drives it).
+   */
+  checkpointWal(): void {
+    try {
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch (err) {
+      console.warn(
+        `[indexer] wal_checkpoint(TRUNCATE) failed: ${(err as Error).message}`,
+      );
     }
   }
 
@@ -194,6 +234,13 @@ export class Indexer {
   }
 
   close(): void {
+    if (this.checkpointTimer) {
+      clearInterval(this.checkpointTimer);
+      this.checkpointTimer = null;
+    }
+    // sqlite's own `db.close()` finalizes the WAL and removes the -wal file
+    // when this is the last connection -- no explicit checkpoint needed here.
+    // The periodic checkpointWal() above is the long-running fix; see #99.
     this.db.close();
   }
 
