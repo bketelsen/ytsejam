@@ -82,6 +82,13 @@ export function Chat({
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
+      {/*
+        Header strip is always rendered (the burger button is mobile-only via md:hidden,
+        and headerRight is conditional). Today App.tsx always supplies headerRight, so the
+        desktop strip is never empty. If a future caller mounts <Chat> without headerRight,
+        consider guarding the entire <header> on (mobile || headerRight) to avoid a
+        ~40px empty bar with a bottom border on desktop.
+      */}
       <header className="flex items-center gap-2 border-b border-border px-2 py-1.5">
         <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open sessions" className="md:hidden">
           <Menu />

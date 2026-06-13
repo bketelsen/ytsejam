@@ -25,6 +25,16 @@ the new endpoint). `App.tsx` places the icons in a now-always-visible header str
 
 ## Task 1: Server endpoint — `GET /api/memory/health`
 
+> **Post-ship note:** what actually shipped diverged from this section in two
+> ways (see commits `32b9335` + `d841631`):
+> 1. The test file lives at `server/test/memory-health.test.ts` (vitest, the
+>    project's server test convention) — NOT `server/src/server.health.test.ts`.
+>    Tests under `server/src/` are invisible to `scripts/gate.sh` (its vitest glob
+>    is `test/**/*.test.ts`). The shape and the three cases below are otherwise
+>    accurate; treat the file path and the `npx tsx --test` command as superseded.
+> 2. The model server test is `server/test/api.test.ts` (vitest + `createApp(deps).app`
+>    + `mkdtempSync` isolation), not `server/src/cog/*.test.ts`.
+
 **Files:**
 - Modify: `server/src/server.ts` (add route near other `app.get("/api/...")` calls)
 - Test: `server/src/server.health.test.ts` (create)

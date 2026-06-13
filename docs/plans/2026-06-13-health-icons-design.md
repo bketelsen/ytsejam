@@ -199,18 +199,32 @@ last poll response) so `App.tsx` can build that tooltip.
 
 ## Tests
 
-Server (`server/src/server.health.test.ts` — new):
+> **Convention note (post-ship reality):** the test layout below was the original draft.
+> In-loop, two adjustments superseded it (see commits `e98fb42` and `d841631`):
+> 1. The server test lives at `server/test/memory-health.test.ts` (vitest, the project's
+>    server convention) — NOT `server/src/server.health.test.ts`.
+> 2. The web project has NO vitest / @testing-library / jsdom; its tests are source-text
+>    audits run via `node:test` in `web/test/*.test.mjs` (model: `compaction-pill.test.mjs`).
+>    What shipped is `web/test/health-icon.test.mjs` (7 cases) and
+>    `web/test/health-status.test.mjs` (9 cases) — source-text audits of the implementation,
+>    NOT rendered-DOM tests with `render`/`screen.getByRole`/`renderHook`.
+>
+> The behavioral coverage the rendered-DOM tests would have provided is instead delivered
+> by the manual smoke in Task 4. The list below describes what each test FILE covers; treat
+> the file paths and test mechanics as superseded.
+
+Server (`server/test/memory-health.test.ts` — new, vitest):
 - `GET /api/memory/health` returns `{ ltm: { reachable, consecutiveFailures, ... } }` when a
   reconciler is attached.
 - `GET /api/memory/health` returns `{ ltm: null }` when no reconciler is attached.
 - `GET /api/memory/health` requires the bearer token (401 without).
 
-Web (`web/src/components/HealthIcon.test.tsx` — new):
+Web (`web/test/health-icon.test.mjs` — new, source-text audit):
 - Renders `Plug` for `kind="ws"`, `Brain` for `kind="ltm"`.
 - `data-state` reflects the `state` prop ("unknown" / "ok" / "bad").
 - `aria-label` and `title` both reflect the `title` prop.
 
-Web (`web/src/useApp.health.test.ts` — new, polling hook):
+Web (`web/test/health-status.test.mjs` — new, source-text audit of the polling hook + wiring):
 - Initial render: `ltmState === "unknown"`, `wsState === "unknown"`.
 - After mocked fetch returns `{ ltm: { reachable: true, consecutiveFailures: 0 } }`:
   `ltmState === "ok"`.
