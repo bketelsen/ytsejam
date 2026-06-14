@@ -56,7 +56,7 @@ Rationale for **cache-first over network-first**:
   different hashes. Worst case is a one-launch lag for the shell to update, fixed
   by the update-detection flow below.
 
-### Cache population: runtime, not build-time precache
+### Cache population: hybrid — single-entry precache (`/`) + runtime fetch-and-cache
 
 Two options considered:
 
@@ -65,10 +65,24 @@ Two options considered:
 | build-time precache manifest | precise, no waste | maintain a vite plugin or post-build script |
 | runtime fetch-and-cache | simple SW, smaller code | first offline launch only works after one online visit |
 
-**Picked runtime.** Real users always visit before installing the PWA, so the cache
-is warm by the time offline matters. Build-time precache earns its keep when shell
-size matters (we're tiny) or when first-launch-offline is the use case (it isn't —
-ytsejam needs the agent backend, so first launch is always online).
+**Picked runtime, with one precache exception.** Real users always visit before
+installing the PWA, so the cache is warm by the time offline matters. Build-time
+precache earns its keep when shell size matters (we're tiny) or when
+first-launch-offline is the use case (it isn't — ytsejam needs the agent backend,
+so first launch is always online).
+
+**Revision (post-Tier-5 review):** the SW install handler precaches a SINGLE entry,
+`/`, via `cache.addAll(PRECACHE_URLS)`. Reason: PWA shortcuts shipped in Tier-5
+launch at URLs like `/?action=tasks`, distinct from `start_url:/`. Without a
+guaranteed cached `/`, a cold offline launch via shortcut would exact-match-miss
+(default `cache.match` doesn't `ignoreSearch`) and the fetch handler's navigation
+fallback would have nothing to serve. The single precache entry plus the
+`req.mode === "navigate"` fallback (in both the cache-miss path and the
+network-fail catch) guarantees offline navigation always renders the shell.
+Sub-resources (CSS/JS bundles) remain runtime-cached. The `addAll` call is
+wrapped in `.catch` so install-time `/` fetch failure (server down at SW-install
+time) degrades to empty-cache rather than failing install — the SW will self-heal
+on the next online visit.
 
 ### Cache versioning: name-keyed, derived from build-time variable
 

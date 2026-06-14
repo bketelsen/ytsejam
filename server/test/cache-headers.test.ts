@@ -83,6 +83,27 @@ describe("cache-control headers for PWA correctness", () => {
     expect(res.headers.get("cache-control")).toBe("no-cache");
   });
 
+  // Regression for the PWA update-flow bug caught in cross-branch review:
+  // browsers and the PWA never request `/index.html` literally — they
+  // navigate to `/` and the SPA fallback serves index.html bytes. The
+  // middleware matches on REQUEST PATH, not served file, so without an
+  // explicit `app.use("/", ...)` the no-cache header never lands on real
+  // navigation traffic. Both `/` and `/index.html` must be covered.
+  test("serves bare GET / with Cache-Control: no-cache (real browser navigation path)", async () => {
+    const res = await app.request("/");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+
+  // PWA shortcuts (per Tier-5 manifest) launch with query strings like
+  // /?action=tasks. Query strings don't affect Hono path matching, so the
+  // `/` rule should cover these — verified by this regression test.
+  test("serves PWA shortcut URLs (/?action=tasks) with Cache-Control: no-cache", async () => {
+    const res = await app.request("/?action=tasks");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+
   test("serves /manifest.webmanifest with Cache-Control: no-cache", async () => {
     const res = await app.request("/manifest.webmanifest");
     expect(res.status).toBe(200);
