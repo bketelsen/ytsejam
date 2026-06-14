@@ -144,12 +144,12 @@ import type { PiAuthStore } from "../src/pi-auth.ts";
  * Minimal PiAuthStore shape — the loader only calls `hasCredentials`,
  * `getCredentials`, and `getApiKey`. Verified against server/src/pi-auth.ts.
  */
-function fakeAuthWithCopilot(): PiAuthStore {
+function fakeAuthWithCopilot(access = "fake-token"): PiAuthStore {
   return {
     hasCredentials: (p: string) => p === "github-copilot",
     getCredentials: (p: string) =>
-      p === "github-copilot" ? ({ type: "oauth", access: "fake-token", expires: Date.now() + 60000 } as any) : undefined,
-    getApiKey: async (p: string) => (p === "github-copilot" ? "fake-token" : undefined),
+      p === "github-copilot" ? ({ type: "oauth", access, expires: Date.now() + 60000 } as any) : undefined,
+    getApiKey: async (p: string) => (p === "github-copilot" ? access : undefined),
   } as unknown as PiAuthStore;
 }
 
@@ -198,6 +198,41 @@ describe("loadLiveCopilotModels", () => {
     assert.equal(out, "Authorization: Bearer [REDACTED]");
     assert.ok(!out.includes("proxy-ep"), `lowercase bearer token survived: ${out}`);
   });
+  it("enterprise token rewrites baseUrl on fetch (the feature's raison d'être)", async () => {
+    const enterpriseToken =
+      "tid=abc;exp=99999999999;sku=foo;proxy-ep=proxy.enterprise.githubcopilot.com;st=dotcom:fake-signature";
+    const auth = fakeAuthWithCopilot(enterpriseToken);
+
+    let calledUrl: string | undefined;
+    let calledInit: RequestInit | undefined;
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calledUrl = url;
+      calledInit = init;
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }) as any;
+
+    await loadLiveCopilotModels(auth, { fetch: fetchImpl });
+
+    assert.ok(calledUrl, "fetch was never called");
+    assert.equal(
+      calledUrl,
+      "https://api.enterprise.githubcopilot.com/models",
+      `expected enterprise URL, got: ${calledUrl}`,
+    );
+    const headers = calledInit?.headers as Record<string, string> | undefined;
+    assert.ok(headers, "fetch called without headers");
+    assert.ok(headers.Authorization?.startsWith("Bearer "), `no Bearer auth header: ${headers.Authorization}`);
+    assert.equal(headers.Authorization, `Bearer ${enterpriseToken}`);
+    assert.equal(
+      headers["Copilot-Integration-Id"],
+      "vscode-chat",
+      `Copilot-Integration-Id header missing or wrong: ${headers["Copilot-Integration-Id"]}`,
+    );
+    assert.equal(headers["User-Agent"], "GitHubCopilotChat/0.35.0");
+    assert.equal(headers["Editor-Version"], "vscode/1.107.0");
+    assert.equal(headers["Editor-Plugin-Version"], "copilot-chat/0.35.0");
+  });
+
   it("happy path — returns overlay from filtered live ids", async () => {
     const fetchImpl = makeFetchOk({
       data: [
