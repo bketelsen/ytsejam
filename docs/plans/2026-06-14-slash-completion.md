@@ -379,11 +379,28 @@ test("slashMenuState: trigger-substring matches surfaced with reason + matchedTr
   assert.ok(s.items.every((i) => i.matchedTrigger === "memory"));
 });
 
-test("slashMenuState: case-insensitive", () => {
+test("slashMenuState: case-insensitive (multi-match)", () => {
+  // /RE matches both reflect and review by name-prefix, same as /re.
+  const upper = slashMenuState("/RE", SKILLS);
+  const lower = slashMenuState("/re", SKILLS);
+  assert.deepEqual(
+    upper.items.map((i) => i.skill.name),
+    ["reflect", "review"],
+  );
+  // And the upper-case result equals the lower-case one — proves the toLowerCase
+  // happens BOTH on the query AND on the comparison side.
+  assert.deepEqual(
+    upper.items.map((i) => i.skill.name),
+    lower.items.map((i) => i.skill.name),
+  );
+});
+
+test("slashMenuState: case-insensitive (single-match)", () => {
+  // /REF only matches reflect — review does NOT start with "ref" in any case.
   const s = slashMenuState("/REF", SKILLS);
   assert.deepEqual(
     s.items.map((i) => i.skill.name),
-    ["reflect", "review"],
+    ["reflect"],
   );
 });
 
