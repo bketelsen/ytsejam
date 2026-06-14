@@ -87,7 +87,6 @@ describe("inferModelTemplate", () => {
   });
 });
 
-
 describe("mergeCatalogs", () => {
   it("live-only id added to overlay with sibling-inherited metadata", () => {
     const result = mergeCatalogs(
