@@ -232,3 +232,48 @@ test("AbortSignal.timeout is feature-detected before use", (t) => {
     "AbortSignal.timeout must be feature-detected (HAS_ABORT_TIMEOUT or typeof AbortSignal) before use",
   );
 });
+
+// --- main.tsx registration tests ---
+
+const mainPath = join(root, "src/main.tsx");
+
+function readMainSrcCodeOnly() {
+  const raw = readFileSync(mainPath, "utf8");
+  return raw
+    .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+    .replaceAll(/\/\/[^\n]*/g, "");
+}
+
+// Without the feature-detect, navigator.serviceWorker dereference would crash
+// on older WebKit / privacy-restricted browsers that omit the property.
+test("main.tsx feature-detects serviceWorker support before registering", () => {
+  const src = readMainSrcCodeOnly();
+  assert.match(
+    src,
+    /["']serviceWorker["']\s+in\s+navigator/,
+    "main.tsx must check 'serviceWorker' in navigator before registering",
+  );
+});
+
+// SW must NOT register in dev mode — Vite dev server serves no sw.js, and any
+// stale dev-mode registration would 404 or worse, register a wildly stale
+// artifact from a previous session and break HMR.
+test("main.tsx gates SW registration on import.meta.env.PROD (no SW in dev)", () => {
+  const src = readMainSrcCodeOnly();
+  assert.match(
+    src,
+    /import\.meta\.env\.PROD/,
+    "main.tsx must gate SW registration on import.meta.env.PROD",
+  );
+});
+
+// The SW lives at /sw.js (root scope). A hashed or namespaced path would
+// either 404 (Vite copies public/* as-is, no hashing) or change SW scope.
+test("main.tsx registers /sw.js at root scope (not a hashed or namespaced path)", () => {
+  const src = readMainSrcCodeOnly();
+  assert.match(
+    src,
+    /navigator\.serviceWorker\.register\(\s*["']\/sw\.js["']/,
+    "main.tsx must register exactly '/sw.js' (not a hashed or scoped path)",
+  );
+});
