@@ -11,6 +11,13 @@ export interface ModelInfo {
 
 export type ModelResolver = (ref: string) => Model<any>;
 
+export interface ResolveOptions {
+  /** Additional models to search BEFORE pi-ai's static catalog. */
+  overlay?: Model<any>[];
+  /** Static-catalog ids the user's Copilot account doesn't entitle. */
+  prunedIds?: Set<string>;
+}
+
 /**
  * Apply the OAuth provider's modifyModels hook (e.g. Copilot rewrites
  * baseUrl for individual vs business endpoints) when credentials exist.
@@ -23,11 +30,29 @@ function applyOAuthModelOverrides(model: Model<any>, oauth?: PiAuthStore): Model
   return provider.modifyModels([model], creds)[0] ?? model;
 }
 
-export function resolveModel(ref: string, oauth?: PiAuthStore): Model<any> {
+export function resolveModel(
+  ref: string,
+  oauth?: PiAuthStore,
+  opts?: ResolveOptions,
+): Model<any> {
   const slash = ref.indexOf("/");
   if (slash <= 0) throw new Error(`Model ref must be "provider/modelId", got: ${ref}`);
   const provider = ref.slice(0, slash);
   const modelId = ref.slice(slash + 1);
+
+  // Pruned check fires before static lookup so the error is clearer than
+  // "Unknown model:" for the raptor-mini ghost case.
+  if (provider === "github-copilot" && opts?.prunedIds?.has(modelId)) {
+    throw new Error(
+      `Model ${ref} is in pi-ai's catalog but not in your Copilot entitlement. ` +
+        `Restart ytsejam if you were recently enrolled, or pick a different model.`,
+    );
+  }
+
+  // Overlay first (live-only ids and their inherited metadata).
+  const overlayMatch = opts?.overlay?.find((m) => m.provider === provider && m.id === modelId);
+  if (overlayMatch) return applyOAuthModelOverrides(overlayMatch, oauth);
+
   const providers = getProviders() as string[];
   const model = providers.includes(provider)
     ? (getModels(provider as any) as Model<any>[]).find((m) => m.id === modelId)
