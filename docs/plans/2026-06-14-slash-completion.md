@@ -818,8 +818,9 @@ test("Chat imports the slash-menu hook and overlay", () => {
 });
 
 test("Chat fetches the skills list once via client.listSkills", () => {
-  // Loaded into state on mount; the overlay reads from this.
-  assert.match(src, /client\.listSkills\s*\(\s*\)/);
+  // Loaded into state on mount; the overlay reads from this. Allow chained
+  // multi-line style: `client\n  .listSkills()`.
+  assert.match(src, /client\s*\.\s*listSkills\s*\(\s*\)/);
   // The catch handler exists so a failed fetch silently degrades (overlay just stays empty).
   assert.match(src, /\.catch\(/);
 });
@@ -830,7 +831,9 @@ test("Chat invokes useSlashMenu(draft, skills)", () => {
 
 test("Chat renders <SlashOverlay/> guarded on slash.open", () => {
   // The overlay only renders when the menu is open — keeps the DOM clean.
-  assert.match(src, /slash\.open\s*&&\s*<SlashOverlay/);
+  // Allow an optional `(` and whitespace between `&&` and `<SlashOverlay`
+  // because the standard React idiom is `{slash.open && (\n  <SlashOverlay`.
+  assert.match(src, /slash\.open\s*&&\s*\(?\s*<SlashOverlay/);
 });
 
 test("Chat passes the slash menu state into SlashOverlay", () => {
