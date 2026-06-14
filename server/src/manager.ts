@@ -161,6 +161,7 @@ export class AgentManager {
       preview: "",
       unread: false,
       archived: this.opts.isArchived?.(metadata.id) ?? false,
+      approvalMode: "yolo",
     };
     this.opts.indexer.upsertSession(row);
     this.open.set(metadata.id, this.wire(metadata, session, model));
@@ -816,6 +817,7 @@ export class AgentManager {
           preview,
           unread: false,
           archived: this.opts.isArchived?.(metadata.id) ?? false,
+          approvalMode: "yolo",
         });
       } catch (err) {
         console.error(`failed to index session ${metadata.path}`, err);

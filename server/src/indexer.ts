@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { TaskRow, TaskStatus } from "./tasks.ts";
 import type { ScheduleRow } from "./schedules.ts";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export interface SessionRow {
   id: string;
@@ -13,6 +13,7 @@ export interface SessionRow {
   preview: string;
   unread: boolean;
   archived: boolean;
+  approvalMode: "yolo" | "ask";
 }
 
 type SqliteInteger = number | bigint;
@@ -26,6 +27,7 @@ interface SessionDbRow {
   preview: string;
   unread: SqliteInteger;
   archived: SqliteInteger;
+  approval_mode: "yolo" | "ask";
 }
 
 interface TaskDbRow {
@@ -141,7 +143,9 @@ export class Indexer {
         updated_at TEXT NOT NULL,
         preview TEXT NOT NULL DEFAULT '',
         unread INTEGER NOT NULL DEFAULT 0,
-        archived INTEGER NOT NULL DEFAULT 0
+        archived INTEGER NOT NULL DEFAULT 0,
+        approval_mode TEXT NOT NULL DEFAULT 'yolo',
+        CHECK(approval_mode IN ('yolo', 'ask'))
       );
       CREATE INDEX sessions_updated ON sessions(updated_at DESC);
       CREATE TABLE tasks (
@@ -181,11 +185,12 @@ export class Indexer {
   upsertSession(row: SessionRow): void {
     this.db
       .prepare(
-        `INSERT INTO sessions (id, path, title, created_at, updated_at, preview, unread, archived)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sessions (id, path, title, created_at, updated_at, preview, unread, archived, approval_mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET path=excluded.path, title=excluded.title,
            created_at=excluded.created_at, updated_at=excluded.updated_at,
-           preview=excluded.preview, unread=excluded.unread, archived=excluded.archived`,
+           preview=excluded.preview, unread=excluded.unread, archived=excluded.archived,
+           approval_mode=excluded.approval_mode`,
       )
       .run(
         row.id,
@@ -196,6 +201,7 @@ export class Indexer {
         row.preview,
         row.unread ? 1 : 0,
         row.archived ? 1 : 0,
+        row.approvalMode,
       );
   }
 
@@ -361,6 +367,7 @@ export class Indexer {
       preview: r.preview,
       unread: Number(r.unread) === 1,
       archived: Number(r.archived) === 1,
+      approvalMode: r.approval_mode,
     };
   }
 }
