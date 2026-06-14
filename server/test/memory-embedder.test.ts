@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CachedEmbedder, HashEmbedder } from "ltm";
-import { createLtmEmbedder, type AuthStoreLike } from "../src/memory/embedder.ts";
+import {
+  createLtmEmbedder,
+  parseLtmEmbedderMode,
+  type AuthStoreLike,
+} from "../src/memory/embedder.ts";
 
 function cacheDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ytsejam-ltm-embedder-cache-"));
@@ -29,6 +33,38 @@ function cachedInternals(embedder: unknown): { inner: { dimension: number }; nam
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("parseLtmEmbedderMode", () => {
+  it("defaults undefined input to auto", () => {
+    expect(parseLtmEmbedderMode(undefined)).toBe("auto");
+  });
+
+  it("rejects empty string input", () => {
+    expect(() => parseLtmEmbedderMode("")).toThrow();
+  });
+
+  it("lowercases AUTO to auto", () => {
+    expect(parseLtmEmbedderMode("AUTO")).toBe("auto");
+  });
+
+  it("lowercases Copilot to copilot", () => {
+    expect(parseLtmEmbedderMode("Copilot")).toBe("copilot");
+  });
+
+  it("accepts ollama as-is", () => {
+    expect(parseLtmEmbedderMode("ollama")).toBe("ollama");
+  });
+
+  it("accepts hash as-is", () => {
+    expect(parseLtmEmbedderMode("hash")).toBe("hash");
+  });
+
+  it("rejects invalid values with the env var name and valid values", () => {
+    expect(() => parseLtmEmbedderMode("foo")).toThrow(
+      /YTSEJAM_LTM_EMBEDDER=.*auto.*copilot.*ollama.*hash/,
+    );
+  });
 });
 
 describe("runtime LTM embedder factory", () => {
@@ -112,6 +148,37 @@ describe("runtime LTM embedder factory", () => {
     expect(result.label).toBe("ollama:nomic-embed-text:latest");
     expect(result.dimension).toBe(768);
     expect(result.embedder).toBeInstanceOf(CachedEmbedder);
+  });
+
+  it("warns and falls through to Ollama in auto mode when Copilot credentials exist but the probe fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetch = vi.fn(async (url: string | URL) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("api.enterprise.githubcopilot.com")) {
+        return new Response(JSON.stringify({ error: "probe failed" }), { status: 500 });
+      }
+      if (requestUrl.includes("localhost:11434")) {
+        return new Response(JSON.stringify({ embeddings: [vector(768)] }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch to ${requestUrl}`);
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await createLtmEmbedder(authStore(true, "valid-key"), {
+      mode: "auto",
+      cacheDir: cacheDir(),
+    });
+
+    expect(result.label).toBe("ollama:nomic-embed-text:latest");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Copilot creds present but probe failed"));
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("api.enterprise.githubcopilot.com"),
+      expect.anything(),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("localhost:11434"),
+      expect.anything(),
+    );
   });
 
   it("falls back to HashEmbedder in auto mode when neither Copilot nor Ollama is available and logs a warning", async () => {
