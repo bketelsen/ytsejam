@@ -232,7 +232,7 @@ describe("memory consolidated PR-2a", () => {
     await seed("personal/action-items.md", Array.from({ length: 12 }, () => "- [x] done thing").concat([`- [ ] revive backups | added:${ymdDaysAgo(30)} | pri:high`, `- [ ] write doc | added:${ymdDaysAgo(3)}`]).join("\n") + "\n");
     await seed("hot-memory.md", "line\n".repeat(60));
     await seed("personal/hot-memory.md", "line\n".repeat(60));
-    await seed("cog-meta/patterns.md", "x".repeat(6000) + "\n");
+    await seed("cog-meta/patterns.md", "x".repeat(9000) + "\n");
     await seed("cog-meta/improvements.md", Array.from({ length: 15 }, () => "- [x] shipped thing").join("\n") + "\n");
     const r = await housekeepingScan();
     expect(r.thresholds.completed_actions_over_cap[0]).toMatchObject({ path: "personal/action-items.md", completed: 12, cap: 10 });
