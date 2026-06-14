@@ -62,7 +62,7 @@ let embedder: Embedder | undefined;
 if (semantic) {
   try {
     const local = await LocalEmbedder.create();
-    embedder = new CachedEmbedder(local, path.join(workDir, "embed-cache"), local.modelName);
+    embedder = new CachedEmbedder(local, path.join(workDir, "embed-cache"), "local:" + local.modelName);
   } catch (error) {
     console.error((error as Error).message);
     process.exit(2);
@@ -73,7 +73,7 @@ if (semantic) {
       model: argValue("ollama-model") ?? "nomic-embed-text:latest",
       baseUrl: argValue("ollama-url") ?? process.env.OLLAMA_BASE_URL,
     });
-    embedder = new CachedEmbedder(remote, path.join(workDir, "embed-cache"), remote.modelName);
+    embedder = new CachedEmbedder(remote, path.join(workDir, "embed-cache"), "ollama:" + remote.modelName);
   } catch (error) {
     console.error((error as Error).message);
     process.exit(2);

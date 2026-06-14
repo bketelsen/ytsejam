@@ -11,7 +11,7 @@
  * Compose with CachedEmbedder so re-runs cost nothing:
  *
  *   const ollama = await OllamaEmbedder.create({ model: "nomic-embed-text:latest" });
- *   const embedder = new CachedEmbedder(ollama, cacheDir, ollama.modelName);
+ *   const embedder = new CachedEmbedder(ollama, cacheDir, "ollama:" + ollama.modelName);
  */
 
 import type { Embedder } from "./embedder.ts";
