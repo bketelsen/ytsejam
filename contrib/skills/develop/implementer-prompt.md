@@ -68,8 +68,8 @@ questions), then end with:
 ## Patterns Discovered
 - <e.g. the `useAuth` hook silently swallows errors — callers must check the `error` field>
 
-## Lessons
-- <e.g. run the typecheck before tests — type errors cascade into confusing test failures>
+## Surprises
+- <Factual oddities encountered, NOT pre-cooked advice. Examples: "the auto-commit cadence counter resets to 0 not decrements", "vitest discovers tests in /test not /tests", "patch-package needs `npm install` to run first or its binary isn't on PATH yet". One line each. If you write nothing here, that's fine — most tasks have no surprises. The main agent decides whether any of these become lessons; you don't synthesize rules.>
 
 ## Blockers
 - scope: project | <e.g. migration #0020 must land before semantic-search work can proceed>

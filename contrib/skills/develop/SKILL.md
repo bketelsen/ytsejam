@@ -54,11 +54,24 @@ For each task:
 ```
 1. BASE_SHA = `git -C /tmp/<branch> rev-parse HEAD`
 
+1.5. PRIOR LESSONS PRELOAD (cheap, ≤10s):
+     Identify the task's likely theme(s) from the task text — e.g. "test", "auth", "build",
+     "deploy", "ltm", "memory" — and `grep -l "^## " docs/agents/*.md` to find which theme
+     files exist. For each candidate theme, `cat docs/agents/<theme>.md` and extract any
+     entry whose TITLE mentions a noun appearing in the task description (subagent
+     parser, dedup hash, mutex, parser, etc.). Pass the matching entries verbatim into the
+     implementer's `## Context` section under a `### Prior lessons that may apply` heading.
+     If nothing matches, write `### Prior lessons that may apply: none found`. This is the
+     READ-side of the lessons skill — without it, the WRITE side is sediment.
+
 2. Delegate to a fresh implementer (you call `delegate`):
    → See implementer-prompt.md for the template.
-   → Provide: full task text, scene-setting context, the worktree path.
+   → Provide: full task text, scene-setting context (including the prior-lessons preload
+     from step 1.5), the worktree path.
    → The implementer commits-before-report and ends its report with the structured tail
-     (## Decisions / ## Patterns Discovered / ## Lessons / ## Blockers / ## Context for Continuation).
+     (## Decisions / ## Patterns Discovered / ## Surprises / ## Blockers / ## Context for Continuation).
+     Note: `## Surprises` replaces the old `## Lessons` — implementers report factual oddities,
+     not pre-cooked advice. Synthesis into rules is the `lessons` skill's job, not the implementer's.
 
 3. Implementer reports back. HEAD_SHA = `git -C /tmp/<branch> rev-parse HEAD`.
    Independently verify the branch actually advanced: `git -C /tmp/<branch> log BASE_SHA..HEAD_SHA --oneline`
