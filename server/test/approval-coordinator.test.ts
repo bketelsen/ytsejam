@@ -92,11 +92,94 @@ describe("ApprovalCoordinator", () => {
       });
       const p = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
       coord.resolve(req.approvalId, "approve");
+      expect(vi.getTimerCount()).toBe(0);
       vi.advanceTimersByTime(2000);
       await expect(p).resolves.toBe("approve");
       expect(resolutions).toEqual(["approve"]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("cancelSession clears timers for cancelled approvals", async () => {
+    vi.useFakeTimers();
+    try {
+      const coord = new ApprovalCoordinator({
+        timeoutMs: 60_000,
+        onRequest: noop,
+        onResolved: noop,
+      });
+      const p1 = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
+      const p2 = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
+      expect(vi.getTimerCount()).toBe(2);
+      coord.cancelSession("s1");
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(p1).resolves.toBe("deny");
+      await expect(p2).resolves.toBe("deny");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("cancelSession resilient to throwing onResolved (no stranded entries)", async () => {
+    let calls = 0;
+    const coord = new ApprovalCoordinator({
+      timeoutMs: 60_000,
+      onRequest: noop,
+      onResolved: () => {
+        calls++;
+        if (calls === 1) throw new Error("transport blew up");
+      },
+    });
+    const p1 = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
+    const p2 = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
+    expect(() => coord.cancelSession("s1")).not.toThrow();
+    await expect(p1).resolves.toBe("deny");
+    await expect(p2).resolves.toBe("deny");
+    expect(coord.list()).toEqual([]);
+  });
+
+  test("list() reflects pending entries and shrinks on resolve", async () => {
+    const requests: Array<{ approvalId: string }> = [];
+    const coord = new ApprovalCoordinator({
+      timeoutMs: 60_000,
+      onRequest: (r) => { requests.push(r); },
+      onResolved: noop,
+    });
+    expect(coord.list()).toEqual([]);
+    const p1 = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
+    expect(coord.list()).toEqual([{ approvalId: requests[0]!.approvalId, sessionId: "s1" }]);
+    const p2 = coord.request({ sessionId: "s2", toolName: "write", toolLabel: "Write", params: {} });
+    expect(coord.list()).toHaveLength(2);
+    coord.resolve(requests[0]!.approvalId, "approve");
+    await p1;
+    expect(coord.list()).toEqual([{ approvalId: requests[1]!.approvalId, sessionId: "s2" }]);
+    coord.resolve(requests[1]!.approvalId, "deny");
+    await p2;
+    expect(coord.list()).toEqual([]);
+  });
+
+  test("onRequest receives full ApprovalRequest shape with UUID approvalId", () => {
+    let req!: import("../src/approval/coordinator.ts").ApprovalRequest;
+    const coord = new ApprovalCoordinator({
+      timeoutMs: 60_000,
+      onRequest: (r) => { req = r; },
+      onResolved: noop,
+    });
+    coord.request({
+      sessionId: "session-xyz",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: { command: "echo hi" },
+    });
+    expect(req).toEqual({
+      approvalId: expect.any(String),
+      sessionId: "session-xyz",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: { command: "echo hi" },
+    });
+    // UUID v4 shape
+    expect(req.approvalId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });

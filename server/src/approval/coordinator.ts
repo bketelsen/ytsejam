@@ -43,6 +43,10 @@ export class ApprovalCoordinator {
    * Open an approval. Returns a promise that resolves with the eventual decision
    * (approve / deny / timeout). The transport must call `resolve` for approve/deny;
    * the coordinator itself triggers timeout.
+   *
+   * If `onRequest` throws, the returned promise rejects with that error AND the
+   * pending entry remains registered until the timeout fires. Callers (transport
+   * layer) must ensure `onRequest` does not throw, or wrap it themselves.
    */
   request(input: Omit<ApprovalRequest, "approvalId">): Promise<ApprovalDecision> {
     const approvalId = randomUUID();
@@ -75,7 +79,12 @@ export class ApprovalCoordinator {
       if (entry.sessionId !== sessionId) continue;
       clearTimeout(entry.timer);
       this.pending.delete(id);
-      this.onResolved(id, decision);
+      try {
+        this.onResolved(id, decision);
+      } catch {
+        // Trusted callback failing must not strand sibling approvals.
+        // Swallow to guarantee atomicity of the cancel sweep.
+      }
       entry.resolve(decision);
     }
   }
