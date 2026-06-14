@@ -13,3 +13,4 @@ import "./sw.test.mjs";
 import "./api-skills.test.mjs";
 
 import "./slash-menu.test.mjs";
+import "./slash-overlay.test.mjs";
