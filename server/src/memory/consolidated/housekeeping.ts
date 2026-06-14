@@ -10,14 +10,15 @@ const caps = {
   completed_actions: 10,
   improvements_done: 10,
   hot_memory_lines: 50,
-  patterns_lines: 70,
-  // TODO(tiered-patterns): temporarily raised 5500→8000 (2026-06-14) to
-  // accommodate calibrated multi-failure-mode rules accumulated since the
-  // ytsejam supernova. Structural fix is the tiered-patterns split (global
-  // <4KB + per-domain <2KB each loaded on activation) tracked as the top
-  // wishlist item in cog-meta/improvements.md. Restore to 5500 (or a new
-  // global-tier cap) when tiered patterns ships.
-  patterns_bytes: 8000,
+  // Global tier: cross-project rules in cog-meta/patterns.md (always loaded
+  // via session-brief). Tightened from the band-aid 8000B back to a real
+  // cap now that ytsejam-specific rules have moved to per-domain tier.
+  global_patterns_lines: 70,
+  global_patterns_bytes: 6000,
+  // Per-domain tier: project-specific rules in {domain-path}/patterns.md
+  // (loaded only when the domain skill activates).
+  domain_patterns_lines: 40,
+  domain_patterns_bytes: 3500,
   dormant_domain_days: 28,
   stale_action_item_days: 14,
   changed_recently_fallback_days: 7,
@@ -37,6 +38,7 @@ function emptyThresholds(): HousekeepingThresholds {
     improvements_implemented_over_cap: [],
     hot_memory_over_cap: [],
     patterns_over_cap: [],
+    domain_patterns_over_cap: [],
   };
 }
 
@@ -79,7 +81,8 @@ export async function housekeepingScan(params: object = {}): Promise<Housekeepin
   }
   await scanHotMemory("hot-memory.md", result);
   await scanImprovements("cog-meta/improvements.md", result);
-  await scanPatterns("cog-meta/patterns.md", result);
+  await scanGlobalPatterns("cog-meta/patterns.md", result);
+  await scanDomainPatterns(result, all);
 
   result.thresholds.observations_over_cap.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   result.thresholds.completed_actions_over_cap.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
@@ -159,12 +162,53 @@ async function scanImprovements(path: string, result: HousekeepingScan): Promise
   if (implemented > caps.improvements_done) result.thresholds.improvements_implemented_over_cap.push({ path, implemented, cap: caps.improvements_done });
 }
 
-async function scanPatterns(path: string, result: HousekeepingScan): Promise<void> {
+async function scanGlobalPatterns(path: string, result: HousekeepingScan): Promise<void> {
   const content = await readOptional(path);
   if (content == null) return;
   const lines = countLines(content);
   const size = Buffer.byteLength(content);
-  if (lines > caps.patterns_lines || size > caps.patterns_bytes) {
-    result.thresholds.patterns_over_cap.push({ path, lines, size, lines_cap: caps.patterns_lines, size_cap: caps.patterns_bytes });
+  if (lines > caps.global_patterns_lines || size > caps.global_patterns_bytes) {
+    result.thresholds.patterns_over_cap.push({
+      path,
+      lines,
+      size,
+      lines_cap: caps.global_patterns_lines,
+      size_cap: caps.global_patterns_bytes,
+    });
   }
+}
+
+async function scanDomainPatterns(
+  result: HousekeepingScan,
+  all: { per_file: { path: string; size: number }[] },
+): Promise<void> {
+  // Per-domain patterns: any {path}/patterns.md anywhere under the memory
+  // root EXCEPT cog-meta/ (the global tier, scanned separately) and
+  // glacier/** (read-only archives). Hardcoded exclusions rather than
+  // intersecting with domains.yml so orphaned files (e.g. patterns.md left
+  // behind by a removed domain) are still surfaced.
+  const candidates = all.per_file.filter((f) => {
+    if (!f.path.endsWith("/patterns.md")) return false;
+    if (f.path === "cog-meta/patterns.md") return false;
+    if (f.path.startsWith("glacier/")) return false;
+    return true;
+  });
+  for (const f of candidates) {
+    const content = await readOptional(f.path);
+    if (content == null) continue;
+    const lines = countLines(content);
+    const size = Buffer.byteLength(content);
+    if (lines > caps.domain_patterns_lines || size > caps.domain_patterns_bytes) {
+      result.thresholds.domain_patterns_over_cap.push({
+        path: f.path,
+        lines,
+        size,
+        lines_cap: caps.domain_patterns_lines,
+        size_cap: caps.domain_patterns_bytes,
+      });
+    }
+  }
+  result.thresholds.domain_patterns_over_cap.sort(
+    (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+  );
 }

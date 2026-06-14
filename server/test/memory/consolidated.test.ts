@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { domainSummary, housekeepingScan, openActions, recentObservations, sessionBrief } from "../../src/memory/index.ts";
+import type { HousekeepingCaps, HousekeepingThresholds } from "../../src/memory/types.ts";
 
 let root = "";
 beforeEach(async () => {
@@ -228,11 +229,68 @@ describe("memory consolidated PR-2a", () => {
     expect(r.dormant_domains.find((d) => d.id === "work")?.last_observation).toBe(ymdDaysAgo(60));
   });
 
+  test("HousekeepingCaps shape includes tiered patterns caps", () => {
+    // Type-only assertion via const literal — fails tsc if shape is wrong.
+    const _capsShape: Pick<HousekeepingCaps,
+      "global_patterns_lines" | "global_patterns_bytes" |
+      "domain_patterns_lines" | "domain_patterns_bytes"> = {
+      global_patterns_lines: 70,
+      global_patterns_bytes: 6000,
+      domain_patterns_lines: 40,
+      domain_patterns_bytes: 3500,
+    };
+    expect(_capsShape.global_patterns_bytes).toBe(6000);
+  });
+
+  test("HousekeepingThresholds shape includes domain_patterns_over_cap", () => {
+    const _t: Pick<HousekeepingThresholds, "domain_patterns_over_cap"> = {
+      domain_patterns_over_cap: [],
+    };
+    expect(_t.domain_patterns_over_cap).toEqual([]);
+  });
+
+  test("housekeepingScan flags per-domain patterns.md over byte cap", async () => {
+    await seed("cog-meta/patterns.md", "ok\n");
+    await seed("projects/ytsejam/patterns.md", "y".repeat(5000) + "\n");
+    const r = await housekeepingScan();
+    expect(r.thresholds.domain_patterns_over_cap).toHaveLength(1);
+    expect(r.thresholds.domain_patterns_over_cap[0]).toMatchObject({
+      path: "projects/ytsejam/patterns.md",
+      size_cap: 3500,
+    });
+    expect(r.thresholds.domain_patterns_over_cap[0].size).toBeGreaterThan(3500);
+  });
+
+  test("housekeepingScan flags per-domain patterns.md over line cap", async () => {
+    await seed("cog-meta/patterns.md", "ok\n");
+    await seed("personal/patterns.md", "line\n".repeat(50));
+    const r = await housekeepingScan();
+    expect(r.thresholds.domain_patterns_over_cap).toHaveLength(1);
+    expect(r.thresholds.domain_patterns_over_cap[0]).toMatchObject({
+      path: "personal/patterns.md",
+      lines_cap: 40,
+    });
+    expect(r.thresholds.domain_patterns_over_cap[0].lines).toBeGreaterThan(40);
+  });
+
+  test("housekeepingScan does NOT flag cog-meta/patterns.md or glacier/**/patterns.md as domain patterns", async () => {
+    await seed("cog-meta/patterns.md", "x".repeat(100));
+    await seed("glacier/projects/foo/patterns.md", "y".repeat(10000));  // over any cap, but should be skipped
+    const r = await housekeepingScan();
+    expect(r.thresholds.domain_patterns_over_cap).toEqual([]);
+  });
+
+  test("housekeepingScan returns empty domain_patterns_over_cap when no domain patterns files exist", async () => {
+    await seed("cog-meta/patterns.md", "ok\n");
+    const r = await housekeepingScan();
+    expect(r.thresholds.domain_patterns_over_cap).toEqual([]);
+  });
+
   test("housekeepingScan action completed cap, stale items, hot-memory, patterns, and improvements", async () => {
     await seed("personal/action-items.md", Array.from({ length: 12 }, () => "- [x] done thing").concat([`- [ ] revive backups | added:${ymdDaysAgo(30)} | pri:high`, `- [ ] write doc | added:${ymdDaysAgo(3)}`]).join("\n") + "\n");
     await seed("hot-memory.md", "line\n".repeat(60));
     await seed("personal/hot-memory.md", "line\n".repeat(60));
-    await seed("cog-meta/patterns.md", "x".repeat(9000) + "\n");
+    await seed("cog-meta/patterns.md", "x".repeat(7000) + "\n");
     await seed("cog-meta/improvements.md", Array.from({ length: 15 }, () => "- [x] shipped thing").join("\n") + "\n");
     const r = await housekeepingScan();
     expect(r.thresholds.completed_actions_over_cap[0]).toMatchObject({ path: "personal/action-items.md", completed: 12, cap: 10 });
