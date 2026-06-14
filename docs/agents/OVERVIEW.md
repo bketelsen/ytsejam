@@ -57,7 +57,7 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   (`npm run ltm -- replay`); requires the server stopped because LTM is single-writer. See
   [`memory-bridge.md`](memory-bridge.md) § CLI.
 - **`config.ts`** — `loadConfig()` reads env into a typed `Config`. The only required var is
-  `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout; expands `~` in the cog socket path.
+  `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout.
 - **`server.ts`** — `createApp()` builds the Hono app: bearer-token auth on `/api/*`, the REST routes
   (sessions, messages, tasks, schedules, persona, models, cwd, archive, **memory health**), the
   `/api/ws` WebSocket (per-client session subscription + lightweight global liveness events), and
