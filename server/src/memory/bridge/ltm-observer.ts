@@ -8,9 +8,13 @@ export type ParsedObservation = {
 };
 
 // Mirrors the cog SSOT validator in server/src/memory/store/append.ts:7.
-// Tags are MANDATORY (non-empty bracket block); body is mandatory and non-empty.
+// Tags are MANDATORY: at least one [...] group is required. The block may be a
+// SINGLE bracketed group `[a, b]` (comma-separated), or a SEQUENCE of bracketed
+// groups `[a][b][c]` (multi-bracket, cumulative), or a mixed shape `[a, b][c]`.
+// All three forms are valid cog observation shapes used in practice. The body
+// after `:` is mandatory and non-empty.
 const OBSERVATION_LINE_RE =
-  /^-\s+(\d{4}-\d{2}-\d{2})\s+\[([^\]]+)\]\s*:\s*(.+?)\s*$/;
+  /^-\s+(\d{4}-\d{2}-\d{2})\s+((?:\[[^\]]+\])+)\s*:\s*(.+?)\s*$/;
 
 export function parseObservationLine(line: string): ParsedObservation | null {
   const m = OBSERVATION_LINE_RE.exec(line);
@@ -23,9 +27,12 @@ export function parseObservationLine(line: string): ParsedObservation | null {
   if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) {
     return null;
   }
-  const tags = tagBlock
-    .split(",")
-    .map((t) => t.trim())
+  // Split the captured tag block into individual bracketed groups, then
+  // comma-split within each group. Both forms (and the mixed form) flatten
+  // to one ordered tag list. TODO: keep this duplicate wire-format parser in
+  // sync with consolidated/observations-parser.ts until a shared helper exists.
+  const tags = Array.from(tagBlock.matchAll(/\[([^\]]+)\]/g))
+    .flatMap((m) => m[1]!.split(",").map((t) => t.trim()))
     .filter((t) => t.length > 0);
   if (tags.length === 0) return null; // [   ] or [, ,] yields zero tags -> invalid per cog SSOT
   return {
