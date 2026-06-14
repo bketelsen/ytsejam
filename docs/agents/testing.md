@@ -126,3 +126,9 @@ _Added: 2026-06-13 | Task: Task 6 of 9 for PR 1 of the cog-LTM bridge roadmap_
 When migrating a call site from a single-store write to a multi-store write (e.g. cog observation → cog SSOT + best-effort LTM mirror in `server/src/tools/cog.ts`), the migration must preserve PER-INVOCATION atomicity: if the original `append("observations.md", text)` accepted multi-line `text` and committed as one append, the migrated path must PARSE all lines first, THEN write all lines through `recordObservation()` — never parse-then-write per line, which produces partial writes on the first parse error and leaves the cog SSOT inconsistent with what LTM sees. Tests must drive the multi-line case through the full migrated path, not just single-line happy paths. Generalizes to any "fanout from N writes to N×M sub-writes" refactor: the outer invariant (atomicity, dedup, ordering) must survive the fanout.
 
 _Added: 2026-06-13 | Task: Task 5 of 9 for PR 1 of the cog-LTM bridge roadmap_
+
+## Canonical Test Helpers and Clean Git Commits
+
+When writing server tests, always use the canonical `setupFaux()` and `makeManager()` helpers from `server/test/helpers.ts` to generate `AppDeps` instead of creating minimal custom stubs with `as any` casts. Minimal stubs couple tests tightly to `createApp`'s exact initialization footprint, causing cryptic failures if new dependency methods are touched later. Additionally, ensure proper Git hygiene by squashing WIP commits into a single clean semantic commit containing all code changes, avoiding empty semantic commits at HEAD. Finally, keep route definitions logically grouped by resource in `server/src/server.ts` so endpoints do not arbitrarily interweave.
+
+_Added: 2026-06-14 | Task: Task 1 — Server: expose SkillsStore on AppDeps and add GE_
