@@ -123,12 +123,27 @@ The `SchedulerService` is late-bound the same way the `TaskManager` is.
 Tools over the in-process memory module.
 
 File-style ops: `cog_read`, `cog_write`, `cog_append`, `cog_patch`, `cog_outline`, `cog_search`,
-`cog_list`, `cog_move`. Plus `cog_rpc`, a single tool that fans out to a fixed allow-list of
-consolidated methods (`session_brief`, `domain_summary`, `housekeeping_scan`, `open_actions`, audits,
-index computations, `domains.list/get`, `stats`, `git`, `health`, …). The method list is the
-`RPC_METHODS` const in `cog.ts`; file operations are deliberately excluded from `cog_rpc` so they go
-through their dedicated tools. These names mirror the cog skill vocabulary so skill playbooks port
-verbatim.
+`cog_list`, `cog_move`. Plus `recall`, the unified cog-+-LTM retrieval tool (see below), and
+`cog_rpc`, a single tool that fans out to a fixed allow-list of consolidated methods
+(`session_brief`, `domain_summary`, `housekeeping_scan`, `open_actions`, `recent_observations`,
+audits, index computations, `domains.list/get`, `stats`, `git`, `health`, `reconcile_now`, …).
+The method list is the `RPC_METHODS` const in `cog.ts`; file operations are deliberately excluded
+from `cog_rpc` so they go through their dedicated tools. These names mirror the cog skill
+vocabulary so skill playbooks port verbatim.
+
+**`cog_append` to a `*/observations.md` path** is intercepted: each line is parsed, then
+`memory.recordObservation()` is called per line, which writes the cog SSOT line **and** best-
+effort mirrors it to LTM as a `kind: "observation"` record. All lines are validated before any
+write so a malformed line in the middle of a batch aborts before partial cog/LTM divergence.
+See [`memory-bridge.md`](memory-bridge.md).
+
+**`cog_rpc({method:"reconcile_now"})`** force-ticks the LTM reconciler. Useful right after a bulk
+external edit to `observations.md` files (so the back-fill doesn't wait the full
+`LTM_RECONCILE_INTERVAL_MS` window).
+
+| Tool | Notes |
+| --- | --- |
+| `recall` | **Unified recall across cog full-text search and LTM semantic retrieval.** Single `query` arg; returns interleaved hits from both substrates (top 5 each, alternating `cog[0], ltm[0], cog[1], ltm[1], …`), deduped by origin (cog wins on collision). Each hit is labeled `from: "cog" \| "ltm"`. Use this rather than `cog_search` when looking up "what do I know about X" — past conversations consolidated into LTM only surface here. See [`memory-bridge.md`](memory-bridge.md) § Recall. |
 
 ## Adding a tool — checklist
 

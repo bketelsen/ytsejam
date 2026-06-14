@@ -39,7 +39,9 @@ relative to that directory.
 | `skills/<name>.md` or `skills/<name>/SKILL.md` | **SSOT** | `SkillsStore` (`skills.ts`) | User/seeded skill playbooks. See [`skills.md`](skills.md). |
 | `workdirs/<sessionId>.jsonl` | **SSOT** | `WorkdirStore` (`workdirs.ts`) | Per-session working-directory events (latest-wins). |
 | `archived/<sessionId>.jsonl` | **SSOT** | `ArchiveStore` (`archive-store.ts`) | Per-session archive (soft-delete) flag events (latest-wins). |
-| `index.db`, `index.db-wal`, `index.db-shm` | **derived** | `Indexer` (`indexer.ts`) | sqlite query cache. Safe to delete; rebuilt on boot. WAL journal mode. |
+| `memory/` (git repo) | **SSOT** | `server/src/memory/store/` | The cog memory tree — markdown files (observations, hot-memory, entities, action items, …) under per-domain dirs. Auto-committed; see § Memory module. |
+| `ltm/` | **SSOT** (separate substrate) | `packages/ltm` (`MemorySystem`) | LTM episodic + semantic store (single-writer, file-locked). Override with `LTM_STORE_DIR`. See [`memory-bridge.md`](memory-bridge.md). |
+| `index.db`, `index.db-wal`, `index.db-shm` | **derived** | `Indexer` (`indexer.ts`) | sqlite query cache. Safe to delete; rebuilt on boot. WAL journal mode. Periodic `wal_checkpoint(TRUNCATE)` keeps the WAL from growing unboundedly. |
 
 Anything else under the data dir is an agent-created working directory (the `bash`/file tools
 default their cwd here when a session has no explicit workdir set). `deploy/migrate-data.sh` treats
@@ -133,3 +135,64 @@ runtime path; the `cog_*` tool names remain as the model-facing vocabulary.
 The memory store's on-disk format is unchanged from the folded service. See
 [`../../server/src/memory/README.md`](../../server/src/memory/README.md) for the public module
 surface and [`../memory/FORMAT.md`](../memory/FORMAT.md) for the on-disk format spec.
+
+### Internal shape (`server/src/memory/`)
+
+The module is intentionally narrow on the outside and structured on the inside:
+
+- `index.ts` — the **only** public surface. Re-exports every callable.
+- `types.ts` — shared types.
+- `store/` — primitive I/O (`read`/`write`/`append`/`patch`/`move`/`list`/`search`/`stats`/
+  `outline`/`walk`/`health`/`git`) plus the `auto-commit.ts` hook. Path validation and the
+  whole-file write allow-list live in `store/paths.ts`.
+- `domain/` — manifest loading, controller path validation, domain-id rejection.
+- `consolidated/` — RPC-equivalent envelopes (`sessionBrief`, `housekeepingScan`, audits, index
+  computations, summaries).
+- `bridge/` — the cog↔LTM bridge plumbing (`ltm-observer.ts` parser + content-addressed origin +
+  best-effort `mirrorToLtm`; `ltm-reconciler.ts` back-fill timer). See
+  [`memory-bridge.md`](memory-bridge.md).
+- `recall.ts` — unified cross-substrate recall used by the `recall` agent tool.
+
+A discipline grep (documented in the module README) keeps every cog-shaped literal contained inside
+`server/src/memory/`:
+
+```sh
+grep -rn "memory_root\|ytsejam/data/memory\|chapterhouse/memory" server/src | grep -v "^server/src/memory/"
+```
+
+That invariant preserves the "extract to npm package on day N+1" property — nothing outside the
+module reaches across the boundary.
+
+### Auto-commit cadence
+
+The memory store is a git repo and `server/src/memory/store/auto-commit.ts` is the hook that keeps
+it tidy. After every successful mutation (`write`/`append`/`patch`/`move`), `maybeAutoCommit()`
+bumps an in-process counter:
+
+- **Cadence commit:** every `AUTO_COMMIT_EVERY = 10` writes a commit `auto: 10 memory writes`. A
+  mutex coalesces concurrent bursts so N concurrent writes produce ⌈N/10⌉ commits, not N race-
+  induced attempts. The counter decrements (`pendingWrites -= n` in a `while`-drain loop), so
+  concurrent `+=1` increments arriving during an in-flight commit are not dropped.
+- **Startup flush:** the first call after process start runs `auto: startup flush (uncommitted from
+  previous session)` if it finds a **tracked** dirty file. Untracked-only dirt rides along with the
+  next cadence commit instead. The flush is skipped (with a warning) when an in-progress
+  merge/rebase/cherry-pick/revert/bisect is detected — those `.git/*` markers are checked via
+  `existsSync`, not by regexing `git status` (whose output doesn't contain them).
+- **Failures don't fail the write.** Commit errors log a `ytsejam memory auto-commit:` warning to
+  stderr; the underlying write still succeeds. The counter is *not* reset on failure so the next
+  write retries the commit.
+
+The counter is in-process only — it survives nothing across restarts; the startup-flush path is
+the only catch-up mechanism. There is no second daemon nor a cron; the cadence is purely a side
+effect of memory writes.
+
+### LTM substrate
+
+`packages/ltm/` is the second memory substrate (episodic + semantic, separate on-disk store under
+`<dataDir>/ltm/`). The server opens it at boot and wires it into the memory module via
+`memory.attachLtm()`; the `cog_*` tools still talk to cog SSOT, but `cog_append` to any
+`*/observations.md` path also mirrors into LTM, and the new `recall` tool queries both.
+
+LTM is **single-writer** — `MemorySystem.open()` takes an advisory file lock, so a CLI invocation
+(`npm run ltm -- replay`) requires the server to be stopped. The bridge wiring, reconciler, CLI,
+and recall semantics live in [`memory-bridge.md`](memory-bridge.md).
