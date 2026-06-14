@@ -26,14 +26,26 @@ import {
  * Compute the per-model reserve token budget.
  *
  * Invariant: after compaction, the next turn must fit one full-size model
- * output PLUS reasonable input. Formula: `max(model.maxTokens + 16k, 32k)`.
+ * output PLUS reasonable input. Formula: `max(model.maxTokens + 16k, 32k)`,
+ * capped at half the context window.
  *
  * The 16k cushion covers user message + tool calls + cache headers + slack.
  * The 32k floor protects small-output models (e.g. nova-2-lite has 4k output
  * but we still want >= 32k headroom on the input side of next turn).
+ *
+ * The `floor(contextWindow * 0.5)` cap protects small-context models (issue
+ * #75): without it, a model with `contextWindow < target` produces a
+ * negative budget (`contextWindow - reserve < 0`), which makes
+ * `shouldCompact()` fire on every turn regardless of actual prompt size.
+ * The cap guarantees a strictly-positive budget for any `contextWindow >= 2`.
+ * Reserve cannot exceed half the window because that would mean the
+ * post-compaction kept-set has less room than the headroom we reserved —
+ * incoherent. For production-sized models (cw=200k+) the cap is dormant.
  */
 export function computeReserveTokens(model: Model<any>): number {
-  return Math.max(model.maxTokens + 16_384, 32_768);
+  const target = Math.max(model.maxTokens + 16_384, 32_768);
+  const cap = Math.floor(model.contextWindow * 0.5);
+  return Math.min(target, cap);
 }
 
 /**
