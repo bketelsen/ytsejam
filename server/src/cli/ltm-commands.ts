@@ -15,9 +15,35 @@ export interface LtmCliOpts {
   rebuild?: boolean;
   /** For replay: with rebuild, tombstone orphan cog-origin observations. */
   prune?: boolean;
+  /** For replay: surface info-level reconciler logs to stderr. */
+  verbose?: boolean;
+  /** For replay: suppress reconciler logs. */
+  quiet?: boolean;
   /** Output sink (defaults to console). Test injection point. */
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
+}
+
+type Logger = (
+  level: "warn" | "info" | "error",
+  msg: string,
+  meta?: object,
+) => void;
+
+type LogLevel = "quiet" | "warn" | "info";
+
+function makeCliLogger(level: LogLevel, err: (line: string) => void): Logger {
+  return (lvl, msg, meta) => {
+    if (level === "quiet") return;
+    if (lvl === "info" && level === "warn") return;
+    if (lvl === "info" || lvl === "warn" || lvl === "error") {
+      const prefix = lvl === "info" ? "[ltm replay]" : `[ltm replay] [${lvl}]`;
+      const out = meta
+        ? `${prefix} ${msg} ${JSON.stringify(meta)}`
+        : `${prefix} ${msg}`;
+      err(out);
+    }
+  };
 }
 
 function resolveDirs(opts: LtmCliOpts): {
@@ -49,6 +75,15 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
   const err = opts.stderr ?? ((line) => console.error(line));
   const rebuild = opts.rebuild ?? false;
   let prune = opts.prune ?? false;
+  if (opts.verbose && opts.quiet) {
+    err("[ltm replay] --verbose and --quiet are mutually exclusive");
+    return 2;
+  }
+  const logLevel: LogLevel = opts.quiet
+    ? "quiet"
+    : opts.verbose
+      ? "info"
+      : "warn";
   if (prune && !rebuild) {
     err("[ltm replay] --prune requires --rebuild; ignoring prune");
     prune = false;
@@ -110,13 +145,10 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
       ltm,
       dataDir,
       // Surface warns and errors to stderr so the JSON stats aren't the only
-      // signal of trouble. Info-level (tick-complete summary) is intentionally
-      // suppressed because the CLI already prints stats explicitly.
-      logger: (level, msg, ctx) => {
-        if (level === "info") return;
-        const tail = ctx ? ` ${JSON.stringify(ctx)}` : "";
-        err(`[ltm replay] [${level}] ${msg}${tail}`);
-      },
+      // signal of trouble. Info-level (tick-complete summary) remains suppressed
+      // by default because the CLI already prints stats explicitly; --verbose
+      // sends info to stderr too so JSON on stdout stays clean.
+      logger: makeCliLogger(logLevel, err),
     });
     const stats = await reconciler.reconcile({
       force: opts.force ?? false,

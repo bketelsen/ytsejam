@@ -4,7 +4,7 @@ const USAGE = `\
 ytsejam CLI
 
 Usage:
-  ytsejam ltm replay [--force] [--rebuild] [--prune]
+  ytsejam ltm replay [--force] [--rebuild] [--prune] [--verbose|--quiet]
                                   Open LTM, run one reconcile pass, print JSON stats.
   ytsejam ltm health              Print LTM bridge health (one-off tick).
 
@@ -53,7 +53,15 @@ export async function runCli(argv: string[]): Promise<number | null> {
     const force = rest.includes("--force");
     const rebuild = rest.includes("--rebuild");
     const prune = rest.includes("--prune");
-    return ltmReplay({ force, rebuild, prune });
+    const verbose = rest.includes("--verbose");
+    const quiet = rest.includes("--quiet");
+    return ltmReplay({
+      force,
+      rebuild,
+      prune,
+      ...(verbose ? { verbose } : {}),
+      ...(quiet ? { quiet } : {}),
+    });
   }
 
   if (sub === "health") {
