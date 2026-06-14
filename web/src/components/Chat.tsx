@@ -12,10 +12,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { client, getToken, setToken } from "@/lib/api";
-import type { ChatMessage, TaskRow } from "@/lib/types";
+import type { ChatMessage, SkillSummary, TaskRow } from "@/lib/types";
 import { Message } from "./Message";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { TaskTranscriptDialog } from "./TaskCard";
+import { SlashOverlay } from "./SlashOverlay";
+import { useSlashMenu } from "./useSlashMenu";
 
 export function Chat({
   sessionId,
@@ -46,6 +48,23 @@ export function Chat({
   const bottomRef = useRef<HTMLDivElement>(null);
   const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const [cwdEditorOpen, setCwdEditorOpen] = useState(false);
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  useEffect(() => {
+    let alive = true;
+    client
+      .listSkills()
+      .then((r) => {
+        if (alive) setSkills(r.skills);
+      })
+      .catch(() => {
+        /* overlay is opt-in; silently degrade on auth/network */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const slash = useSlashMenu(draft, skills);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -122,19 +141,85 @@ export function Chat({
       </div>
       <div className="border-t border-border bg-background pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
         <div className="mx-auto flex max-w-4xl flex-col gap-2 px-3">
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void submit();
+          <div className="relative">
+            {slash.open && (
+              <SlashOverlay
+                items={slash.items}
+                activeIndex={slash.activeIndex}
+                onSelect={(name) => setDraft(slash.accept(name))}
+                onActiveChange={slash.setActiveIndex}
+              />
+            )}
+            <Textarea
+              value={draft}
+              role="combobox"
+              aria-haspopup="listbox"
+              aria-expanded={slash.open}
+              aria-controls={slash.open ? "slash-overlay" : undefined}
+              aria-activedescendant={
+                slash.open && slash.items.length > 0
+                  ? `slash-option-${slash.activeIndex}`
+                  : undefined
               }
-            }}
-            placeholder={running ? "Assistant is working — messages will steer it" : "Message…"}
-            rows={2}
-            className="w-full resize-none"
-          />
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (slash.open) {
+                  if (e.nativeEvent.isComposing) return;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    slash.setActiveIndex(
+                      (slash.activeIndex + 1) %
+                        Math.max(slash.items.length, 1),
+                    );
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    slash.setActiveIndex(
+                      (slash.activeIndex - 1 + slash.items.length) %
+                        Math.max(slash.items.length, 1),
+                    );
+                    return;
+                  }
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    slash.items.length > 0
+                  ) {
+                    e.preventDefault();
+                    setDraft(
+                      slash.accept(slash.items[slash.activeIndex].skill.name),
+                    );
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    // Close by appending a space — slash.open is derived from
+                    // draft and goes false once any whitespace appears. The
+                    // visible draft becomes "/foo " which is harmless. The
+                    // pure-derivation design (see Task 3) deliberately has no
+                    // dismiss-flag — open state is a pure function of draft.
+                    setDraft(draft + " ");
+                    return;
+                  }
+                }
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing
+                ) {
+                  e.preventDefault();
+                  void submit();
+                }
+              }}
+              placeholder={
+                running
+                  ? "Assistant is working — messages will steer it"
+                  : "Message…"
+              }
+              rows={2}
+              className="w-full resize-none"
+            />
+          </div>
           <div className="flex items-center justify-between gap-2">
             {/* Left side: a flex group that can grow as more composer
                 buttons (attachments, etc.) are added next to the working-dir

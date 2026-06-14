@@ -10,3 +10,9 @@ import "./health-status.test.mjs";
 import "./ws-watchdog.test.mjs";
 import "./pwa-manifest.test.mjs";
 import "./sw.test.mjs";
+import "./api-skills.test.mjs";
+
+import "./slash-menu.test.mjs";
+import "./slash-overlay.test.mjs";
+
+import "./chat-slash.test.mjs";
