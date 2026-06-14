@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { MemorySystem } from "ltm";
+import { HashEmbedder, MemorySystem, type Embedder } from "ltm";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,17 @@ import { computeOrigin } from "../../../src/memory/bridge/ltm-observer.ts";
 // (malformed-line warnings, tick errors) does not leak into the suite's
 // stderr. Tests that care about a specific warn can pass their own logger.
 const noopLogger = () => {};
+
+function markerEmbedder(dimension: number, marker: number): Embedder {
+  return {
+    dimension,
+    embed: async () => {
+      const v = new Array<number>(dimension).fill(0);
+      v[0] = marker;
+      return v;
+    },
+  };
+}
 
 describe("LtmReconciler", () => {
   let dataDir: string;
@@ -57,6 +68,63 @@ describe("LtmReconciler", () => {
     const second = await reconciler.reconcile({ force: true });
     expect(second.replayed).toBe(0);
     expect(second.skipped).toBe(1);
+  });
+
+  it("rebuild re-embeds already-mirrored observations under the current embedder", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: line one\n- 2026-06-11 [b]: line two\n",
+    );
+
+    ltm.close();
+    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: new HashEmbedder(3) });
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    const initial = await reconciler.reconcile({ force: true });
+    expect(initial.replayed).toBe(2);
+    expect(ltm.listEpisodic().map((r) => r.embedding?.length)).toEqual([3, 3]);
+
+    await reconciler.stop();
+    reconciler = null;
+    ltm.close();
+    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: markerEmbedder(5, 42) });
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+
+    const rebuilt = await reconciler.reconcile({ rebuild: true });
+    expect(rebuilt.rebuilt).toBe(2);
+    expect(rebuilt.replayed).toBe(0);
+    expect(rebuilt.skipped).toBe(0);
+    expect(rebuilt.errors).toBe(0);
+    expect(ltm.listEpisodic().map((r) => r.embedding)).toEqual([
+      [42, 0, 0, 0, 0],
+      [42, 0, 0, 0, 0],
+    ]);
+  });
+
+  it("force preserves already-mirrored observations without re-embedding", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: line one\n- 2026-06-11 [b]: line two\n",
+    );
+
+    ltm.close();
+    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: new HashEmbedder(3) });
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    await reconciler.reconcile({ force: true });
+
+    await reconciler.stop();
+    reconciler = null;
+    ltm.close();
+    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: markerEmbedder(5, 42) });
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+
+    const forced = await reconciler.reconcile({ force: true });
+    expect(forced.skipped).toBe(2);
+    expect(forced.rebuilt).toBe(0);
+    expect(forced.replayed).toBe(0);
+    expect(forced.errors).toBe(0);
+    expect(ltm.listEpisodic().map((r) => r.embedding?.length)).toEqual([3, 3]);
   });
 
   it("skips unchanged files via mtime cache when not forced", async () => {
@@ -299,7 +367,7 @@ describe("LtmReconciler", () => {
     expect(fresh.lastError?.message).not.toBe("tampered");
   });
 
-  it("emits exactly one INFO 'tick complete' summary per reconcile() with all five numeric fields", async () => {
+  it("emits exactly one INFO 'tick complete' summary per reconcile() with all six numeric fields", async () => {
     // Mix a good line and a malformed line so we can also assert that the
     // per-line WARN path (separate issue #100) is still emitted alongside
     // the new INFO rollup -- the summary line is additive, not a replacement.
@@ -323,6 +391,7 @@ describe("LtmReconciler", () => {
     expect(typeof meta.scannedFiles).toBe("number");
     expect(typeof meta.scannedLines).toBe("number");
     expect(typeof meta.replayed).toBe("number");
+    expect(typeof meta.rebuilt).toBe("number");
     expect(typeof meta.skipped).toBe("number");
     expect(typeof meta.errors).toBe("number");
 

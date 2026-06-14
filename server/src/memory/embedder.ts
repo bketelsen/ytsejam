@@ -130,7 +130,7 @@ export function checkDimensionMismatch(
   return (
     `dimension mismatch: existing index dimension=${existing}, ` +
     `new embedder dimension=${embedder.dimension}, embedder=${embedder.label}. ` +
-    `Run \`node server/src/index.ts ltm replay --force\` with the same embedder config ` +
+    `Run \`node server/src/index.ts ltm replay --rebuild\` with the same embedder config ` +
     `to rewrite existing memories under the new model (nothing is deleted), ` +
     `or set YTSEJAM_LTM_EMBEDDER to match the existing index dimension ` +
     `(e.g. \`YTSEJAM_LTM_EMBEDDER=hash\` for 256-dim).`

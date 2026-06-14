@@ -109,13 +109,15 @@ single-writer (`systemctl --user stop ytsejam`).
 
 ```sh
 # direct node invocation (no `bin` shipped this PR)
-node server/src/index.ts ltm replay           # one reconcile pass, mtime-respecting
-node server/src/index.ts ltm replay --force   # full re-scan, ignore mtime cache
-node server/src/index.ts ltm health           # print last-tick stats (CLI snapshot)
+node server/src/index.ts ltm replay             # one reconcile pass, mtime-respecting
+node server/src/index.ts ltm replay --force     # full re-scan, ignore mtime cache (still skips already-mirrored content)
+node server/src/index.ts ltm replay --rebuild   # full re-scan AND re-embed already-mirrored observations (use after embedder cutover)
+node server/src/index.ts ltm health             # print last-tick stats (CLI snapshot)
 
 # npm-script ergonomic wrapper from repo root
 npm run ltm -- replay
 npm run ltm -- replay --force
+npm run ltm -- replay --rebuild
 npm run ltm -- health
 ```
 

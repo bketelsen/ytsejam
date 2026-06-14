@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { join } from "node:path";
 import { MemorySystem } from "../src/api/memory-system.ts";
+import type { Embedder } from "../src/embedding/embedder.ts";
 import { retention } from "../src/episodic/decay.ts";
 import { DEFAULT_CONFIG } from "../src/types.ts";
 
@@ -15,8 +16,19 @@ function tmpDir(): string {
 
 const NOW = "2026-06-01T00:00:00.000Z";
 
-function openMem(dir = tmpDir()): MemorySystem {
-  return MemorySystem.open({ storeDir: dir, now: () => NOW });
+function openMem(dir = tmpDir(), embedder?: Embedder): MemorySystem {
+  return MemorySystem.open({ storeDir: dir, now: () => NOW, embedder });
+}
+
+function markerEmbedder(dimension: number, marker: number): Embedder {
+  return {
+    dimension,
+    embed: async () => {
+      const v = new Array<number>(dimension).fill(0);
+      v[0] = marker;
+      return v;
+    },
+  };
 }
 
 describe("recordObservation (SEAM 4)", () => {
@@ -42,6 +54,30 @@ describe("recordObservation (SEAM 4)", () => {
     const c = await mem.recordObservation({ text: "pi-harness ships v0.1", timestamp: "2026-05-02T00:00:00.000Z" });
     expect(c.id).not.toBe(a.id);
     mem.close();
+  });
+
+  it("upserts the same observation id with the current embedder's dimension", async () => {
+    const dir = tmpDir();
+    const args = {
+      text: "embedder cutover keeps the observation id stable",
+      timestamp: "2026-05-01T00:00:00.000Z",
+    };
+
+    let mem = openMem(dir, markerEmbedder(3, 1));
+    const before = await mem.recordObservation(args);
+    expect(before.embedding).toEqual([1, 0, 0]);
+    mem.close();
+
+    mem = openMem(dir, markerEmbedder(5, 2));
+    try {
+      const after = await mem.recordObservation(args);
+      expect(after.id).toBe(before.id);
+      expect(after.embedding).toEqual([2, 0, 0, 0, 0]);
+      expect(mem.listEpisodic().filter((r) => r.id === before.id)).toHaveLength(1);
+    } finally {
+      mem.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("feeds the semantic extractor with origin-based provenance", async () => {

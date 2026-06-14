@@ -93,7 +93,7 @@ describe("checkDimensionMismatch", () => {
     expect(message).toContain("existing index dimension=256");
     expect(message).toContain("new embedder dimension=1536");
     expect(message).toContain("embedder=copilot:text-embedding-3-small");
-    expect(message).toContain("ltm replay --force");
+    expect(message).toContain("ltm replay --rebuild");
     expect(message).toContain("nothing is deleted");
     expect(message).toContain("YTSEJAM_LTM_EMBEDDER=hash");
   });

@@ -8,7 +8,7 @@ import {
 } from "./ltm-observer.ts";
 import { skipMarkdownNoise } from "../consolidated/open-actions.ts";
 
-type Logger = (level: "warn" | "info", msg: string, meta?: object) => void;
+type Logger = (level: "warn" | "info" | "error", msg: string, meta?: object) => void;
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -29,6 +29,7 @@ export type ReconcileStats = {
   scannedFiles: number;
   scannedLines: number;
   replayed: number;
+  rebuilt: number;
   skipped: number;
   errors: number;
 };
@@ -143,12 +144,14 @@ export class LtmReconciler {
     await this.inFlight;
   }
 
-  async reconcile(opts?: { force?: boolean }): Promise<ReconcileStats> {
-    const force = opts?.force ?? false;
+  async reconcile(opts?: { force?: boolean; rebuild?: boolean }): Promise<ReconcileStats> {
+    const force = opts?.force || opts?.rebuild || false;
+    const rebuild = opts?.rebuild ?? false;
     const stats: ReconcileStats = {
       scannedFiles: 0,
       scannedLines: 0,
       replayed: 0,
+      rebuilt: 0,
       skipped: 0,
       errors: 0,
     };
@@ -191,7 +194,7 @@ export class LtmReconciler {
           if (skipMarkdownNoise(trimmed, state)) continue;
           if (!trimmed.startsWith("- ")) continue;
           stats.scannedLines++;
-          await this.processLine(file, trimmed, i, stats);
+          await this.processLine(file, trimmed, i, stats, rebuild);
         }
         this.mtimeCache.set(file, st.mtimeMs);
       } catch (err) {
@@ -204,6 +207,7 @@ export class LtmReconciler {
       scannedFiles: stats.scannedFiles,
       scannedLines: stats.scannedLines,
       replayed: stats.replayed,
+      rebuilt: stats.rebuilt,
       skipped: stats.skipped,
       errors: stats.errors,
     });
@@ -215,6 +219,7 @@ export class LtmReconciler {
     line: string,
     lineNum: number,
     stats: ReconcileStats,
+    rebuild: boolean,
   ): Promise<void> {
     const split = this.splitFilePath(file);
     if (!split) {
@@ -235,13 +240,15 @@ export class LtmReconciler {
       return;
     }
     const origin = computeOrigin(domainPath, filename, line);
-    if (this.ltm.hasObservation(origin)) {
+    const wasAlreadyMirrored = this.ltm.hasObservation(origin);
+    if (!rebuild && wasAlreadyMirrored) {
       stats.skipped++;
       return;
     }
     const result = await mirrorToLtm(this.ltm, parsed, origin);
     if (result.ok) {
-      stats.replayed++;
+      if (rebuild && wasAlreadyMirrored) stats.rebuilt++;
+      else stats.replayed++;
     } else {
       stats.errors++;
       this.logger("warn", `mirror failed`, {

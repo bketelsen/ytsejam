@@ -95,7 +95,7 @@ atomicity the prior `memory.append(path, multi_line_text)` had.
   process alive on its own) and kicks an immediate first tick so cold
   starts don't wait `intervalMs` for back-fill.
 - **`stop()`** clears the interval and awaits the in-flight tick.
-- **`reconcile({force?})`** is the per-tick workhorse and is also reachable
+- **`reconcile({force?, rebuild?})`** is the per-tick workhorse and is also reachable
   directly (the CLI calls it for a one-shot replay).
 - **`health()`** returns a deep-cloned `Health` snapshot; mutating the
   returned object cannot corrupt internal state.
@@ -153,7 +153,7 @@ are always degraded to cog-only memory, not process exit. Full design rationale:
    `[memory]` WARN with the remediation command, and continue cog-only:
 
    ```bash
-   node server/src/index.ts ltm replay --force
+   node server/src/index.ts ltm replay --rebuild
    ```
 
    This re-embeds existing memories under the new model; nothing is deleted.
@@ -225,12 +225,18 @@ HTTP boot. The arg-layer interception pattern (`runCli(argv)` returning
 patched dependency, no separate binary that duplicates boot.
 
 ```
-node server/src/index.ts ltm replay [--force]   # one reconcile tick, JSON stats
+node server/src/index.ts ltm replay [--force] [--rebuild]   # one reconcile tick, JSON stats
 node server/src/index.ts ltm health             # one-off CLI snapshot
 npm run ltm -- replay                           # ergonomic wrapper from repo root
 ```
 
-`ltm replay` exits 0 if `stats.errors === 0`, 1 otherwise. The CLI opens
+`ltm replay` exits 0 if `stats.errors === 0`, 1 otherwise. `--force`
+invalidates the mtime cache and re-scans every observation file, but skips
+lines whose content hash already exists in LTM (idempotent). Use `--rebuild`
+to additionally re-embed already-mirrored observations under the current
+embedder — required after switching embedder providers or model dimensions.
+Both flags preserve all existing records; `--rebuild` replaces them in place
+via id-based upsert. The CLI opens
 LTM directly, so **the server must be stopped** (single-writer lock). The
 CLI's `ltm health` is intentionally not a live-server health surface — for
 live state, hit the server's `/api/memory/health` endpoint or watch the
@@ -247,7 +253,7 @@ h.ltm = {
   consecutiveFailures: number,
   lastError?: { message, at },
   lastTickAt?: string,
-  lastTickStats?: { scannedFiles, scannedLines, replayed, skipped, errors, durationMs? },
+  lastTickStats?: { scannedFiles, scannedLines, replayed, rebuilt, skipped, errors, durationMs? },
 };
 ```
 
