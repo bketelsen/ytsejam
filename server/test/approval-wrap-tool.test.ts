@@ -50,8 +50,7 @@ describe("wrapToolWithApproval", () => {
     const ctx = { sessionId: "s1", effectiveMode: (): ApprovalMode => "ask", coordinator: coord };
     const wrapped = wrapToolWithApproval(tool, ctx);
     const p = wrapped.execute("call1", {});
-    // Approve shortly after.
-    setImmediate(() => coord.resolve(lastId(), "approve"));
+    coord.resolve(lastId(), "approve");
     const result = await p;
     expect((result.content[0] as any).text).toBe("ran bash");
   });
@@ -66,7 +65,7 @@ describe("wrapToolWithApproval", () => {
     const ctx = { sessionId: "s1", effectiveMode: (): ApprovalMode => "ask", coordinator: coord };
     const wrapped = wrapToolWithApproval(tool, ctx);
     const p = wrapped.execute("call1", {});
-    setImmediate(() => coord.resolve(lastId(), "deny"));
+    coord.resolve(lastId(), "deny");
     const result = await p;
     expect(calls).toBe(0);
     expect((result.content[0] as any).text).toBe("User denied this tool call.");
@@ -95,10 +94,12 @@ describe("wrapToolWithApproval", () => {
     const wrapped = wrapToolWithApproval(tool, ctx);
     // First call: YOLO, passes through.
     expect((await wrapped.execute("c1", {})).content[0]).toMatchObject({ text: "ran bash" });
-    // Flip mode and verify the next call awaits an approval.
+    // Flip mode and verify the next call awaits an approval (not a passthrough).
     mode = "ask";
     const p = wrapped.execute("c2", {});
-    setImmediate(() => coord.resolve(lastId(), "approve"));
+    // CRITICAL: if effectiveMode were captured at wrap time, no approval would open.
+    expect(coord.list()).toHaveLength(1);
+    coord.resolve(lastId(), "approve");
     expect(((await p).content[0] as any).text).toBe("ran bash");
   });
 });

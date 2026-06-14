@@ -16,7 +16,7 @@ export interface ApprovalContext {
 }
 
 type DenialDecision = Exclude<ApprovalDecision, "approve">;
-interface ApprovalDenialDetails {
+export interface ApprovalDenialDetails {
   approval: DenialDecision;
 }
 
@@ -47,6 +47,7 @@ export function wrapToolWithApproval<TParameters extends TSchema, TDetails = any
       const decision = await ctx.coordinator.request({
         sessionId: ctx.sessionId,
         toolName: tool.name,
+        // label is REQUIRED on AgentTool; fallback is defensive against ill-typed callers.
         toolLabel: tool.label ?? tool.name,
         params,
       });
