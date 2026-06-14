@@ -18,6 +18,7 @@ export {
   type PipelineFactory,
 } from "./embedding/local-embedder.ts";
 export { OllamaEmbedder, type OllamaEmbedderOptions } from "./embedding/ollama-embedder.ts";
+export { CopilotEmbedder, type CopilotEmbedderOptions } from "./embedding/copilot-embedder.ts";
 export { promoteFacts } from "./retrieval/promote.ts";
 export { VectorIndex } from "./embedding/vector-index.ts";
 export { Bm25Index } from "./retrieval/lexical.ts";
