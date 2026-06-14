@@ -661,8 +661,8 @@ Append to `server/test/models.test.ts`:
 import { resolveModel } from "../src/models.ts";
 
 describe("resolveModel — overlay + prunedIds (copilot live-catalog)", () => {
-  it("resolves an overlay-only id by searching extras first", () => {
-    const extras: any[] = [
+  it("resolves an overlay-only id by searching overlay first", () => {
+    const overlay: any[] = [
       {
         id: "claude-opus-4.7-1m-internal",
         name: "Claude Opus 4.7 (1m-internal)",
@@ -674,7 +674,7 @@ describe("resolveModel — overlay + prunedIds (copilot live-catalog)", () => {
         input: ["text"],
       },
     ];
-    const m = resolveModel("github-copilot/claude-opus-4.7-1m-internal", undefined, { extras });
+    const m = resolveModel("github-copilot/claude-opus-4.7-1m-internal", undefined, { overlay });
     assert.equal(m.id, "claude-opus-4.7-1m-internal");
     assert.equal((m as any).compat?.forceAdaptiveThinking, true);
   });
@@ -687,9 +687,9 @@ describe("resolveModel — overlay + prunedIds (copilot live-catalog)", () => {
     );
   });
 
-  it("still resolves a normal pi-ai static model when extras don't have it", () => {
+  it("still resolves a normal pi-ai static model when overlay doesn't have it", () => {
     // Pick any model known to be in the pi-ai static catalog. claude-opus-4.7 is in prod today.
-    const m = resolveModel("github-copilot/claude-opus-4.7", undefined, { extras: [] });
+    const m = resolveModel("github-copilot/claude-opus-4.7", undefined, { overlay: [] });
     assert.equal(m.id, "claude-opus-4.7");
   });
 
@@ -715,7 +715,7 @@ export type ModelResolver = (ref: string) => Model<any>;
 
 export interface ResolveOptions {
   /** Additional models to search BEFORE pi-ai's static catalog. */
-  extras?: Model<any>[];
+  overlay?: Model<any>[];
   /** Static-catalog ids the user's Copilot account doesn't entitle. */
   prunedIds?: Set<string>;
 }
@@ -741,7 +741,7 @@ export function resolveModel(
   }
 
   // Overlay first (live-only ids and their inherited metadata).
-  const overlayMatch = opts?.extras?.find((m) => m.provider === provider && m.id === modelId);
+  const overlayMatch = opts?.overlay?.find((m) => m.provider === provider && m.id === modelId);
   if (overlayMatch) return applyOAuthModelOverrides(overlayMatch, oauth);
 
   const providers = getProviders() as string[];
@@ -801,30 +801,15 @@ const liveCopilotCatalog = await loadLiveCopilotModels(authStore);
 resolveModel: (ref) => resolveModel(ref, authStore, liveCopilotCatalog),
 ```
 
-(Note: `MergeResult` already has the right shape — `{overlay, prunedIds}` — but `ResolveOptions` expects `{extras, prunedIds}`. Either:
-- (a) change the `ResolveOptions` field name from `extras` to `overlay` to match, OR
-- (b) destructure at the call site: `{extras: liveCopilotCatalog.overlay, prunedIds: liveCopilotCatalog.prunedIds}`.
+`MergeResult` is `{overlay, prunedIds}` and matches `ResolveOptions` structurally, so the
+result of `loadLiveCopilotModels(authStore)` passes directly as the third arg.
 
-Pick (a) — cleaner, no destructuring at every call site. Update Task 4's `ResolveOptions` interface to use `overlay` not `extras` — see step 3 below.)
-
-### Step 3: Sync field name across files (rename `extras` → `overlay`)
-
-In `server/src/models.ts`:
-- Change `ResolveOptions.extras` → `ResolveOptions.overlay`
-- Change `opts?.extras?.find(...)` → `opts?.overlay?.find(...)`
-
-In `server/test/models.test.ts`:
-- Change `{ extras }` → `{ overlay: extras }` in the existing tests (or rename the test variable too)
-
-In `server/src/index.ts`:
-- The MergeResult `{overlay, prunedIds}` is now structurally identical to `ResolveOptions {overlay, prunedIds}` — pass directly.
-
-### Step 4: Run the full server test suite
+### Step 3: Run the full server test suite
 
 Run: `env -u NODE_ENV npm --workspace server test`
 Expected: PASS, all tests including the new copilot-live-catalog + models tests + the existing 124 tests.
 
-### Step 5: Commit
+### Step 4: Commit
 
 ```bash
 git add server/src/index.ts server/src/models.ts server/test/models.test.ts
