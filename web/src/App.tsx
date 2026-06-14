@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
@@ -20,6 +20,44 @@ function Main() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // PWA manifest shortcuts (manifest.webmanifest > shortcuts) deep-link via
+  // URL params (?action=new|tasks|settings). The OS launcher tap navigates
+  // the installed PWA window — either by reusing an existing instance (Chrome
+  // desktop fires popstate on the same-origin URL change) or by mounting a
+  // fresh one. We handle both paths through one handler and clear the param
+  // after firing so a refresh doesn't re-trigger the action.
+  //
+  // The handler is registered ONCE on mount via the empty dep array, and
+  // reads the latest `app`/setters through a ref so we don't re-register
+  // (and re-fire) on every render. `useApp()` returns a fresh object
+  // literal per render and `Main` re-renders on every streamed token, so a
+  // `[app]` dep would churn add/removeEventListener + re-invoke the handler
+  // body per token — wasteful today, and a re-fire trap if any future
+  // branch ever fails to clear the URL synchronously.
+  const handlerStateRef = useRef({
+    newSession: app.newSession,
+    openTasks: () => setTasksOpen(true),
+    openSettings: () => setSettingsOpen(true),
+  });
+  handlerStateRef.current.newSession = app.newSession;
+  useEffect(() => {
+    const handleAction = () => {
+      const action = new URLSearchParams(window.location.search).get("action");
+      if (!action) return;
+      const s = handlerStateRef.current;
+      if (action === "new") void s.newSession();
+      else if (action === "tasks") s.openTasks();
+      else if (action === "settings") s.openSettings();
+      else return; // unknown action -> leave URL untouched for debugging
+      // Clear the param so refresh / share-URL doesn't re-fire.
+      window.history.replaceState(null, "", window.location.pathname);
+    };
+    handleAction();
+    window.addEventListener("popstate", handleAction);
+    return () => window.removeEventListener("popstate", handleAction);
+  }, []);
+
   const runningTasks = Object.values(app.tasks).filter(
     (t) => t.status === "running" || t.status === "pending",
   ).length;

@@ -8,6 +8,28 @@ const manifest = JSON.parse(
   readFileSync(join(root, "public/manifest.webmanifest"), "utf8"),
 );
 
+/**
+ * Read App.tsx and strip its line and block comments before returning the
+ * source text, so file-scope assertions can't be spoofed by a comment that
+ * contains the asserted literal (e.g. `// action === "new"` accidentally
+ * making a deleted real branch look present).
+ *
+ * Reviewer-noted hazard from PR #125: file-scope regex matching is more
+ * robust to refactor than handler-body extraction, but it's
+ * comment-spoofable. Stripping comments closes that gap cheaply without
+ * needing an AST parser.
+ */
+function readAppSrcCodeOnly() {
+  const raw = readFileSync(join(root, "src/App.tsx"), "utf8");
+  return raw
+    // Block comments — non-greedy, dot matches newline via [\s\S].
+    .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+    // Line comments — to end of line. Doesn't strip URLs in strings because
+    // a string would need to contain `//` outside any other escaping,
+    // which we don't write in App.tsx. (If we ever do, switch to AST.)
+    .replaceAll(/\/\/[^\n]*/g, "");
+}
+
 test("manifest declares both 'any' and 'maskable' icon variants in each size", () => {
   // Issue #22: Android adaptive icons need purpose:maskable variants with a
   // safe-zone-aware render. We ship both purposes side-by-side so the OS can
@@ -77,4 +99,178 @@ test("maskable icon files are valid PNGs at their declared dimensions", () => {
     assert.equal(width, expectedW, `${src}: IHDR width ${width} != manifest sizes ${sizes}`);
     assert.equal(height, expectedH, `${src}: IHDR height ${height} != manifest sizes ${sizes}`);
   }
+});
+
+// --- PWA Tier 5: manifest polish + shortcuts ---
+
+test("manifest declares the Tier-5 polish fields (id, description, lang, dir, categories, orientation)", () => {
+  // These fields make the OS install dialog richer (description,
+  // categories) and stabilize install identity (id — independent of
+  // start_url changes). lang+dir are a11y / locale signals.
+  assert.equal(manifest.id, "/", "id should anchor install identity");
+  assert.equal(typeof manifest.description, "string", "description must be a string");
+  assert.ok(manifest.description.length >= 20, "description should be a real sentence, not a stub");
+  assert.equal(manifest.lang, "en", "lang should be declared");
+  assert.equal(manifest.dir, "ltr", "dir should be declared alongside lang");
+  assert.ok(Array.isArray(manifest.categories), "categories must be an array");
+  assert.ok(manifest.categories.length >= 1, "categories should have at least one entry");
+  assert.equal(typeof manifest.orientation, "string", "orientation should be explicit, not inherited");
+});
+
+test("manifest declares a display_override fallback chain (without WCO)", () => {
+  // display_override is a Chrome extension to display: lets the OS try
+  // progressively-more-chromeless modes. Window-controls-overlay is
+  // deliberately NOT included here — it requires React-side layout
+  // changes (env(titlebar-area-*)) and is its own ticket.
+  assert.ok(Array.isArray(manifest.display_override), "display_override must be an array");
+  assert.ok(
+    manifest.display_override.includes("standalone"),
+    "display_override should include 'standalone' as a fallback",
+  );
+  assert.ok(
+    !manifest.display_override.includes("window-controls-overlay"),
+    "display_override must NOT include 'window-controls-overlay' yet (needs layout reflow — separate ticket)",
+  );
+});
+
+test("manifest declares shortcuts for new/tasks/settings, deep-linked via ?action=", () => {
+  // The OS-launcher jump-list entries. Each shortcut.url is a deep-link
+  // that App.tsx interprets via URLSearchParams.get('action'). The set of
+  // actions here MUST match the set of branches in App.tsx's handleAction
+  // useEffect; if you add a shortcut here, add its branch there too.
+  assert.ok(Array.isArray(manifest.shortcuts), "shortcuts must be an array");
+  const byAction = Object.fromEntries(
+    manifest.shortcuts.map((s) => [new URL(s.url, "https://example.test").searchParams.get("action"), s]),
+  );
+  assert.deepEqual(
+    Object.keys(byAction).sort(),
+    ["new", "settings", "tasks"],
+    "shortcuts should deep-link to ?action=new, ?action=tasks, ?action=settings",
+  );
+  for (const [action, sc] of Object.entries(byAction)) {
+    assert.equal(typeof sc.name, "string", `shortcut '${action}' missing name`);
+    assert.equal(typeof sc.short_name, "string", `shortcut '${action}' missing short_name`);
+    assert.equal(typeof sc.description, "string", `shortcut '${action}' missing description`);
+    assert.ok(Array.isArray(sc.icons) && sc.icons.length >= 1, `shortcut '${action}' missing icons`);
+  }
+});
+
+test("App.tsx handles every shortcut action declared in the manifest (forward SSOT)", () => {
+  // SSOT bridge, manifest -> App.tsx: every action declared in
+  // manifest.shortcuts MUST have a matching `action === "X"` branch in
+  // App.tsx, or the OS-launcher entry will deep-link to a no-op. We don't
+  // assert the reverse direction here — an orphan branch in App.tsx is
+  // dead code (the next test guards intent more loosely).
+  //
+  // File-scoped match (not body-scoped) deliberately: these literal
+  // strings only appear inside the action dispatcher in App.tsx, so a
+  // flat regex is robust against function-style refactors (arrow vs
+  // function, indentation changes, extraction to a hook) while still
+  // catching the spec-violation we care about.
+  const appSrc = readAppSrcCodeOnly();
+  const actions = manifest.shortcuts
+    .map((s) => new URL(s.url, "https://example.test").searchParams.get("action"))
+    .filter(Boolean);
+  for (const action of actions) {
+    const branchRe = new RegExp(`action\\s*===\\s*["']${action}["']`);
+    assert.match(
+      appSrc,
+      branchRe,
+      `App.tsx missing an \`action === "${action}"\` branch (manifest declares the shortcut)`,
+    );
+  }
+});
+
+test("App.tsx clears the action param after firing (so refresh doesn't re-trigger)", () => {
+  // Without this, refreshing the page after the OS deep-link would re-fire
+  // the action (re-open a dialog, re-create a new session). The contract
+  // is one-shot. File-scope match: replaceState only appears in the
+  // shortcut handler, so a flat assertion is robust to refactors.
+  const appSrc = readAppSrcCodeOnly();
+  assert.match(
+    appSrc,
+    /history\.replaceState\(/,
+    "App.tsx must call history.replaceState to clear the ?action= param after firing",
+  );
+});
+
+test("App.tsx URL-action handler short-circuits on bare and unknown actions", () => {
+  // Coverage for the no-op paths:
+  //   1. bare load (no `?action=`)        -> `if (!action) return;`
+  //   2. unknown action (?action=bogus)   -> dispatcher's final `else return;`
+  //      MUST run BEFORE `history.replaceState` so an unknown action
+  //      leaves the URL untouched (for debugging) AND fires no handler.
+  // Source-text-only (test stack is node:test, no RTL). Assertions are
+  // precise: literal bare-guard text + structural ordering of the final
+  // `else return` BEFORE `window.history.replaceState`.
+  const appSrc = readAppSrcCodeOnly();
+  // Bare-action guard: literal `if (!action) return`.
+  assert.match(
+    appSrc,
+    /if\s*\(\s*!action\s*\)\s*return/,
+    "App.tsx URL-action handler must early-return when ?action= is absent (bare load is a no-op)",
+  );
+  // Unknown-action fallthrough: there must be an `else return;` between
+  // the action === branches and the replaceState call, so an unmatched
+  // action exits BEFORE the URL is cleared and before any handler fires.
+  // We assert by ordering: the LAST `else return;` must appear before
+  // the `history.replaceState(` call in the source.
+  const elseReturnIdx = appSrc.lastIndexOf("else return");
+  const replaceStateIdx = appSrc.indexOf("history.replaceState(");
+  assert.ok(
+    elseReturnIdx !== -1,
+    "App.tsx URL-action handler must have an `else return` for unknown actions (so ?action=bogus is a no-op)",
+  );
+  assert.ok(
+    replaceStateIdx !== -1,
+    "App.tsx URL-action handler must call history.replaceState (separately tested above)",
+  );
+  assert.ok(
+    elseReturnIdx < replaceStateIdx,
+    "the unknown-action `else return` must come BEFORE history.replaceState, " +
+      "so an unknown ?action= leaves the URL untouched and fires no handler",
+  );
+});
+
+test("App.tsx listens for popstate so a desktop PWA reused by a second shortcut click still fires", () => {
+  // On desktop Chrome, clicking a shortcut while the PWA window is already
+  // open navigates the existing window same-origin — fires popstate, not a
+  // remount. The useEffect must register a popstate listener.
+  const appSrc = readAppSrcCodeOnly();
+  assert.match(
+    appSrc,
+    /addEventListener\(["']popstate["']/,
+    "App.tsx must addEventListener('popstate', ...) for in-session shortcut re-entry",
+  );
+  assert.match(
+    appSrc,
+    /removeEventListener\(["']popstate["']/,
+    "App.tsx popstate listener must be removed in the useEffect cleanup",
+  );
+});
+
+test("App.tsx URL-action useEffect mounts once (no `app` in dep array — would re-fire on every render)", () => {
+  // Quality-review finding: `useApp()` returns a fresh object literal per
+  // render and `Main` re-renders per streamed token, so `[app]` deps
+  // churn add/removeEventListener + re-invoke the handler per token.
+  // The handler must be registered once (empty deps + ref for latest state).
+  const appSrc = readAppSrcCodeOnly();
+  // Find the dep array trailing the URL-action useEffect. We anchor on
+  // the popstate registration line so we're definitely matching the
+  // shortcut-handler effect and not some other effect that might appear
+  // in App.tsx in the future.
+  const effectTail = appSrc.match(
+    /addEventListener\(["']popstate["'][\s\S]*?\}\s*,\s*(\[[^\]]*\])\s*\)\s*;/,
+  );
+  assert.ok(
+    effectTail,
+    "could not locate the URL-action useEffect's dep array (anchored on the popstate addEventListener)",
+  );
+  const deps = effectTail[1].trim();
+  assert.equal(
+    deps,
+    "[]",
+    `URL-action useEffect must have empty deps (mounts once); got ${deps}. ` +
+      `If you need to read latest state inside the handler, use a ref (see handlerStateRef pattern in App.tsx).`,
+  );
 });
