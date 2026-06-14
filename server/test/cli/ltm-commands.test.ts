@@ -102,12 +102,7 @@ describe("ltmReplay CLI", () => {
     expect(out.length).toBe(1);
     const stats = JSON.parse(out[0]!);
     expect(stats.errors).toBeGreaterThanOrEqual(1);
-    // Silent-stderr contract: stats.errors > 0 produces NO stderr noise on
-    // the CLI path. The JSON stats on stdout is the operator's signal; the
-    // logger is silenced for the one-off CLI invocation. If a future change
-    // pipes per-line warnings to stderr from the CLI path this assertion
-    // catches the regression.
-    expect(err).toEqual([]);
+    expect(err.join("\n")).toContain("[ltm replay] [warn] malformed line skipped");
   });
 
   it("exits 1 with single-writer-lock guidance when LTM is held by another process", async () => {
@@ -175,6 +170,38 @@ describe("ltmReplay CLI", () => {
     const stats = JSON.parse(out[0]!);
     expect(stats.replayed).toBe(0);
     expect(stats.scannedFiles).toBe(0);
+  });
+
+
+  it("accepts rebuild and threads it to the reconciler", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: rebuild cli line\n",
+    );
+    const first = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      stdout: () => {},
+      stderr: (l) => err.push(l),
+    });
+    expect(first).toBe(0);
+
+    const rebuiltOut: string[] = [];
+    const rebuiltErr: string[] = [];
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      rebuild: true,
+      stdout: (l) => rebuiltOut.push(l),
+      stderr: (l) => rebuiltErr.push(l),
+    });
+    expect(code).toBe(0);
+    const stats = JSON.parse(rebuiltOut[0]!);
+    expect(stats.rebuilt).toBe(1);
+    expect(stats.replayed).toBe(0);
+    expect(stats.skipped).toBe(0);
+    expect(rebuiltErr).toEqual([]);
   });
 });
 

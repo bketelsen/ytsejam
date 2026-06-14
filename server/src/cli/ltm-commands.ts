@@ -11,6 +11,8 @@ export interface LtmCliOpts {
   ltmStoreDir?: string;
   /** For replay: ignore the mtime cache and re-scan every file. */
   force?: boolean;
+  /** For replay: re-scan and re-embed already-mirrored observations. */
+  rebuild?: boolean;
   /** Output sink (defaults to console). Test injection point. */
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
@@ -93,10 +95,19 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
     const reconciler = new LtmReconciler({
       ltm,
       dataDir,
-      // CLI runs one shot; no logger needed -- the JSON output is the result.
-      logger: () => {},
+      // Surface warns and errors to stderr so the JSON stats aren't the only
+      // signal of trouble. Info-level (tick-complete summary) is intentionally
+      // suppressed because the CLI already prints stats explicitly.
+      logger: (level, msg, ctx) => {
+        if (level === "info") return;
+        const tail = ctx ? ` ${JSON.stringify(ctx)}` : "";
+        err(`[ltm replay] [${level}] ${msg}${tail}`);
+      },
     });
-    const stats = await reconciler.reconcile({ force: opts.force ?? false });
+    const stats = await reconciler.reconcile({
+      force: opts.force ?? false,
+      rebuild: opts.rebuild ?? false,
+    });
     out(JSON.stringify(stats, null, 2));
     return stats.errors > 0 ? 1 : 0;
   } finally {
