@@ -152,7 +152,7 @@ describe("runtime LTM embedder factory", () => {
     vi.stubGlobal("fetch", async (url: string | URL, init: RequestInit) => {
       expect(String(url)).toBe("https://api.enterprise.githubcopilot.com/embeddings");
       expect(JSON.parse(init.body as string)).toEqual({
-        input: "dimension probe",
+        input: ["dimension probe"],
         model: "text-embedding-3-small",
       });
       return new Response(JSON.stringify({ data: [{ embedding: vector(1536), index: 0 }] }), {
