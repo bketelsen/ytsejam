@@ -126,29 +126,55 @@ eliminate (issue #118).
 
 ## Boot wiring — `server/src/index.ts`
 
-After `scheduler.start()`:
+After `scheduler.start()`, server boot attaches LTM opportunistically; failures
+are always degraded to cog-only memory, not process exit. Full design rationale:
+[`docs/plans/2026-06-14-copilot-embedder-design.md`](../plans/2026-06-14-copilot-embedder-design.md).
 
-1. Open LTM: `MemorySystem.open({storeDir: process.env.LTM_STORE_DIR ||
-   path.join(config.dataDir, "ltm")})`. The empty-string fallthrough is
-   intentional `||` (not `??`) so a misconfigured `LTM_STORE_DIR=""` lands
-   on the default rather than throwing.
-2. Construct `LtmReconciler({ltm, dataDir, intervalMs?})`.
-3. `memory.attachLtm(ltm)`; `memory.attachReconciler(reconciler)`;
-   `reconciler.start()`.
+1. Resolve the LTM store dir from `process.env.LTM_STORE_DIR ||
+   path.join(config.dataDir, "ltm")`. The empty-string fallthrough is
+   intentional `||` (not `??`) so `LTM_STORE_DIR=""` lands on the default.
+2. Read embedder config from:
+   - `YTSEJAM_LTM_EMBEDDER` — `auto` (default), `copilot`, `ollama`, or `hash`.
+   - `YTSEJAM_LTM_COPILOT_MODEL` — default `text-embedding-3-small`.
+   - `YTSEJAM_LTM_COPILOT_URL` — default
+     `https://api.enterprise.githubcopilot.com`.
+   - `YTSEJAM_LTM_OLLAMA_MODEL` — default `nomic-embed-text:latest`.
+   - `YTSEJAM_LTM_OLLAMA_URL` — default `http://localhost:11434`.
+3. Construct the runtime embedder with `createLtmEmbedder()` from
+   `server/src/memory/embedder.ts`, then open LTM with
+   `MemorySystem.open({storeDir, embedder})`.
+   - `auto` probes Copilot → Ollama → Hash and logs the attached choice as
+     `[memory] LTM bridge attached, store=..., embedder=<provider:model>`.
+   - Pinned `copilot` / `ollama` modes require that dependency. Missing
+     Copilot credentials or an unreachable Ollama endpoint logs a `[memory]`
+     WARN and leaves the process running cog-only.
+4. After open, call `MemorySystem.indexDimension()` and compare it with the
+   selected embedder's dimension. On mismatch, close/detach LTM, log a
+   `[memory]` WARN with the remediation command, and continue cog-only:
 
-**Failures here MUST NOT block boot.** The whole block is wrapped in a
-try/catch that logs a warning and continues cog-only. The catch path also
-calls `ltm.close()` if `open()` succeeded but a downstream step threw —
-otherwise the file lock leaks for the process lifetime AND every future
-`MemorySystem.open()` on that dir throws. The reconciler ctor today is
-pure assignment so the leak is unreachable, but the surface is one PR
-change away from doing real work.
+   ```bash
+   node server/src/index.ts ltm replay --force
+   ```
+
+   This re-embeds existing memories under the new model; nothing is deleted.
+   Restart the server after replay to resume LTM. The server does **not**
+   `process.exit` for a mismatch.
+5. Construct `LtmReconciler({ltm, dataDir, intervalMs?})`, then
+   `memory.attachLtm(ltm)`, `memory.attachReconciler(reconciler)`, and
+   `reconciler.start()`. If a downstream step throws, the catch path closes
+   any opened LTM handle so the advisory lock does not leak.
 
 Shutdown drains in the opposite order: `SIGTERM`/`SIGINT` (registered with
 `process.once`) await `reconciler.stop()`, then `attachReconciler(null)` /
 `attachLtm(null)`, then `ltm.close()`. The handler does NOT call
-`process.exit` — pi's server / WebSocket handles drain on its own and the
-process exits naturally once handles drain.
+`process.exit` — pi's server / WebSocket handles drain on their own.
+
+The CLI `ltm replay` and `ltm health` commands use the same embedder factory
+as server boot. `ltm replay` intentionally skips the dimension-mismatch refusal
+because replay is the remediation path. The selected embedder's vectors are
+cached under `<storeDir>/embed-cache/`, namespaced by `<provider>:<modelName>`;
+changing embedder selection invalidates only that namespace, leaving other
+providers' caches valid.
 
 ## Recall — `server/src/memory/recall.ts`
 

@@ -16,6 +16,7 @@ The memory module lives at `server/src/memory/` — see
 [`server/src/memory/README.md`](server/src/memory/README.md) for the public-surface
 discipline. The on-disk format spec is at
 [`docs/memory/FORMAT.md`](docs/memory/FORMAT.md).
+- LTM embedder selection is via `YTSEJAM_LTM_EMBEDDER` (`auto`|`copilot`|`ollama`|`hash`). See [`docs/agents/memory-bridge.md`](docs/agents/memory-bridge.md) for the boot-time wiring, dimension-mismatch refusal, and the `ltm replay --force` remediation.
 
 ## Other doc directories
 

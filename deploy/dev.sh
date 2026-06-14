@@ -65,6 +65,7 @@ fi
 log "dev ytsejam → http://localhost:$DEV_PORT"
 log "  data dir : $DEV_DATA_DIR (throwaway)"
 log "  memory   : in-process (under data dir)"
+log "  embedder : auto (copilot if creds, else ollama, else hash)"
 log "  web dist : $DEV_WEB_DIST"
 log "  source   : $REPO_DIR (live --watch reload)"
 
@@ -77,4 +78,5 @@ exec env \
   YTSEJAM_DATA_DIR="$DEV_DATA_DIR" \
   YTSEJAM_WEB_DIST="$DEV_WEB_DIST" \
   YTSEJAM_AUTH_TOKEN="$DEV_TOKEN" \
+  YTSEJAM_LTM_EMBEDDER="auto" \
   npm run dev:server

@@ -69,6 +69,7 @@ npm run eval       # banded eval (short/medium/long horizons), report + exit cod
 npm run eval:sweep # 20 seeds × 3 bands; fails below 95% per-band pass rate
 npm run eval:semantic  # eval with a local sentence-transformer (optional dep)
 npm run eval:ollama    # eval against a local Ollama embedding model (no extra install)
+npm run eval:copilot   # eval against GitHub Copilot's embeddings endpoint (requires GITHUB_COPILOT_API_KEY)
 npm run bench      # ingest/retrieval/consolidation perf with thresholds
 npm run fixtures   # generate a synthetic corpus without running the eval
 ```
@@ -170,6 +171,7 @@ than as current assertions.
 | default | `HashEmbedder` (hashed bag-of-words, 256-dim) | deterministic, offline, zero deps; lexical-strength retrieval, weak on paraphrase |
 | semantic (optional) | `LocalEmbedder` (`@huggingface/transformers`, e.g. all-MiniLM-L6-v2) | real paraphrase similarity; ~100MB of model + runtime |
 | ollama (optional) | `OllamaEmbedder` (`http://localhost:11434`, e.g. `nomic-embed-text`) | real paraphrase similarity via a local Ollama service; zero install if Ollama is already running; 768-dim default; plain `fetch`, no SDK |
+| copilot (optional) | `CopilotEmbedder` (https://api.enterprise.githubcopilot.com/embeddings, e.g. `text-embedding-3-small`) | real paraphrase similarity via GitHub Copilot's embeddings endpoint; requires a Copilot OAuth API key; 1536-dim default; plain fetch, no SDK |
 
 If you already run Ollama locally with an embedding model pulled (e.g.
 `ollama pull nomic-embed-text`), `npm run eval:ollama` swaps the default
@@ -179,6 +181,8 @@ re-runs are free. No additional install. `--ollama-model` and
 `--semantic` and `--ollama` are mutually exclusive. A live smoke test
 runs with `LTM_OLLAMA_LIVE=1 npm test`; the default suite stays hermetic
 (mocked fetch).
+
+If you have a GitHub Copilot OAuth API key, `GITHUB_COPILOT_API_KEY=... npm run eval:copilot` runs the LTM eval suite against Copilot's `text-embedding-3-small` (1536-dim). `--copilot-model` and `--copilot-url` (or `COPILOT_BASE_URL`) override the defaults; `--semantic`, `--ollama`, and `--copilot` are mutually exclusive. The CachedEmbedder is namespaced by `"copilot:"+modelName`, so re-runs cost nothing.
 
 `@huggingface/transformers` is an **optional** peer dependency — skip it if
 you don't need the in-process semantic mode. `npm run eval:semantic`
@@ -216,6 +220,7 @@ fails below 500 turns/sec ingest or 50ms p99 at 10k.
 | eval harness / sweep / bench | stable |
 | LocalEmbedder | shape-tested seam; the Ollama path is the working semantic mode |
 | OllamaEmbedder | stable — mocked-fetch tested, live smoke gated behind `LTM_OLLAMA_LIVE=1` |
+| CopilotEmbedder | stable — mocked-fetch tested, 401-refresh + network-failure paths covered, live smoke not committed |
 
 ## Store layout
 

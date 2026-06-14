@@ -12,8 +12,13 @@
  * Ollama mode (npm run eval:ollama, i.e. --ollama [--ollama-model <name>]
  * [--ollama-url <url>]): same shape, but the embedder is a local Ollama
  * service (default nomic-embed-text:latest on http://localhost:11434, url
- * overridable via OLLAMA_BASE_URL). Mutually exclusive with --semantic —
- * one source of truth per run.
+ * overridable via OLLAMA_BASE_URL).
+ *
+ * Copilot mode (npm run eval:copilot, i.e. --copilot
+ * [--copilot-model <name>] [--copilot-url <url>]): same shape, but the
+ * embedder is GitHub Copilot's embeddings endpoint. Requires
+ * GITHUB_COPILOT_API_KEY. These modes are mutually exclusive — one source
+ * of truth per run.
  *
  * Neither mode raises any band threshold. Strong-cue recall (RECALL 9)
  * lifted medium/long paraphrase recall@5 from 0% to a 75% hash floor —
@@ -32,6 +37,7 @@ import type { Embedder } from "../embedding/embedder.ts";
 import { CachedEmbedder } from "../embedding/cached-embedder.ts";
 import { LocalEmbedder } from "../embedding/local-embedder.ts";
 import { OllamaEmbedder } from "../embedding/ollama-embedder.ts";
+import { CopilotEmbedder } from "../embedding/copilot-embedder.ts";
 
 function argValue(name: string): string | undefined {
   const idx = process.argv.indexOf(`--${name}`);
@@ -43,9 +49,12 @@ const seed = argValue("seed") ? Number(argValue("seed")) : undefined;
 const band = argValue("band") as EvalBand | undefined;
 const semantic = process.argv.includes("--semantic");
 const ollama = process.argv.includes("--ollama");
+const copilot = process.argv.includes("--copilot");
+const copilotModel = argValue("copilot-model") ?? "text-embedding-3-small";
+const copilotUrl = argValue("copilot-url") ?? process.env.COPILOT_BASE_URL;
 
-if (semantic && ollama) {
-  console.error("--semantic and --ollama are mutually exclusive: pick one embedder mode.");
+if ([semantic, ollama, copilot].filter(Boolean).length > 1) {
+  console.error("--semantic, --ollama, and --copilot are mutually exclusive: pick one embedder mode.");
   process.exit(2);
 }
 
@@ -53,7 +62,7 @@ let embedder: Embedder | undefined;
 if (semantic) {
   try {
     const local = await LocalEmbedder.create();
-    embedder = new CachedEmbedder(local, path.join(workDir, "embed-cache"), local.modelName);
+    embedder = new CachedEmbedder(local, path.join(workDir, "embed-cache"), "local:" + local.modelName);
   } catch (error) {
     console.error((error as Error).message);
     process.exit(2);
@@ -64,7 +73,29 @@ if (semantic) {
       model: argValue("ollama-model") ?? "nomic-embed-text:latest",
       baseUrl: argValue("ollama-url") ?? process.env.OLLAMA_BASE_URL,
     });
-    embedder = new CachedEmbedder(remote, path.join(workDir, "embed-cache"), remote.modelName);
+    embedder = new CachedEmbedder(remote, path.join(workDir, "embed-cache"), "ollama:" + remote.modelName);
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(2);
+  }
+} else if (copilot) {
+  if (!process.env.GITHUB_COPILOT_API_KEY) {
+    console.error(
+      "--copilot requires GITHUB_COPILOT_API_KEY (a Copilot API key, e.g. from PiAuthStore.getApiKey('github-copilot'))",
+    );
+    process.exit(2);
+  }
+  try {
+    const remote = await CopilotEmbedder.create({
+      getApiKey: () => Promise.resolve(process.env.GITHUB_COPILOT_API_KEY),
+      model: copilotModel,
+      baseUrl: copilotUrl,
+    });
+    embedder = new CachedEmbedder(
+      remote,
+      path.join(workDir, "embed-cache"),
+      "copilot:" + remote.modelName,
+    );
   } catch (error) {
     console.error((error as Error).message);
     process.exit(2);

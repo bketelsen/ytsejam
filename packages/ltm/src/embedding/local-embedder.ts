@@ -14,7 +14,7 @@
  * Compose with CachedEmbedder so re-runs cost nothing:
  *
  *   const local = await LocalEmbedder.create({ model: "Xenova/all-MiniLM-L6-v2" });
- *   const embedder = new CachedEmbedder(local, cacheDir, local.modelName);
+ *   const embedder = new CachedEmbedder(local, cacheDir, "local:" + local.modelName);
  */
 
 import type { Embedder } from "./embedder.ts";
