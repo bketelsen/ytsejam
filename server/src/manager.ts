@@ -17,8 +17,10 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import type { ApprovalCoordinator } from "./approval/coordinator.ts";
+import { extractTurnOverride } from "./approval/prefix.ts";
 import { deriveApprovalMode } from "./approval/session-entry.ts";
 import type { ApprovalMode, SetApprovalModeEntry } from "./approval/types.ts";
+import { wrapToolWithApproval, type ApprovalContext } from "./approval/wrap-tool.ts";
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -119,6 +121,8 @@ interface OpenSession {
   harness: AgentHarness;
   running: boolean;
   compacting: boolean;
+  /** Mutated per-turn; wrapped tools read via closure to resolve effective mode. */
+  currentEffectiveMode: { value: ApprovalMode };
   /** rename requested while running; flushed to JSONL on agent_end (JSONL is SSOT) */
   pendingTitle?: string;
   compaction?: CompactionWiringState;
@@ -148,6 +152,20 @@ export class AgentManager {
       fs: this.env,
       sessionsRoot: path.join(opts.dataDir, "sessions"),
     });
+  }
+
+  private wrapTools(
+    baseTools: AgentTool<any>[],
+    sessionId: string,
+    effectiveModeRef: { value: ApprovalMode },
+  ): AgentTool<any>[] {
+    if (!this.opts.approvalCoordinator) return baseTools;
+    const ctx: ApprovalContext = {
+      sessionId,
+      coordinator: this.opts.approvalCoordinator,
+      effectiveMode: () => effectiveModeRef.value,
+    };
+    return baseTools.map((tool) => wrapToolWithApproval(tool, ctx));
   }
 
   // ---- session lifecycle ------------------------------------------------
@@ -210,15 +228,19 @@ export class AgentManager {
   ): OpenSession {
     const sessionCwd =
       this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
+    const currentEffectiveMode = { value: "yolo" as ApprovalMode };
+    const sessionRow = this.opts.indexer.getSession(metadata.id);
+    if (sessionRow?.approvalMode) currentEffectiveMode.value = sessionRow.approvalMode;
+    const baseTools = [
+      ...this.opts.tools,
+      ...createSessionCwdTools(sessionCwd),
+      ...(this.opts.sessionTools?.(metadata.id) ?? []),
+    ];
     const harness = new AgentHarness({
       env: this.env,
       session,
       model,
-      tools: [
-        ...this.opts.tools,
-        ...createSessionCwdTools(sessionCwd),
-        ...(this.opts.sessionTools?.(metadata.id) ?? []),
-      ],
+      tools: this.wrapTools(baseTools, metadata.id, currentEffectiveMode),
       systemPrompt: async () => {
         // prompt sections must never block or break a session
         // resolve the workdir fresh each turn so a mid-session change picks up
@@ -248,6 +270,7 @@ export class AgentManager {
       harness,
       running: false,
       compacting: false,
+      currentEffectiveMode,
     };
 
     // Catch + swallow: a compaction-bookkeeping bug must not kill the user's
@@ -666,13 +689,17 @@ export class AgentManager {
 
   async sendMessage(id: string, text: string): Promise<void> {
     const opened = await this.getOrOpen(id);
+    // Per-turn override: /yolo or /careful prefix wins over the persisted session toggle.
+    const { override, message } = extractTurnOverride(text);
+    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+    opened.currentEffectiveMode.value = override ?? sessionMode;
     if (opened.running) {
-      await opened.harness.steer(text);
+      await opened.harness.steer(message);
       return;
     }
     if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
-    opened.harness.prompt(text).catch((err) => {
+    opened.harness.prompt(message).catch((err) => {
       // run failures already surface as assistant error messages via events;
       // this catches pre-run rejections (e.g. "busy") so they don't crash the process
       console.error(`prompt failed for session ${id}`, err);
@@ -687,13 +714,16 @@ export class AgentManager {
    */
   async injectMessage(id: string, text: string): Promise<void> {
     const opened = await this.getOrOpen(id);
+    const { override, message } = extractTurnOverride(text);
+    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+    opened.currentEffectiveMode.value = override ?? sessionMode;
     if (opened.running) {
-      await opened.harness.followUp(text);
+      await opened.harness.followUp(message);
       return;
     }
     if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true;
-    opened.harness.prompt(text).catch((err) => {
+    opened.harness.prompt(message).catch((err) => {
       console.error(`task result injection failed for session ${id}`, err);
       opened.running = false;
     });
@@ -764,6 +794,9 @@ export class AgentManager {
     this.opts.indexer.setApprovalMode(id, mode);
     this.emitMeta(id);
     this.opts.bus.emit({ type: "approval_mode_changed", sessionId: id, mode });
+    // Update the live ref so the change applies to the next turn immediately
+    // (without waiting for the next session-open).
+    opened.currentEffectiveMode.value = mode;
   }
 
   /**
@@ -778,11 +811,12 @@ export class AgentManager {
     const opened = this.open.get(id);
     if (!opened) return; // not loaded; next open will resolve fresh
     const cwd = this.opts.resolveWorkdir?.(id) ?? this.opts.dataDir;
-    await opened.harness.setTools([
+    const baseTools = [
       ...this.opts.tools,
       ...createSessionCwdTools(cwd),
       ...(this.opts.sessionTools?.(id) ?? []),
-    ]);
+    ];
+    await opened.harness.setTools(this.wrapTools(baseTools, id, opened.currentEffectiveMode));
   }
 
   /** Resolved working dir for a session (the cwd its tools currently bind to). */
