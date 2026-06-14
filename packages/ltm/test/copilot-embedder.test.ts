@@ -180,6 +180,44 @@ describe("copilot embedder adapter", () => {
     expect(copilot.calls).toHaveLength(0);
   });
 
+  it("throws a clean precondition error when the 401 retry cannot get an API key", async () => {
+    const key = vi.fn(async () => (key.mock.calls.length === 1 ? "expired-key" : undefined));
+    const fetch = vi.fn(
+      async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const embedder = await CopilotEmbedder.create({ getApiKey: key, dimension: 1536 });
+
+    const err = await embedder.embed("hello").then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (e: Error) => e,
+    );
+
+    expect(err.message).toBe(
+      "Copilot embedder cannot request embeddings: API key is unavailable (getApiKey() returned undefined).",
+    );
+    expect(err.message).not.toContain("embed request");
+    expect(err.message).not.toContain("..");
+    expect(key).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("wraps fetch rejections with URL, model, and underlying cause", async () => {
+    vi.stubGlobal("fetch", () => Promise.reject(new Error("ECONNREFUSED")));
+    const embedder = await CopilotEmbedder.create({
+      getApiKey: getApiKey(),
+      model: "custom-embedding-model",
+      baseUrl: "https://example.test/copilot",
+      dimension: 1536,
+    });
+
+    await expect(embedder.embed("hello")).rejects.toThrow(
+      /Copilot embed request to https:\/\/example\.test\/copilot\/embeddings \(model custom-embedding-model\) failed: ECONNREFUSED\./,
+    );
+  });
+
   it("composes with CachedEmbedder — repeat embeds never hit the inner embedder", async () => {
     fakeCopilot(1536);
     const copilot = await CopilotEmbedder.create({ getApiKey: getApiKey() });

@@ -61,18 +61,21 @@ async function requestEmbedding(
   getApiKey: () => Promise<string | undefined>,
 ): Promise<number[]> {
   const url = `${baseUrl}/embeddings`;
-  let apiKey = await requireApiKey(getApiKey);
-  let res: Response;
-  try {
-    res = await postEmbedding(url, model, text, apiKey);
-    if (res.status === 401) {
-      apiKey = await requireApiKey(getApiKey);
-      res = await postEmbedding(url, model, text, apiKey);
+  const guardedPost = async (apiKey: string): Promise<Response> => {
+    try {
+      return await postEmbedding(url, model, text, apiKey);
+    } catch (error) {
+      throw new Error(
+        `Copilot embed request to ${url} (model ${model}) failed: ${(error as Error).message}.`,
+      );
     }
-  } catch (error) {
-    throw new Error(
-      `Copilot embed request to ${url} (model ${model}) failed: ${(error as Error).message}.`,
-    );
+  };
+
+  let apiKey = await requireApiKey(getApiKey);
+  let res = await guardedPost(apiKey);
+  if (res.status === 401) {
+    apiKey = await requireApiKey(getApiKey);
+    res = await guardedPost(apiKey);
   }
 
   const body = await res.text();
