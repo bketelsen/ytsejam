@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
@@ -20,6 +20,29 @@ function Main() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // PWA manifest shortcuts (manifest.webmanifest > shortcuts) deep-link via
+  // URL params (?action=new|tasks|settings). The OS launcher tap navigates
+  // the installed PWA window — either by reusing an existing instance (Chrome
+  // desktop fires popstate on the same-origin URL change) or by mounting a
+  // fresh one. We handle both paths through one handler and clear the param
+  // after firing so a refresh doesn't re-trigger the action.
+  useEffect(() => {
+    const handleAction = () => {
+      const action = new URLSearchParams(window.location.search).get("action");
+      if (!action) return;
+      if (action === "new") void app.newSession();
+      else if (action === "tasks") setTasksOpen(true);
+      else if (action === "settings") setSettingsOpen(true);
+      else return; // unknown action -> leave URL untouched for debugging
+      // Clear the param so refresh / share-URL doesn't re-fire.
+      window.history.replaceState(null, "", window.location.pathname);
+    };
+    handleAction();
+    window.addEventListener("popstate", handleAction);
+    return () => window.removeEventListener("popstate", handleAction);
+  }, [app]);
+
   const runningTasks = Object.values(app.tasks).filter(
     (t) => t.status === "running" || t.status === "pending",
   ).length;

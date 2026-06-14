@@ -78,3 +78,112 @@ test("maskable icon files are valid PNGs at their declared dimensions", () => {
     assert.equal(height, expectedH, `${src}: IHDR height ${height} != manifest sizes ${sizes}`);
   }
 });
+
+// --- PWA Tier 5: manifest polish + shortcuts ---
+
+test("manifest declares the Tier-5 polish fields (id, description, lang, dir, categories, orientation)", () => {
+  // These fields make the OS install dialog richer (description,
+  // categories) and stabilize install identity (id — independent of
+  // start_url changes). lang+dir are a11y / locale signals.
+  assert.equal(manifest.id, "/", "id should anchor install identity");
+  assert.equal(typeof manifest.description, "string", "description must be a string");
+  assert.ok(manifest.description.length >= 20, "description should be a real sentence, not a stub");
+  assert.equal(manifest.lang, "en", "lang should be declared");
+  assert.equal(manifest.dir, "ltr", "dir should be declared alongside lang");
+  assert.ok(Array.isArray(manifest.categories), "categories must be an array");
+  assert.ok(manifest.categories.length >= 1, "categories should have at least one entry");
+  assert.equal(typeof manifest.orientation, "string", "orientation should be explicit, not inherited");
+});
+
+test("manifest declares a display_override fallback chain (without WCO)", () => {
+  // display_override is a Chrome extension to display: lets the OS try
+  // progressively-more-chromeless modes. Window-controls-overlay is
+  // deliberately NOT included here — it requires React-side layout
+  // changes (env(titlebar-area-*)) and is its own ticket.
+  assert.ok(Array.isArray(manifest.display_override), "display_override must be an array");
+  assert.ok(
+    manifest.display_override.includes("standalone"),
+    "display_override should include 'standalone' as a fallback",
+  );
+  assert.ok(
+    !manifest.display_override.includes("window-controls-overlay"),
+    "display_override must NOT include 'window-controls-overlay' yet (needs layout reflow — separate ticket)",
+  );
+});
+
+test("manifest declares shortcuts for new/tasks/settings, deep-linked via ?action=", () => {
+  // The OS-launcher jump-list entries. Each shortcut.url is a deep-link
+  // that App.tsx interprets via URLSearchParams.get('action'). The set of
+  // actions here MUST match the set of branches in App.tsx's handleAction
+  // useEffect; if you add a shortcut here, add its branch there too.
+  assert.ok(Array.isArray(manifest.shortcuts), "shortcuts must be an array");
+  const byAction = Object.fromEntries(
+    manifest.shortcuts.map((s) => [new URL(s.url, "https://example.test").searchParams.get("action"), s]),
+  );
+  assert.deepEqual(
+    Object.keys(byAction).sort(),
+    ["new", "settings", "tasks"],
+    "shortcuts should deep-link to ?action=new, ?action=tasks, ?action=settings",
+  );
+  for (const [action, sc] of Object.entries(byAction)) {
+    assert.equal(typeof sc.name, "string", `shortcut '${action}' missing name`);
+    assert.equal(typeof sc.short_name, "string", `shortcut '${action}' missing short_name`);
+    assert.equal(typeof sc.description, "string", `shortcut '${action}' missing description`);
+    assert.ok(Array.isArray(sc.icons) && sc.icons.length >= 1, `shortcut '${action}' missing icons`);
+  }
+});
+
+test("App.tsx handleAction useEffect handles exactly the shortcut action set", () => {
+  // SSOT bridge between manifest shortcuts and the App.tsx interpreter.
+  // We pull the action set from the manifest, then assert App.tsx's
+  // handleAction has a branch matching each one. Mutation-tested: if you
+  // add a shortcut to the manifest without wiring its branch, this fails.
+  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  // Extract the handleAction function body (between `const handleAction = () => {` and the matching `};`).
+  const handlerMatch = appSrc.match(/const handleAction = \(\) => \{([\s\S]*?)\n {4}\};/);
+  assert.ok(handlerMatch, "App.tsx must define a `const handleAction = () => { ... };` for PWA shortcuts");
+  const handlerBody = handlerMatch[1];
+  // Pull manifest actions and assert each one has an `action === "X"` branch in the handler.
+  const actions = manifest.shortcuts
+    .map((s) => new URL(s.url, "https://example.test").searchParams.get("action"))
+    .filter(Boolean);
+  for (const action of actions) {
+    const branchRe = new RegExp(`action === ["']${action}["']`);
+    assert.match(
+      handlerBody,
+      branchRe,
+      `App.tsx handleAction missing a branch for action='${action}' (manifest declares it)`,
+    );
+  }
+});
+
+test("App.tsx clears the action param after firing (so refresh doesn't re-trigger)", () => {
+  // Without this, refreshing the page after the OS deep-link would re-fire
+  // the action (re-open a dialog, re-create a new session). The contract
+  // is one-shot.
+  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  const handlerMatch = appSrc.match(/const handleAction = \(\) => \{([\s\S]*?)\n {4}\};/);
+  assert.ok(handlerMatch, "handleAction not found");
+  assert.match(
+    handlerMatch[1],
+    /history\.replaceState\(/,
+    "App.tsx handleAction must call history.replaceState to clear the ?action= param after firing",
+  );
+});
+
+test("App.tsx listens for popstate so a desktop PWA reused by a second shortcut click still fires", () => {
+  // On desktop Chrome, clicking a shortcut while the PWA window is already
+  // open navigates the existing window same-origin — fires popstate, not a
+  // remount. The useEffect must register a popstate listener.
+  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  assert.match(
+    appSrc,
+    /addEventListener\(["']popstate["']/,
+    "App.tsx must addEventListener('popstate', ...) for in-session shortcut re-entry",
+  );
+  assert.match(
+    appSrc,
+    /removeEventListener\(["']popstate["']/,
+    "App.tsx popstate listener must be removed in the useEffect cleanup",
+  );
+});
