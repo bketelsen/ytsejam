@@ -1,7 +1,6 @@
 # Planning — Project Lessons
 
-Lessons learned from failures and fix cycles.
-Auto-appended by the lessons skill.
+Rules learned from fix cycles. Cap: 30 entries — prune oldest if exceeded.
 
 ## Grep Live Source At Brief Time
 
@@ -15,23 +14,21 @@ When a brief specifies a fix for a pattern bug, run `git grep '<bug pattern>'` a
 
 _Added: 2026-06-13 | Task: Task 1 plan correction — anchor convention symmetric _
 
-## Verify Forward Anchors Against Plan Headings
+## Quote The Target Heading For Every Forward Anchor
 
-When a brief invents an anchor to a doc that does not exist yet, look up the section's anchor in the plan doc and cite the future heading's exact text, because neither the spec nor quality review can check a link whose target file is absent. Do not compose forward-anchors from section numbers plus topic words, since a guessed anchor breaks silently and stays broken if the target heading is later written with different wording. The plan is the spec, so verify against its canonical heading text rather than approximating. Every forward-anchor in a brief must quote the heading it points to.
+Forward-anchors in briefs must quote the heading they point to, never be composed from section numbers + topic words — a guessed anchor breaks silently and stays broken if the target heading is later written with different wording. The plan is the spec, so verify against its canonical heading text rather than approximating.
+
+(seen in: brief composed `#3.3-forward-anchor-to-memory` from section number; target heading used different wording)
 
 _Added: 2026-06-13 | Task: Task 3 quality fix — §3.3 forward-anchor to MEMORY §_
 
-## Plan-Doc Shape Errors Hide Behind Correct Vocabulary
+## Plan-Doc Shape And Scope Errors Hide Behind Correct Vocabulary
 
-Plan-doc snippets describing target function shapes go stale fast when the codebase evolves between brainstorm and dispatch — and the staleness is invisible because the vocabulary (function names, parameter names) stays right while the architectural shape underneath (return type, dependency surface, namespace structure) silently shifts. Tasks 3-8 of PR #96 every single one surfaced this: the plan-doc said `mirrorToLtm` returns `Promise<{ok}>` while the live shape was `Promise<{ok, error}>`; said `memory.recordObservation` is a class method while it's actually a namespace export; said `LTM.retrieve` returns `{episodic}` while it returns `{items, profile}`. BRIEF-AUTHOR pre-check: before every dispatch, `git show HEAD:<file>` + `grep -nE '<symbol>'` against each function/type the brief cites; diff the live shape vs the plan snippet; flag divergences INLINE in the brief so the implementer knows the plan is the spec but the SHAPE comes from HEAD. This rule should be in EVERY implementer brief explicitly, not assumed.
+Plan-doc snippets go stale fast and the staleness is invisible because the vocabulary stays right while the shape underneath shifts — return types, dependency surfaces, namespace exports diverge silently. Worse, the plan may carry SCOPE errors where an architectural assumption is wrong: "migrate multiple call sites" when there's one, "extend the existing CLI" when no CLI exists. BRIEF-AUTHOR pre-check before every dispatch: `git show HEAD:<file>` + `grep -nE '<symbol>'` against every function/type the brief cites AND `grep -rE` for the load-bearing nouns of the plan ("CLI", "call sites of X", "existing reconciler"); diff shape and verify scope BEFORE trusting plan language. If a plan says "extend X" without HEAD evidence X exists, the brief must say "X does not exist yet; implementer should invent the smallest X that satisfies Y."
+
+(seen in: PR #96 Tasks 3-8 — `mirrorToLtm` return shape, `recordObservation` namespace vs class, `LTM.retrieve` return shape; Task 5 "multiple call sites" was one; Task 8 "extend the CLI" had no CLI)
 
 _Added: 2026-06-13 | Task: Tasks 3-8 of PR 1 of the cog-LTM bridge roadmap_
-
-## Plan-Doc Scope Errors Are A Separate Category From Shape Errors
-
-Beyond "the shape is stale" (the symbols still exist but with different signatures), plan-docs also carry SCOPE errors where an architectural assumption is wrong: Task 5's plan said "migrate multiple call sites of `append-to-observations.md`" but there was only ONE call site; Task 8's plan said "extend the existing CLI subcommand" but there was no CLI surface at all — the entire arg-interception layer had to be invented. These errors don't show up in a snippet-vs-HEAD diff because the snippet references files that simply aren't there yet (or are there but not what the plan assumed). Mitigation: in the BRIEF-AUTHOR pre-check, also `grep -rE` for the load-bearing nouns of the plan ("CLI", "call sites of cog_append", "existing reconciler") and verify presence + count BEFORE trusting the plan's scope language. If a plan says "extend X" without HEAD evidence X exists, the brief must say "X does not exist yet; implementer should invent the smallest X that satisfies Y."
-
-_Added: 2026-06-13 | Task: Tasks 5, 8 of PR 1 of the cog-LTM bridge roadmap_
 
 ## Reviewer Time-Budget Protocol For Grep-Verifiable Tasks
 

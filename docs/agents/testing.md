@@ -1,19 +1,7 @@
 # Testing — Project Lessons
 
-Lessons learned from failures and fix cycles.
-Auto-appended by the lessons skill.
-
-## Assert Exact Token Constants In Tests
-
-When writing test expectations and implementation in the same plan-doc, never let human-readable shorthand like "16k" stand in for a precise constant — it silently conflated decimal 16,000 with binary 16,384 here, forcing the implementer to recompute every expected value. The shipped formula in `computeReserveTokens` is `Math.max(model.maxTokens + 16_384, 32_768)`, so tests must assert the exact derived numbers (e.g. `80_384`, `144_384`, `33_384`, budget `919_616`) rather than rounded approximations (`80_000`, `144_000`, `920_000`). Derive test expectations directly from the named constants in the implementation, ideally by reusing or referencing those constants instead of hardcoding magic numbers that can drift. This matters most for boundary assertions like `decideCompaction` firing at `919_617` but not `919_616`, where an off-by-384 error makes the test wrong but plausible-looking. The discipline: define the constant once, compute expectations from it, and make any "16k"-style prose explicitly state whether it means 16,000 or 16,384.
-
-_Added: 2026-06-12 | Task: Task 1: Pure-function policy module — calibration + dec_
-
-## Match Existing Test Directory Conventions Before Writing Paths
-
-Place new server tests in `server/test/<file>.test.ts`, not co-located in `server/src/`, because `server/vitest.config.ts` sets `include: ["test/**/*.test.ts"]` and silently skips co-located files — a passing `bash scripts/gate.sh` (exit 0) can mean your new test never ran. Before specifying test paths in a plan or implementation, read the existing convention (grep where current `*.test.ts` files live and check the vitest `include` glob) rather than assuming a co-location pattern. To prove a new test actually executes in the gate, run `bash scripts/gate.sh 2>&1 | tee /tmp/gate-output.txt` and confirm the test names appear (e.g., `grep -c "compaction" /tmp/gate-output.txt` returns non-zero); do not rely on direct `npx vitest run <file>` invocation, which bypasses the gate's discovery. Treat the implementer's `## Patterns Discovered` and `## Blockers` report sections as high-signal channels for tooling and test-infrastructure gaps, since reviewers examining code-as-written systematically miss what does or doesn't run in the gate.
-
-_Added: 2026-06-12 | Task: Task 1: Pure-function policy module — calibration + dec_
+Rules learned from fix cycles. Each entry is a rule a reader can apply without
+re-reading the originating commit. Cap: 30 entries — prune oldest if exceeded.
 
 ## Verify Third Party Contracts Before Authoring
 
@@ -21,85 +9,51 @@ When integrating with a third-party library (e.g. pi-agent-core's JsonlSessionRe
 
 _Added: 2026-06-12 | Task: Tasks 3+4: observability + writers + backup/verify_
 
-## Extract Pure Helpers To Test Wiring
+## Derive Test Expectations From Named Constants Not Magic Numbers
 
-When the policy lives in a pure module (`compaction.ts`) but the bug lives in the wiring (`manager.ts` event handlers, idle hooks, surrender/record-writing), passing unit tests for the compute primitives give false confidence — they verify WHAT is computed, not WHEN cross-cutting state is read during an event lifecycle. The reactive-mislabel bug proved this: the orchestrator eager-cleared `pendingCompaction` before `harness.compact()`, and pi emits `session_compact` synchronously inside `compact()`, so the handler read null state — yet all 42 pure tests passed. Fix the testability gap by extracting pure helpers (e.g. `buildCompactionEvent(model, sessionFilePath, result, ...)`) from private methods so trigger-classification, retry/surrender branching, and observability labeling can be asserted against a faux model and stub harness without building the full `AgentManager`. Always add at least one wiring-level test that drives the real state machine (overflow→reactive-pending→agent_end→compact→retry) and asserts the written dev-log line's `trigger`, rather than deferring all integration coverage to an `it.todo` real-LLM path. The decisive signal: if a decision depends on the *moment* state is sampled within an async event, a primitive-level test cannot catch a mislabel — only a test exercising the handler can.
+Tests must import or reference the same constants the implementation uses, never hardcode rounded approximations — boundary assertions become wrong-but-plausible (off-by-384 here) and "16k" prose silently conflates 16,000 with 16,384.
+
+(seen in: server/test/compaction.test.ts — `decideCompaction` boundary off by 384)
+
+_Added: 2026-06-12 | Task: Pure-function policy module — calibration + dec_
+
+## Confirm New Tests Actually Ran In The Gate
+
+Read `server/vitest.config.ts`'s `include` glob before placing a new test file — co-locating in `server/src/` silently skips it and the gate still exits 0. Run `bash scripts/gate.sh 2>&1 | tee /tmp/gate.txt` and grep for your test names to prove discovery; direct `npx vitest run <file>` bypasses the gate's globbing and isn't a substitute.
+
+(seen in: server/test/ vs server/src/ — co-located test never executed in gate)
+
+_Added: 2026-06-12 | Task: Pure-function policy module — calibration + dec_
+
+## Unit-Test The Handler When State Sampling Is Async
+
+If a decision depends on the moment cross-cutting state is sampled within an async event lifecycle (handler ordering, race-safety clears, synchronous emits inside awaits), pure-helper tests give false confidence — they verify what is computed, not when state is read. Extract a pure assembler if you can, but also add at least one wiring test that drives the real handler chain (e.g. overflow→reactive-pending→agent_end→compact→retry) and asserts the observable output.
+
+(seen in: server/src/manager.ts — orchestrator cleared `pendingCompaction` before `harness.compact()`, pi emitted `session_compact` synchronously inside, handler read null; 42 pure tests passed)
 
 _Added: 2026-06-12 | Task: Task 5: orchestrator + main-session wiring_
 
-## Verify Prescriptive Lessons Were Actually Implemented
-
-When a prior lesson prescribes a specific artifact — here, docs/agents/testing.md mandated a wiring-level test driving the real state machine (overflow→reactive-pending→agent_end→compact→retry), not just extracted pure helpers — treat the prescription as unmet until you confirm the artifact exists. Do not trust "covered elsewhere" mitigation claims; verify them empirically with one grep (e.g., grepping manager.test.ts for compaction/overflow/surrender/reactive returned zero hits, exposing the spec reviewer's claim as false). Add the missing test at a real-execution layer: server/test/task-manager.test.ts already drives the real TaskManager through pi's faux provider, so queue faux responses (overflow stopReason:"error", compaction summary, retry) and assert on observable output like the dev-log "— reactive, Trigger: isContextOverflow." line that would have caught the original mislabel bug. Watch for environment gotchas that silently break such tests: harness.compact() needs auth even with a faux provider (register under provider:"openai" with a dummy OPENAI_API_KEY), the happy path needs three queued responses because compaction consumes one, and a too-small contextWindow trips the reserveTokens 32768 floor into a negative budget (use 40000). Lesson-honoring is a discipline: confirm the mandated thing was built, because partial application (helpers ✅, test ✗) looks done but leaves the exact failure mode untested.
-
-_Added: 2026-06-12 | Task: Task 6: subagent wiring in task-manager.ts_
-
 ## Apply Lessons To All Symmetric Call Sites
 
-When a prescriptive lesson (e.g. "wiring test for the compaction state machine") is triggered on one code path, audit for structurally symmetric call sites and apply the same fix to ALL of them — not just the one that surfaced it. In the context-compaction PR, the subagent path got wiring tests in server/test/task-manager.test.ts, but the symmetric main-session path in server/src/manager.ts was left with zero coverage (grep manager.test.ts for compaction/overflow/surrender returned 0 hits). Symmetric does not mean identical: manager.ts fires reactive compaction at agent_end (gated ~line 312) and surrenders by hand-building an AssistantMessage plus emitting message_start/message_end/turn_end bus events the web UI consumes — different, higher-risk code than the subagent's surrenderMessage flag. Add manager.test.ts wiring tests driving overflow→reactive→agent_end→compact→retry against the faux provider, and assert both the synthetic surrender diagnostic text and the exact bus-event sequence via toEqual; mutation-test them (drop a bus emit or no-op the retry prompt) to confirm they actually catch breakage.
+When a fix lands on one path, grep for structurally symmetric call sites and apply the same fix everywhere — don't trust "covered elsewhere" claims without a grep. Symmetric does not mean identical: a sibling path may use different emit primitives or different surrender semantics, so the test must drive each path's real emit sequence.
+
+(seen in: subagent path got wiring tests in server/test/task-manager.test.ts; symmetric server/src/manager.ts main-session path had zero coverage)
 
 _Added: 2026-06-12 | Task: Final review fixes: manager wiring test + diagnostics_
 
-## Verify Content Block Types Against Real Source
+## Pin Documented Design Gaps With Tests Not Patches
 
-When writing docstrings and tests that reference library-specific shapes (e.g.
-content-block types in @earendil-works/pi-ai), verify the vocabulary empirically
-against the actual TypeScript definitions (pi-ai/dist/types.d.ts) and real data
-(session transcripts under ~/.ytsejam/data/sessions/) rather than relying on a
-model's prior exposure to similar libraries. The real content-block types are
-text, toolCall (camelCase, payload in .arguments), and thinking (text in
-.thinking); tool_use and tool_result do not exist — a tool result is a top-level
-message with role:"toolResult" whose .content is an array of text blocks. This
-matters because estimateKeptSetTokens in server/src/compaction.ts counts only
-message text, so it actually drops toolCall.arguments JSON and thinking.thinking
-text while still counting toolResult message text — the opposite of what the
-original docstring and the straw-man test 4 claimed. Avoid self-consistent
-spec/test pairs that share the same wrong vocabulary; they validate each other
-and pass by exercising shapes that can never appear in production. Always grep
-the library types and a corpus of real transcripts before encoding any shape
-into tests or docs.
+When a test fails, check the plan/design doc's Open Questions before assuming an implementation bug — the "bug" may be the documented choice. Write tests to pin the documented behavior (assert the gap is preserved); never "fix" server code to satisfy a test that contradicts its own design doc. If a plan specifies an assertion that conflicts with its Open Questions, the design doc is authoritative — correct the test.
 
-_Added: 2026-06-12 | Task: Add estimateKeptSetTokens pure helper for issue #72 fix_
-
-## Pin Documented Design Gaps Not Assumptions
-
-When a test fails, check the plan/design doc before assuming an implementation bug — here `docs/plans/2026-06-13-compaction-pill.md` Open Question #1 (line 771) explicitly documented that a reactive retry-exhaust surrender emits no paired `compaction_end{status:"surrendered"}`, because the prior successful compaction already called `markCompactionEnd(opened, "succeeded")` and `handleCompactionTurnEnd` only calls `emitCompactionSurrender(opened)`. The plan author's own test contradicted that documented choice, so the fix was test-only in `server/test/compaction-events.test.ts` with zero changes to `server/src/manager.ts`. Write tests to pin documented behavior: assert NO `compaction_end{surrendered}` is emitted and that surrender is observable via the assistant diagnostic message instead. Avoid "fixing" server code to satisfy a test that conflicts with the design — and when a plan specifies an assertion that contradicts its own Open Questions, treat the design doc as authoritative and correct the test.
+(seen in: docs/plans/2026-06-13-compaction-pill.md Open Question #1 — reactive retry-exhaust emits no paired `compaction_end{surrendered}` by design; plan's own test contradicted it)
 
 _Added: 2026-06-13 | Task: Task 5 of compaction-pill — server vitest tests_
 
-## Mutation Test Pinned Design Gap Assertions
+## Match Parser Validation To The Authoritative Writer
 
-When reviewing whether test assertions are "strong enough" — especially pinned-design-gap tests like those in `server/test/compaction-events.test.ts` that assert the *absence* of an event (e.g. no `compaction_end{surrendered}` on the reactive retry-exhaust path) — don't rely on code-reading alone; apply mutation testing. Temporarily perturb the implementation (e.g. make `manager.ts:382` erroneously emit `compaction_end{surrendered}`, or suppress a `compaction_start` emit) and confirm each test fails at the expected line for the right reason, then restore the file and verify `git diff` is byte-clean. This catches the class of bug a pure inspection cannot: an assertion that always passes regardless of implementation state (e.g. a `toContain` on a stable string), which looks correct but gives zero regression protection. A guard like `expect(ends).toHaveLength(1)` is only proven to do real work once you've shown it flips to a failure when the gap it pins is "fixed." Bidirectional pins matter because they force a deliberate decision if someone later closes the gap.
+When writing a parser, match its validation to the writer's regex / validator, not the prose spec — drift lets semantically-invalid values flow downstream where `new Date(...).toISOString()` throws or the round-trip rejects, breaking self-healing reconcilers forever. Round-trip-validate dates (`new Date(\`${d}T00:00:00.000Z\`).toISOString().slice(0,10) === d`) and reuse the existing sibling parser instead of reinventing it. Add negative tests (empty tags, Feb-30, embedded newline) so permissive parsing can't regress.
 
-_Added: 2026-06-13 | Task: Two-stage review of Task 5 compaction-pill tests_
-
-## Detect Git Operations Via On-Disk State Files
-
-In `server/src/memory/store/auto-commit.ts`, detect in-progress git operations
-with synchronous `existsSync` checks against the actual state files
-(`.git/MERGE_HEAD`, `.git/rebase-merge/`, `.git/rebase-apply/`,
-`.git/CHERRY_PICK_HEAD`, `.git/REVERT_HEAD`, `.git/BISECT_LOG`) — never regex
-`git status --porcelain=v2 --branch`, whose output contains none of those
-markers, so the guard silently returns `false` and lets `git add -A`/`git
-commit` finalize a conflicted, half-merged tree. For the cadence counter,
-decrement with `pendingWrites -= n` inside a
-`while (pendingWrites >= AUTO_COMMIT_EVERY)` drain loop instead of resetting to
-`0`, otherwise concurrent `pendingWrites += 1` increments arriving during an
-in-flight commit are discarded and the "at most N uncommitted writes"
-crash-window guarantee breaks under concurrent bursts (measured: 31/50
-increments dropped). Critically, write tests for every guard and mutex you
-ship, not just counter arithmetic — pull forward a real merge-conflict
-regression test (assert HEAD did not advance, `MERGE_HEAD` still exists, a
-`/git operation in progress/` warning logged) and a 50-concurrent-call burst
-(assert ≥4 cadence commits) so defects surface at TDD red-state rather than in
-production. When a test needs scaffolding like a pre-commit hook to make
-behavior observable, verify it isn't inflating results by running the OLD
-buggy code with the same hook and confirming the old failure still reproduces.
-
-_Added: 2026-06-13 | Task: D7 auto-commit cadence for server/src/memory/git/_
-
-## Validate Parser Inputs Against SSOT Constraints
-
-When writing a parser (e.g. `parseObservationLine` in `server/src/memory/bridge/ltm-observer.ts`), match its validation to the authoritative write validator rather than the prose spec — here the cog SSOT regex at `server/src/memory/store/append.ts:7` (`/^-\s+\d{4}-\d{2}-\d{2}\s+\[.+\]:\s*.+$/`) requires non-empty tags and a non-empty body, so the parser must reject empty/whitespace-only tags, not treat them as optional. Shape-only date regexes (`\d{4}-\d{2}-\d{2}`) are insufficient: round-trip-validate calendar correctness via `const d = new Date(\`${date}T00:00:00.000Z\`); if (Number.isNaN(d.getTime()) || d.toISOString().slice(0,10) !== date) return null;`, copying the existing sibling parser at `server/src/memory/consolidated/observations-parser.ts:11-12` instead of reinventing it. Skipping these checks lets semantically-invalid values (`2026-13-99`, `2026-02-30`, `tags: []`) flow downstream where `new Date(...).toISOString()` throws "Invalid time value" or the cog write is rejected, silently breaking the mirror so the reconciler retries forever — the exact failure the self-healing design exists to prevent. Before implementing, check for an existing parser/validator in the repo and reuse its logic, and add negative tests (untagged-fails, empty/whitespace-only tags, invalid-date, Feb-30, embedded-newline) so permissive parsing can't regress.
+(seen in: server/src/memory/bridge/ltm-observer.ts `parseObservationLine` vs SSOT regex at server/src/memory/store/append.ts:7)
 
 _Added: 2026-06-13 | Task: Task 1 of 9 for PR 1 of the cog-LTM bridge roadmap_
 
@@ -115,20 +69,18 @@ When the spec says "field X is OMITTED (not set to undefined)" — common for ba
 
 _Added: 2026-06-13 | Task: Task 7 of 9 for PR 1 of the cog-LTM bridge roadmap_
 
-## Mutation-Test Defensive Try/Catch Assertions
+## Mutation-Test Assertions Whose Truth Could Be Structural Not Protective
 
-A test that says "we handle X gracefully" — typically a `try/catch` with a log line — may be asserting on a path that runs even WITHOUT the protection (e.g. the operation never threw in the first place because the input was benign). Before trusting any such test, temporarily REMOVE the catch (or change the log wording) and verify the test fails. For `LtmReconciler`'s tick-level error accounting (`consecutiveFailures++` on rejected mtime stat) we proved it by making the catch a no-op and watching the test still pass on the happy path — meaning the assertion's truth was structural, not protective. Apply the same mutant check to any "handles malformed input" / "logs warning on failure" / "tolerates X" test.
+An assertion may pass regardless of the code's behavior — a `try/catch` whose protected operation never threw, an absence-of-event check that's trivially true, a `toHaveLength(1)` on a stable shape. Before trusting any such test, perturb the implementation (no-op the catch, emit the forbidden event, suppress the expected one) and confirm it fails for the right reason; restore and verify `git diff` is byte-clean. If a test can't be made to fail by breaking what it pins, it has zero regression value.
 
-_Added: 2026-06-13 | Task: Task 6 of 9 for PR 1 of the cog-LTM bridge roadmap_
+(seen in: server/test/compaction-events.test.ts absence-of-event tests; LtmReconciler `consecutiveFailures` try/catch passed on the happy path)
 
-## Multi-Store Live Write Paths Must Preserve Atomicity
+_Added: 2026-06-13 | Task: Mutation-test discipline (merged from 2 entries)_
 
-When migrating a call site from a single-store write to a multi-store write (e.g. cog observation → cog SSOT + best-effort LTM mirror in `server/src/tools/cog.ts`), the migration must preserve PER-INVOCATION atomicity: if the original `append("observations.md", text)` accepted multi-line `text` and committed as one append, the migrated path must PARSE all lines first, THEN write all lines through `recordObservation()` — never parse-then-write per line, which produces partial writes on the first parse error and leaves the cog SSOT inconsistent with what LTM sees. Tests must drive the multi-line case through the full migrated path, not just single-line happy paths. Generalizes to any "fanout from N writes to N×M sub-writes" refactor: the outer invariant (atomicity, dedup, ordering) must survive the fanout.
+## Preserve Per-Invocation Atomicity Across Fanout Refactors
+
+When migrating a single-store write to a multi-store write (cog → cog SSOT + best-effort mirror), preserve per-invocation atomicity: parse ALL lines first, then write all lines, never parse-then-write per line — partial writes on the first parse error leave the stores inconsistent. Tests must drive the multi-line case through the full migrated path, not just single-line happy paths. Generalizes to any "fanout from N writes to N×M sub-writes" refactor — the outer invariant (atomicity, dedup, ordering) must survive the fanout.
+
+(seen in: server/src/tools/cog.ts multi-line observation append → recordObservation per-line migration)
 
 _Added: 2026-06-13 | Task: Task 5 of 9 for PR 1 of the cog-LTM bridge roadmap_
-
-## Canonical Test Helpers and Clean Git Commits
-
-When writing server tests, always use the canonical `setupFaux()` and `makeManager()` helpers from `server/test/helpers.ts` to generate `AppDeps` instead of creating minimal custom stubs with `as any` casts. Minimal stubs couple tests tightly to `createApp`'s exact initialization footprint, causing cryptic failures if new dependency methods are touched later. Additionally, ensure proper Git hygiene by squashing WIP commits into a single clean semantic commit containing all code changes, avoiding empty semantic commits at HEAD. Finally, keep route definitions logically grouped by resource in `server/src/server.ts` so endpoints do not arbitrarily interweave.
-
-_Added: 2026-06-14 | Task: Task 1 — Server: expose SkillsStore on AppDeps and add GE_

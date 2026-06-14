@@ -189,8 +189,10 @@ skipped / errors`). Tail the systemd journal (`journalctl --user -fu
 ytsejam`) to watch the bridge work; absence of these lines after the
 default 5-minute interval is itself a signal.
 
-## Snapshot Race-Cleared State Before Downstream Awaits
+## Snapshot Race-Cleared State Before A Downstream Await
 
-When code eagerly clears state for race-safety (e.g., `runCompactionIfPending` nulling `opened.compaction.pendingCompaction` before awaiting `harness.compact()`), treat that state as gone for any downstream or third-party listener — pi-agent-core's synchronous, awaited `session_compact` handler ran after the clear and read `null`, so observability silently fell back to `"proactive"` + `"session_compact fired"`, mislabeling every reactive compaction. Capture an explicit snapshot before clearing (`const pendingSnapshot = { ...pending }`), thread it through the return value (`RunCompactionResult.pending`), and write observability records caller-side after the orchestrator returns rather than inside the event handler. Keep the third-party event handler enrichment-only (caching `lastCompactionDetails`), since labels derived from live manager state inside it are inherently racy. Add a wiring test that asserts the snapshot drives the labels (trigger/reason/tokensBefore for the reactive case) — it catches this regression immediately. Generally: never derive observer-visible facts from mutable state that a race-safety clear has already destroyed; snapshot it and pass it explicitly.
+When code eagerly clears state for race-safety before an `await`, treat that state as gone for any downstream or third-party listener — third-party libraries may emit synchronously inside the awaited call and read the cleared state. Capture an explicit snapshot before clearing, thread it through the return value, and write observer-visible records caller-side after the orchestrator returns. Add a wiring test that asserts the snapshot drives the labels — pure-helper tests don't catch this. Generally: never derive observer-visible facts from mutable state a race-safety clear has destroyed.
+
+(seen in: `runCompactionIfPending` nulled `pendingCompaction` before `harness.compact()`; pi's `session_compact` handler ran synchronously inside, read null, mislabeled every reactive compaction as proactive)
 
 _Added: 2026-06-12 | Task: Task 5: orchestrator + main-session wiring_

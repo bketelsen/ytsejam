@@ -1,32 +1,27 @@
 # Documentation — Project Lessons
 
-Lessons learned from failures and fix cycles.
-Auto-appended by the lessons skill.
+Rules learned from fix cycles. Cap: 30 entries — prune oldest if exceeded.
 
 > Structural / "how the docs are organized" notes (not lessons) belong in
 > [`OVERVIEW.md`](OVERVIEW.md) § Subsystem docs and in the relevant subsystem
 > doc itself. This file is an append-only log of `## <Title>` lesson sections
-> captured by `contrib/skills/lessons/SKILL.md`. The repo also carries
-> user-facing top-level docs (`USAGE.md`, `MEMORY.md`) and a `docs/` tree of
-> plans, specs, audits, and bugs — see the repo `README.md` for the full map.
+> captured by `contrib/skills/lessons/SKILL.md`.
 
 ## Verify Cross Reference Targets Before Linking
 
-When adding a doc cross-reference, open the target file and confirm its actual content matches the link's promise — do not trust the filename or the task brief. In README.md's Security model section, a link meant to help adopters "harden further" pointed at `docs/agents/tooling.md`, which is an auto-generated lessons-learned log (JSDoc and import-hoisting notes), not the intended `docs/agents/tools.md` (the real tool-surface and registration reference under `server/src/tools/`). A wrong link is worse than none: it wastes the reader's attention precisely when they need accurate guidance and undercuts the section's credibility. Treat brief-supplied paths as fallible — `tooling.md` vs `tools.md` is exactly the kind of near-identical name a brief author conflates, so reviewers must validate them rather than implement literally. Also scrub private details from public docs (e.g., private hostnames) and sanity-check quantitative claims (the `node_modules` size was ~364 MB, not ~200 MB).
+When adding a doc cross-reference, open the target file and confirm its actual content matches the link's promise — do not trust the filename or the task brief. Near-identical names (`tooling.md` vs `tools.md`) are the exact kind of conflation a brief author makes; a wrong link is worse than none — it wastes reader attention precisely when accurate guidance is needed. Sanity-check quantitative claims against reality too.
 
-_Added: 2026-06-12 | Task: Task 3 of release-public-prep: Add a `## Prerequisites` sect_
+(seen in: README.md Security section linked to docs/agents/tooling.md — a lessons log — when intent was docs/agents/tools.md, the tool-surface reference)
 
-## Derive Script Docs By Mentally Executing
+_Added: 2026-06-12 | Task: Release-public-prep Task 3_
 
-When writing adopter-facing prose in `deploy/README.md` (or any doc) that describes what a script does, derive each claim by mentally executing the script's actual filesystem operations — not by paraphrasing its comments or intent. For example, `deploy/migrate-to-folded.sh` runs `mv "$LEGACY" "$TARGET"`, which renames the store *to* `~/.ytsejam/data/memory`; describing it as moving the store *under* that path is wrong because `mv` does not nest the source inside the destination. The existing brief-author pre-check (re-grep HEAD before claiming file state) does not catch this class of derived-prose error, so explicitly trace the on-disk result of `mv`, `cp`, `rm`, and similar commands before asserting outcomes. Additionally, when a cleanup script intentionally retains an artifact as a rollback safety net (e.g. the `~/.local/bin/cogmemory` binary) and announces it only in a runtime log line, enumerate that retained artifact in the doc too, since README readers won't see the log until after they run the script.
+## Verify External Behavior Against The Artifact Not Your Memory
 
-_Added: 2026-06-12 | Task: Task 5 — make migration scripts fresh-install-friendly + restructure deploy/READM_
+Whether the artifact is a command (curl output, exit code), a script (`mv`/`cp`/`rm` semantics), or a config file the deploy unconditionally overwrites — run it, read it end-to-end, `ls` the real directory. Paraphrasing inline comments, man pages, or your memory of the artifact ships defects the brief-author pre-check (re-grep HEAD) doesn't catch, because the wrong claim is in derived prose, not in a code identifier. For scripts that retain artifacts as rollback safety nets, enumerate the retained item in the doc — README readers won't see the runtime log line.
 
-## Verify Command Behavior Before Documenting It
+(seen in: README.md said `curl -fsS ... /api/models` would print `unauthorized`; `-f` suppresses 4xx bodies and exits 22. Said hand-edit `~/.config/systemd/user/ytsejam.service`; `deploy/install.sh` re-copies the unit unconditionally. Under-enumerated `rm -rf ~/.ytsejam`. Said `migrate-to-folded.sh` moves the store "under" `~/.ytsejam/data/memory`; `mv` renames it TO that path.)
 
-When writing docs prose that claims what a user will see from a command (curl output, error-message format, exit behavior) or what a script writes or overwrites, RUN the command and READ the script's full body first — paraphrasing inline comments or a man page is not enough. Task 6 shipped three such defects in README.md: it said users would see `unauthorized` from `curl -fsS .../api/models`, but `curl -f` suppresses the 4xx body and exits 22 (running it once exposes this; the fix dropped `-f`); it told users to hand-edit `~/.config/systemd/user/ytsejam.service` to fix the node PATH, but `deploy/install.sh:38` copies the unit file unconditionally and silently reverts that edit on re-install (reading install.sh:29-38, not just one line, exposes this; the durable fix edits `deploy/ytsejam.service` in the repo); and it under-enumerated `rm -rf ~/.ytsejam` as deleting only sessions/memory/schedules/env when the data dir also holds user-authored persona/ and skills/ plus tasks/, archived/, workdirs/, and the sqlite index (an `ls` of the real dir exposes this). The discipline: verify external behavior against the actual artifact, never against your memory of it. This is the command-behavior sibling of "Derive Script Docs By Mentally Executing" (which covers prose about non-interactive script effects) — apply that lesson for what a script does, and this one for what a command or script visibly outputs or overwrites.
-
-_Added: 2026-06-12 | Task: Task 6 — README polish: add First run / Uninstall / Trou_
+_Added: 2026-06-12 | Task: Release-public-prep Tasks 5–6 (merged from 2 entries)_
 
 ## Precompute Markdown Slugs Before Linking
 
@@ -34,9 +29,11 @@ When you author a heading that another section will link to, compute the expecte
 
 _Added: 2026-06-13 | Task: Tasks 1-6 of USAGE+MEMORY docs — multiple anchor fix_
 
-## Name The Canonical Sibling Reference Form
+## Name The Canonical Sibling Reference Form In The Brief
 
-When a convention has multiple plausible sibling forms across docs, such as the wiki-link variants `[[wiki/people/liam]]` versus `[[wiki/people/liam/index]]`, the brief must name which form is canonical so the implementer does not guess and ship the wrong one. The canonical no-`/index` form defined in WIKI-TIER.md was missed initially and needed fix-cycle commit `ab6a1e3` to align the MEMORY.md examples. Run a sibling-doc consistency scan for any factual claim that crosses into another doc's territory before dispatching. Cite the source of truth rather than restating it from memory.
+When a convention has multiple plausible sibling forms (e.g. `[[wiki/people/liam]]` vs `[[wiki/people/liam/index]]`), the brief must name which form is canonical so the implementer doesn't guess and ship the wrong one. Run a sibling-doc consistency scan for any factual claim that crosses into another doc's territory before dispatching; cite the source of truth rather than restating it from memory.
+
+(seen in: WIKI-TIER.md canonical no-`/index` form missed in MEMORY.md examples; fix-cycle commit ab6a1e3 to align)
 
 _Added: 2026-06-13 | Task: Task 4 quality fix — wiki-link form alignment with WIKI_
 
@@ -46,8 +43,10 @@ When a cookbook or recipe section specifies file-level schemas such as frontmatt
 
 _Added: 2026-06-13 | Task: Task 5 quality fix — wiki frontmatter schema correctn_
 
-## Resolve Contradictory Authority Claims Once
+## Reconcile Conflicting Authority Claims In One Pass
 
-When two adjacent sections assert the same authority claim in conflicting ways, choose the more accurate framing and align the other to it in a single pass. In USAGE.md §2.5 the table was initially called the SSOT while the note below correctly named the installed-skills directory as the SSOT; the fix was to make the table a mirror of the SSOT, not the SSOT itself. Scan the whole doc for symmetric authority statements and reconcile them deliberately rather than leaving the reader to spot the conflict. Establish which artifact is canonical and phrase every reference to defer to it.
+When two adjacent sections assert the same authority claim in conflicting ways, choose the more accurate framing and align the other to it in a single pass — don't leave the reader to spot the conflict. Scan the whole doc for symmetric authority statements and reconcile them deliberately. Establish which artifact is canonical and phrase every reference to defer to it.
+
+(seen in: USAGE.md §2.5 — table called the SSOT while the note below correctly named the installed-skills directory as SSOT; fix made the table a mirror)
 
 _Added: 2026-06-13 | Task: Task 2 quality fix — §2.5 catalog SSOT framing_
