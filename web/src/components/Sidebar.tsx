@@ -68,7 +68,7 @@ export function Sidebar({
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-      <div className="flex items-center gap-2 p-3">
+      <div className="flex items-center gap-2 px-3 pb-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <Button onClick={onNew} className="flex-1">
           New chat
         </Button>

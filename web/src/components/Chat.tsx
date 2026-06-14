@@ -108,7 +108,7 @@ export function Chat({
         consider guarding the entire <header> on (mobile || headerRight) to avoid a
         ~40px empty bar with a bottom border on desktop.
       */}
-      <header className="flex items-center gap-2 border-b border-border px-2 py-1.5">
+      <header className="flex items-center gap-2 border-b border-border px-2 pt-[calc(0.375rem+env(safe-area-inset-top))] pb-1.5">
         <Button variant="ghost" size="icon" onClick={onMenuClick} aria-label="Open sessions" className="md:hidden">
           <Menu />
         </Button>
