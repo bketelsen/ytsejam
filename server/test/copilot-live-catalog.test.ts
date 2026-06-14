@@ -260,6 +260,26 @@ describe("loadLiveCopilotModels", () => {
     assert.equal(result.overlay.length, 0);
   });
 
+  it("network error includes cause chain in log", async () => {
+    const cause = new Error("connect ECONNREFUSED 127.0.0.1:443");
+    const err = new TypeError("fetch failed");
+    (err as any).cause = cause;
+    const fetchImpl = (async () => { throw err; }) as any;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: fetchImpl });
+      const allWarnArgs = warnSpy.mock.calls.flat().join(" ");
+      assert.ok(allWarnArgs.includes("ECONNREFUSED"), `cause not in log: ${allWarnArgs}`);
+      assert.ok(allWarnArgs.includes("fetch failed"), `original message not in log: ${allWarnArgs}`);
+      assert.ok(
+        allWarnArgs.includes("https://api.individual.githubcopilot.com/models"),
+        `fetch URL not in log: ${allWarnArgs}`,
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("malformed JSON — returns empty", async () => {
     const fetchImpl = (async () => new Response("not json {{{", { status: 200 })) as any;
     const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: fetchImpl });

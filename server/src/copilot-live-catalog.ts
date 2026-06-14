@@ -130,6 +130,33 @@ export function sanitize(cause: unknown): string {
   return text.replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]");
 }
 
+function describeErrorPart(err: unknown): string {
+  if (err instanceof Error) {
+    const name = err.name || "Error";
+    return err.message ? `${name}: ${err.message}` : name;
+  }
+  return String(err);
+}
+
+function describeFetchError(err: unknown): string {
+  const causes: string[] = [];
+  const seen = new Set<object>();
+  let current = err;
+
+  while (current && typeof current === "object" && "cause" in current) {
+    if (seen.has(current)) break;
+    seen.add(current);
+
+    const cause = (current as { cause?: unknown }).cause;
+    if (cause === undefined || cause === null) break;
+    causes.push(describeErrorPart(cause));
+    current = cause;
+  }
+
+  const root = describeErrorPart(err);
+  return causes.length ? `${root} (cause: ${causes.join(" -> ")})` : root;
+}
+
 function resolveBaseUrl(auth: PiAuthStore): string {
   // Reuse the pi-ai OAuth provider's modifyModels hook to compute the
   // correct enterprise-vs-individual baseUrl for this token. We probe with
@@ -198,12 +225,12 @@ export async function loadLiveCopilotModels(
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
-    console.warn(`github-copilot /models fetch failed: ${sanitize(err)}; using static catalog`);
+    console.warn(`github-copilot /models fetch failed (${baseUrl}/models): ${sanitize(describeFetchError(err))}; using static catalog`);
     return empty;
   }
 
   if (!res.ok) {
-    console.warn(`github-copilot /models returned HTTP ${res.status}; using static catalog`);
+    console.warn(`github-copilot /models returned HTTP ${res.status} (${baseUrl}/models); using static catalog`);
     return empty;
   }
 
@@ -211,7 +238,7 @@ export async function loadLiveCopilotModels(
   try {
     body = (await res.json()) as CopilotModelsListResponse;
   } catch (err) {
-    console.warn(`github-copilot /models response malformed (parse error): ${sanitize(err)}; using static catalog`);
+    console.warn(`github-copilot /models response malformed (parse error) (${baseUrl}/models): ${sanitize(err)}; using static catalog`);
     return empty;
   }
 
