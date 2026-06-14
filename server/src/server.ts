@@ -12,6 +12,7 @@ import { listAvailableModels } from "./models.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import type { SchedulerService } from "./scheduler.ts";
+import type { SkillsStore } from "./skills.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type { WorkdirStore } from "./workdirs.ts";
 
@@ -26,6 +27,8 @@ export interface AppDeps {
   authStore: PiAuthStore;
   /** Optional: when supplied, exposes POST /api/sessions/:id/cwd. */
   workdirs?: WorkdirStore;
+  /** Optional: when supplied, exposes GET /api/skills. */
+  skills?: SkillsStore;
 }
 
 export function createApp(deps: AppDeps) {
@@ -226,6 +229,11 @@ export function createApp(deps: AppDeps) {
     if (typeof body.content !== "string") return c.json({ error: "content is required" }, 400);
     await persona.save(body.content);
     return c.json({ ok: true });
+  });
+
+  app.get("/api/skills", async (c) => {
+    const skills = deps.skills ? await deps.skills.list() : [];
+    return c.json({ skills });
   });
 
   app.get("/api/models", (c) =>
