@@ -32,29 +32,56 @@ describe("createCogTools", () => {
   });
 
   test("maps tool params directly onto memory primitives", async () => {
-    const read = vi.spyOn(memory, "read").mockResolvedValue({ content: "", found: true });
+    const read = vi
+      .spyOn(memory, "read")
+      .mockResolvedValue({ content: "", found: true });
     const patch = vi.spyOn(memory, "patch").mockResolvedValue({ ok: true });
     const move = vi.spyOn(memory, "move").mockResolvedValue({ ok: true });
     const tools = createCogTools();
-    await tool(tools, "cog_read").execute("t1", { path: "a.md", section: "## S", start: 1, end: 5 });
-    await tool(tools, "cog_patch").execute("t2", { path: "a.md", old_text: "x", new_text: "y" });
+    await tool(tools, "cog_read").execute("t1", {
+      path: "a.md",
+      section: "## S",
+      start: 1,
+      end: 5,
+    });
+    await tool(tools, "cog_patch").execute("t2", {
+      path: "a.md",
+      old_text: "x",
+      new_text: "y",
+    });
     await tool(tools, "cog_move").execute("t3", { from: "a.md", to: "b.md" });
-    expect(read).toHaveBeenCalledWith("a.md", { section: "## S", start: 1, end: 5 });
+    expect(read).toHaveBeenCalledWith("a.md", {
+      section: "## S",
+      start: 1,
+      end: 5,
+    });
     expect(patch).toHaveBeenCalledWith("a.md", "x", "y");
     expect(move).toHaveBeenCalledWith("a.md", "b.md");
   });
 
   test("cog_read returns the content as plain text", async () => {
-    vi.spyOn(memory, "read").mockResolvedValue({ content: "# Hot\nstate", found: true });
-    const r = await tool(createCogTools(), "cog_read").execute("t1", { path: "hot-memory.md" });
+    vi.spyOn(memory, "read").mockResolvedValue({
+      content: "# Hot\nstate",
+      found: true,
+    });
+    const r = await tool(createCogTools(), "cog_read").execute("t1", {
+      path: "hot-memory.md",
+    });
     expect(text(r)).toBe("# Hot\nstate");
   });
 
   test("envelope results render as pretty JSON", async () => {
-    vi.spyOn(memory, "health").mockResolvedValue({ ok: true, memory_root: "/tmp/mem", files: 0 });
-    vi.spyOn(memory, "Controller").mockImplementation(() => ({
-      list: () => [{ id: "dakota", path: "projects/dakota" }],
-    }) as any);
+    vi.spyOn(memory, "health").mockResolvedValue({
+      ok: true,
+      memory_root: "/tmp/mem",
+      files: 0,
+    });
+    vi.spyOn(memory, "Controller").mockImplementation(
+      () =>
+        ({
+          list: () => [{ id: "dakota", path: "projects/dakota" }],
+        }) as any,
+    );
     const r = await tool(createCogTools(), "cog_rpc").execute("t1", {
       method: "domains.list",
     });
@@ -78,7 +105,10 @@ describe("createCogTools", () => {
       method: "domain_summary",
       params: { domain: "dakota", since: "7d" },
     });
-    expect(domainSummary).toHaveBeenCalledWith({ domain: "dakota", since: "7d" });
+    expect(domainSummary).toHaveBeenCalledWith({
+      domain: "dakota",
+      since: "7d",
+    });
   });
 
   test("cog_rpc schema restricts method to the allowed envelope set", () => {
@@ -105,17 +135,35 @@ describe("createCogTools", () => {
   });
 
   test("cog_rpc reconcile_now dispatches with no opts and returns the stats", async () => {
-    const stats = { scannedFiles: 3, scannedLines: 42, replayed: 7, skipped: 1, errors: 0 };
-    const reconcileNow = vi.spyOn(memory, "reconcileNow").mockResolvedValue(stats);
-    const r = await tool(createCogTools(), "cog_rpc").execute("t1", { method: "reconcile_now" });
+    const stats = {
+      scannedFiles: 3,
+      scannedLines: 42,
+      replayed: 7,
+      rebuilt: 0,
+      pruned: 0,
+      skipped: 1,
+      errors: 0,
+    };
+    const reconcileNow = vi
+      .spyOn(memory, "reconcileNow")
+      .mockResolvedValue(stats);
+    const r = await tool(createCogTools(), "cog_rpc").execute("t1", {
+      method: "reconcile_now",
+    });
     expect(reconcileNow).toHaveBeenCalledWith({});
     expect(text(r)).toContain('"replayed": 7');
   });
 
   test("cog_rpc reconcile_now threads force=true through to memory.reconcileNow", async () => {
-    const reconcileNow = vi
-      .spyOn(memory, "reconcileNow")
-      .mockResolvedValue({ scannedFiles: 0, scannedLines: 0, replayed: 0, skipped: 0, errors: 0 });
+    const reconcileNow = vi.spyOn(memory, "reconcileNow").mockResolvedValue({
+      scannedFiles: 0,
+      scannedLines: 0,
+      replayed: 0,
+      rebuilt: 0,
+      pruned: 0,
+      skipped: 0,
+      errors: 0,
+    });
     await tool(createCogTools(), "cog_rpc").execute("t1", {
       method: "reconcile_now",
       params: { force: true },
@@ -137,7 +185,9 @@ describe("createCogTools", () => {
     const err = await tool(createCogTools(), "cog_rpc")
       .execute("t1", { method: "reconcile_now", params: { bogus: 1 } })
       .catch((e) => e);
-    expect(err.message).toContain("reconcile_now: invalid params: unknown param key: bogus");
+    expect(err.message).toContain(
+      "reconcile_now: invalid params: unknown param key: bogus",
+    );
     expect(reconcileNow).not.toHaveBeenCalled();
   });
 
@@ -165,15 +215,26 @@ describe("audit regressions", () => {
   afterEach(() => vi.restoreAllMocks());
 
   test("model-supplied role is ignored after RBAC removal", async () => {
-    const read = vi.spyOn(memory, "read").mockResolvedValue({ content: "", found: true });
+    const read = vi
+      .spyOn(memory, "read")
+      .mockResolvedValue({ content: "", found: true });
     const tools = createCogTools();
-    await tool(tools, "cog_read").execute("t1", { path: "a.md", role: "owner" } as any);
-    expect(read).toHaveBeenCalledWith("a.md", { section: undefined, start: undefined, end: undefined });
+    await tool(tools, "cog_read").execute("t1", {
+      path: "a.md",
+      role: "owner",
+    } as any);
+    expect(read).toHaveBeenCalledWith("a.md", {
+      section: undefined,
+      start: undefined,
+      end: undefined,
+    });
   });
 
   test("cog_read tolerates a null result", async () => {
     vi.spyOn(memory, "read").mockResolvedValue(null as any);
-    const r = await tool(createCogTools(), "cog_read").execute("t1", { path: "a.md" });
+    const r = await tool(createCogTools(), "cog_read").execute("t1", {
+      path: "a.md",
+    });
     expect(text(r)).toBe("");
   });
 });

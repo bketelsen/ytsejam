@@ -59,12 +59,18 @@ const notImplemented = (pr: string): never => {
 };
 
 /** Read a memory file or section from the store; filled in PR-1a. */
-export async function read(path: string, options: ReadOptions = {}): Promise<ReadResult> {
+export async function read(
+  path: string,
+  options: ReadOptions = {},
+): Promise<ReadResult> {
   return store.read(path, options);
 }
 
 /** Write a complete memory file atomically; filled in PR-1a. */
-export async function write(path: string, content: string): Promise<WriteResult> {
+export async function write(
+  path: string,
+  content: string,
+): Promise<WriteResult> {
   return store.write(path, content);
 }
 
@@ -111,15 +117,23 @@ type ReconcilerLike = {
       scannedFiles: number;
       scannedLines: number;
       replayed: number;
+      rebuilt: number;
+      pruned: number;
       skipped: number;
       errors: number;
     };
     lastError?: { message: string; at: string };
   };
-  reconcile(opts?: { force?: boolean }): Promise<{
+  reconcile(opts?: {
+    force?: boolean;
+    rebuild?: boolean;
+    prune?: boolean;
+  }): Promise<{
     scannedFiles: number;
     scannedLines: number;
     replayed: number;
+    rebuilt: number;
+    pruned: number;
     skipped: number;
     errors: number;
   }>;
@@ -141,7 +155,11 @@ export function attachReconciler(r: ReconcilerLike | null): void {
  * reconciler is attached (the CLI handles this and prints a friendly
  * 'no reconciler attached' message).
  */
-export async function reconcileNow(opts?: { force?: boolean }) {
+export async function reconcileNow(opts?: {
+  force?: boolean;
+  rebuild?: boolean;
+  prune?: boolean;
+}) {
   if (!attachedReconciler) {
     throw new Error("memory.reconcileNow: no reconciler attached");
   }
@@ -214,7 +232,11 @@ export async function recordObservation(args: {
 }
 
 /** Replace an exact text occurrence in a memory file; filled in PR-1a. */
-export async function patch(path: string, oldText: string, newText: string): Promise<OkResult> {
+export async function patch(
+  path: string,
+  oldText: string,
+  newText: string,
+): Promise<OkResult> {
   return store.patch(path, oldText, newText);
 }
 
@@ -262,17 +284,23 @@ export async function sessionBrief(params: object = {}): Promise<SessionBrief> {
 }
 
 /** Scan memory for housekeeping thresholds and stale items; filled in PR-2a. */
-export async function housekeepingScan(params: object = {}): Promise<HousekeepingScan> {
+export async function housekeepingScan(
+  params: object = {},
+): Promise<HousekeepingScan> {
   return consolidated.housekeepingScan(params);
 }
 
 /** Return unchecked action items, optionally scoped to a domain; filled in PR-2a. */
-export async function openActions(params: OpenActionsParams = {}): Promise<OpenActionsResult> {
+export async function openActions(
+  params: OpenActionsParams = {},
+): Promise<OpenActionsResult> {
   return consolidated.openActions(params);
 }
 
 /** Summarize one domain's hot memory, actions, and recent observations; filled in PR-2a. */
-export async function domainSummary(params: DomainSummaryParams): Promise<DomainSummaryResult> {
+export async function domainSummary(
+  params: DomainSummaryParams,
+): Promise<DomainSummaryResult> {
   return consolidated.domainSummary(params);
 }
 
@@ -284,27 +312,37 @@ export async function recentObservations(
 }
 
 /** Detect observation clusters by tag, keyword, and thread candidate; filled in PR-2b. */
-export async function clusterCheck(params: ClusterCheckParams = {}): Promise<Cluster> {
+export async function clusterCheck(
+  params: ClusterCheckParams = {},
+): Promise<Cluster> {
   return consolidatedClusterCheck(params);
 }
 
 /** Audit entity registries for format, age, and temporal issues; filled in PR-2b. */
-export async function entityAudit(params: EntityAuditParams = {}): Promise<EntityAuditResult> {
+export async function entityAudit(
+  params: EntityAuditParams = {},
+): Promise<EntityAuditResult> {
   return consolidatedEntityAudit(params);
 }
 
 /** Find unlinked entity mentions that should become wiki-links; filled in PR-2b. */
-export async function linkAudit(params: Record<string, unknown> = {}): Promise<LinkAuditResult> {
+export async function linkAudit(
+  params: Record<string, unknown> = {},
+): Promise<LinkAuditResult> {
   return consolidatedLinkAudit(params);
 }
 
 /** Compute the reverse wiki-link index; filled in PR-2b. */
-export async function linkIndexCompute(params: Record<string, unknown> = {}): Promise<LinkIndexResult> {
+export async function linkIndexCompute(
+  params: Record<string, unknown> = {},
+): Promise<LinkIndexResult> {
   return consolidatedLinkIndexCompute(params);
 }
 
 /** Check active scenario files for due and overdue reviews; filled in PR-2b. */
-export async function scenarioCheck(params: Record<string, unknown> = {}): Promise<ScenarioCheckResult> {
+export async function scenarioCheck(
+  params: Record<string, unknown> = {},
+): Promise<ScenarioCheckResult> {
   return consolidatedScenarioCheck(params);
 }
 
@@ -319,6 +357,8 @@ export async function wikiIndexCompute(): Promise<WikiIndexResult> {
 }
 
 /** Compute the L0 summary index, optionally scoped to a domain; filled in PR-2c. */
-export async function l0index(params: L0IndexParams = {}): Promise<L0IndexResult> {
+export async function l0index(
+  params: L0IndexParams = {},
+): Promise<L0IndexResult> {
   return computeL0Index(params);
 }

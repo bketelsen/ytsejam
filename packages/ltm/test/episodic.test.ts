@@ -85,22 +85,31 @@ describe("decay", () => {
 
 describe("salience", () => {
   it("ranks preference statements above filler", () => {
-    const pref = scoreSalience("I really prefer dark roast coffee over light.", "user");
+    const pref = scoreSalience(
+      "I really prefer dark roast coffee over light.",
+      "user",
+    );
     const filler = scoreSalience("ok thanks!", "user");
     expect(pref).toBeGreaterThan(0.6);
     expect(filler).toBeLessThanOrEqual(0.1);
   });
 
   it("weights user turns above assistant turns", () => {
-    const text = "The deploy pipeline uses Docker and Kubernetes in production.";
-    expect(scoreSalience(text, "user")).toBeGreaterThan(scoreSalience(text, "assistant"));
+    const text =
+      "The deploy pipeline uses Docker and Kubernetes in production.";
+    expect(scoreSalience(text, "user")).toBeGreaterThan(
+      scoreSalience(text, "assistant"),
+    );
   });
 });
 
 describe("chunking", () => {
   it("keeps short turns whole and splits long ones under the ceiling", () => {
     expect(chunkText("short turn", 100)).toEqual(["short turn"]);
-    const long = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} talks about topic ${i}.`).join(" ");
+    const long = Array.from(
+      { length: 40 },
+      (_, i) => `Sentence number ${i} talks about topic ${i}.`,
+    ).join(" ");
     const chunks = chunkText(long, 300);
     expect(chunks.length).toBeGreaterThan(1);
     for (const c of chunks) expect(c.length).toBeLessThanOrEqual(300);
@@ -113,7 +122,9 @@ describe("episodic store persistence", () => {
     const dir = tmpDir();
     const store = EpisodicStore.open(dir);
     store.upsert(record());
-    store.upsert(record({ id: "s1/e2#0", entryId: "e2", text: "Another memory." }));
+    store.upsert(
+      record({ id: "s1/e2#0", entryId: "e2", text: "Another memory." }),
+    );
 
     const reopened = EpisodicStore.open(dir);
     expect(reopened.size).toBe(2);
@@ -135,6 +146,53 @@ describe("episodic store persistence", () => {
     const raw = fs.readFileSync(path.join(dir, "episodic.jsonl"), "utf8");
     expect(raw).not.toContain("TypeScript");
   });
+
+  it("redactMany tombstones multiple records with one compacted JSONL line per id", () => {
+    const dir = tmpDir();
+    const store = EpisodicStore.open(dir);
+    store.upsert(
+      record({ id: "a", entryId: "a", text: "alpha", salience: 0.8 }),
+    );
+    store.upsert(
+      record({ id: "b", entryId: "b", text: "bravo", salience: 0.7 }),
+    );
+    store.upsert(
+      record({ id: "c", entryId: "c", text: "charlie", salience: 0.6 }),
+    );
+
+    expect(store.redact("b")).toBe(true);
+    const rawAfterOneRedaction = fs
+      .readFileSync(path.join(dir, "episodic.jsonl"), "utf8")
+      .trim()
+      .split("\n");
+    expect(rawAfterOneRedaction).toHaveLength(3);
+
+    const count = store.redactMany(["a", "b", "c", "missing"]);
+    expect(count).toBe(2);
+
+    for (const id of ["a", "b", "c"]) {
+      const r = store.get(id)!;
+      expect(r.state).toBe("redacted");
+      expect(r.text).toBe("");
+      expect(r.salience).toBe(0);
+      expect(r.embedding).toBeUndefined();
+    }
+
+    const raw = fs
+      .readFileSync(path.join(dir, "episodic.jsonl"), "utf8")
+      .trim()
+      .split("\n");
+    expect(raw).toHaveLength(3);
+    expect(raw.map((line) => JSON.parse(line).id).sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(raw.join("\n")).not.toContain("alpha");
+    expect(raw.join("\n")).not.toContain("bravo");
+    expect(raw.join("\n")).not.toContain("charlie");
+    expect(store.redactMany(["a", "b", "c"])).toBe(0);
+  });
 });
 
 describe("consolidation", () => {
@@ -155,7 +213,13 @@ describe("consolidation", () => {
       );
     }
     // A recent record must not be touched.
-    store.upsert(record({ id: "s1/new#0", entryId: "new", timestamp: "2026-05-30T00:00:00.000Z" }));
+    store.upsert(
+      record({
+        id: "s1/new#0",
+        entryId: "new",
+        timestamp: "2026-05-30T00:00:00.000Z",
+      }),
+    );
 
     const result = await consolidate(
       store,

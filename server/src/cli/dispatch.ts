@@ -4,7 +4,7 @@ const USAGE = `\
 ytsejam CLI
 
 Usage:
-  ytsejam ltm replay [--force] [--rebuild]
+  ytsejam ltm replay [--force] [--rebuild] [--prune]
                                   Open LTM, run one reconcile pass, print JSON stats.
   ytsejam ltm health              Print LTM bridge health (one-off tick).
 
@@ -52,7 +52,8 @@ export async function runCli(argv: string[]): Promise<number | null> {
   if (sub === "replay") {
     const force = rest.includes("--force");
     const rebuild = rest.includes("--rebuild");
-    return ltmReplay({ force, rebuild });
+    const prune = rest.includes("--prune");
+    return ltmReplay({ force, rebuild, prune });
   }
 
   if (sub === "health") {
@@ -64,8 +65,6 @@ export async function runCli(argv: string[]): Promise<number | null> {
     return 0;
   }
 
-  process.stderr.write(
-    `ytsejam ltm: unknown subcommand "${sub}"\n\n${USAGE}`,
-  );
+  process.stderr.write(`ytsejam ltm: unknown subcommand "${sub}"\n\n${USAGE}`);
   return 2;
 }

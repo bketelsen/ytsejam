@@ -111,18 +111,20 @@ single-writer (`systemctl --user stop ytsejam`).
 # direct node invocation (no `bin` shipped this PR)
 node server/src/index.ts ltm replay             # one reconcile pass, mtime-respecting
 node server/src/index.ts ltm replay --force     # full re-scan, ignore mtime cache (still skips already-mirrored content)
-node server/src/index.ts ltm replay --rebuild   # full re-scan AND re-embed already-mirrored observations (use after embedder cutover)
+node server/src/index.ts ltm replay --rebuild   # full re-scan AND re-embed current observations (use after embedder cutover)
+node server/src/index.ts ltm replay --rebuild --prune  # additionally tombstone orphan cog-origin observations
 node server/src/index.ts ltm health             # print last-tick stats (CLI snapshot)
 
 # npm-script ergonomic wrapper from repo root
 npm run ltm -- replay
 npm run ltm -- replay --force
 npm run ltm -- replay --rebuild
+npm run ltm -- replay --rebuild --prune
 npm run ltm -- health
 ```
 
 `ltm replay` prints a single JSON stats line to stdout and exits 0 (no
-errors) or 1 (one or more per-line parse errors).
+errors) or 1 (one or more per-line parse errors). `--rebuild` re-embeds current observations only. Add `--prune` with `--rebuild` to tombstone orphan records (observations whose source line is no longer in cog memory). Only run `--prune` in normal steady state — **NOT** while files are mid-archive or mid-restore, because temporarily missing source lines will be tombstoned.
 
 `ltm health` prints a stderr WARNING (it's a CLI snapshot of an empty-cache
 process, NOT live server health) followed by a single JSON stats line on
@@ -142,7 +144,7 @@ const h = await memory.health();
 //   consecutiveFailures: number,
 //   lastError?: { message: string, at: string },
 //   lastTickAt?: string,
-//   lastTickStats?: { scannedFiles, replayed, deduped, errors, durationMs },
+//   lastTickStats?: { scannedFiles, scannedLines, replayed, rebuilt, pruned, skipped, errors },
 // }
 ```
 

@@ -68,7 +68,9 @@ export async function createLtmEmbedder(
   try {
     return await wrapOllama(opts);
   } catch (err) {
-    console.warn(`[ltm embedder auto] Ollama probe failed: ${(err as Error).message}. Falling through.`);
+    console.warn(
+      `[ltm embedder auto] Ollama probe failed: ${(err as Error).message}. Falling through.`,
+    );
   }
   console.warn(
     `[ltm embedder auto] Falling back to HashEmbedder (no Copilot creds, no Ollama service). ` +
@@ -87,7 +89,10 @@ function wrapHash(cacheDir: string): LtmEmbedderResult {
   };
 }
 
-async function wrapCopilot(auth: AuthStoreLike, opts: LtmEmbedderOptions): Promise<LtmEmbedderResult> {
+async function wrapCopilot(
+  auth: AuthStoreLike,
+  opts: LtmEmbedderOptions,
+): Promise<LtmEmbedderResult> {
   const inner = await CopilotEmbedder.create({
     getApiKey: () => auth.getApiKey("github-copilot"),
     model: opts.copilot?.model ?? "text-embedding-3-small",
@@ -101,7 +106,9 @@ async function wrapCopilot(auth: AuthStoreLike, opts: LtmEmbedderOptions): Promi
   };
 }
 
-async function wrapOllama(opts: LtmEmbedderOptions): Promise<LtmEmbedderResult> {
+async function wrapOllama(
+  opts: LtmEmbedderOptions,
+): Promise<LtmEmbedderResult> {
   const inner = await OllamaEmbedder.create({
     model: opts.ollama?.model ?? "nomic-embed-text:latest",
     baseUrl: opts.ollama?.baseUrl,
@@ -131,14 +138,19 @@ export function checkDimensionMismatch(
     `dimension mismatch: existing index dimension=${existing}, ` +
     `new embedder dimension=${embedder.dimension}, embedder=${embedder.label}. ` +
     `Run \`node server/src/index.ts ltm replay --rebuild\` with the same embedder config ` +
-    `to rewrite existing memories under the new model (nothing is deleted), ` +
-    `or set YTSEJAM_LTM_EMBEDDER to match the existing index dimension ` +
+    `to re-embed current observations under the new model; without --prune, nothing is deleted. ` +
+    `Add --prune to also tombstone orphan records (observations whose source line is no longer ` +
+    `in cog memory); only safe ` +
+    `in steady state — NOT during archival or restoration. Or set YTSEJAM_LTM_EMBEDDER ` +
     `(e.g. \`YTSEJAM_LTM_EMBEDDER=hash\` for 256-dim).`
   );
 }
 
 export function parseLtmEmbedderMode(raw: string | undefined): LtmEmbedderMode {
   const v = (raw ?? "auto").trim().toLowerCase();
-  if (v === "auto" || v === "copilot" || v === "ollama" || v === "hash") return v;
-  throw new Error(`Invalid YTSEJAM_LTM_EMBEDDER=${raw}. Valid: auto, copilot, ollama, hash.`);
+  if (v === "auto" || v === "copilot" || v === "ollama" || v === "hash")
+    return v;
+  throw new Error(
+    `Invalid YTSEJAM_LTM_EMBEDDER=${raw}. Valid: auto, copilot, ollama, hash.`,
+  );
 }

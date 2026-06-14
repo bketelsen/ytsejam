@@ -12,13 +12,18 @@ export class EpisodicStore {
   private records: Map<string, EpisodicRecord>;
   private log: JsonlLog<EpisodicRecord>;
 
-  private constructor(log: JsonlLog<EpisodicRecord>, records: Map<string, EpisodicRecord>) {
+  private constructor(
+    log: JsonlLog<EpisodicRecord>,
+    records: Map<string, EpisodicRecord>,
+  ) {
     this.log = log;
     this.records = records;
   }
 
   static open(storeDir: string): EpisodicStore {
-    const log = new JsonlLog<EpisodicRecord>(path.join(storeDir, "episodic.jsonl"));
+    const log = new JsonlLog<EpisodicRecord>(
+      path.join(storeDir, "episodic.jsonl"),
+    );
     return new EpisodicStore(log, log.load());
   }
 
@@ -64,7 +69,11 @@ export class EpisodicStore {
   bumpAccess(id: string, now: string): void {
     const r = this.records.get(id);
     if (!r) return;
-    const updated = { ...r, accessCount: r.accessCount + 1, lastAccessedAt: now };
+    const updated = {
+      ...r,
+      accessCount: r.accessCount + 1,
+      lastAccessedAt: now,
+    };
     this.records.set(id, updated);
     if ((updated.accessCount & (updated.accessCount - 1)) === 0) {
       this.log.append(updated);
@@ -97,5 +106,40 @@ export class EpisodicStore {
     this.records.set(id, tombstone);
     this.log.compact(this.records.values());
     return true;
+  }
+
+  /**
+   * Tombstone many records in one pass: per-record state transition is
+   * identical to redact(), but the JSONL log is compacted ONCE at the end
+   * rather than per record. Returns the count of records actually
+   * tombstoned (already-redacted ids are skipped, not counted).
+   *
+   * Use for bulk-cleanup paths (e.g. reconciler prune) where calling
+   * redact() N times would do N full-file rewrites.
+   */
+  redactMany(ids: Iterable<string>): number {
+    let count = 0;
+    for (const id of ids) {
+      const r = this.records.get(id);
+      if (!r || r.state === "redacted") continue;
+      const tombstone: EpisodicRecord = {
+        id: r.id,
+        kind: r.kind,
+        sessionId: r.sessionId,
+        entryId: r.entryId,
+        sourceIds: r.sourceIds,
+        role: r.role,
+        text: "",
+        timestamp: r.timestamp,
+        salience: 0,
+        accessCount: r.accessCount,
+        lastAccessedAt: r.lastAccessedAt,
+        state: "redacted",
+      };
+      this.records.set(id, tombstone);
+      count++;
+    }
+    if (count > 0) this.log.compact(this.records.values());
+    return count;
   }
 }

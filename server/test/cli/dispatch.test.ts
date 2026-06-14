@@ -96,7 +96,11 @@ describe("runCli", () => {
   it("routes `ltm replay` to ltmReplay with force=false", async () => {
     expect(await runCli(["ltm", "replay"])).toBe(0);
     expect(ltmReplay).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({ force: false, rebuild: false });
+    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({
+      force: false,
+      rebuild: false,
+      prune: false,
+    });
   });
 
   it("routes `ltm replay --force` to ltmReplay with force=true", async () => {
@@ -106,13 +110,31 @@ describe("runCli", () => {
     // on an empty dataDir, so an exit-code-only test cannot catch it.
     expect(await runCli(["ltm", "replay", "--force"])).toBe(0);
     expect(ltmReplay).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({ force: true, rebuild: false });
+    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({
+      force: true,
+      rebuild: false,
+      prune: false,
+    });
   });
 
   it("routes `ltm replay --rebuild` to ltmReplay with rebuild=true", async () => {
     expect(await runCli(["ltm", "replay", "--rebuild"])).toBe(0);
     expect(ltmReplay).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({ force: false, rebuild: true });
+    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({
+      force: false,
+      rebuild: true,
+      prune: false,
+    });
+  });
+
+  it("routes `ltm replay --rebuild --prune` to ltmReplay with rebuild and prune true", async () => {
+    expect(await runCli(["ltm", "replay", "--rebuild", "--prune"])).toBe(0);
+    expect(ltmReplay).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({
+      force: false,
+      rebuild: true,
+      prune: true,
+    });
   });
 
   it("routes `ltm health` to ltmHealth", async () => {

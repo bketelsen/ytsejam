@@ -13,7 +13,10 @@ const ltmEmbedderEnvKeys = [
   "YTSEJAM_LTM_OLLAMA_URL",
 ] as const;
 
-let savedLtmEmbedderEnv: Record<(typeof ltmEmbedderEnvKeys)[number], string | undefined> = {
+let savedLtmEmbedderEnv: Record<
+  (typeof ltmEmbedderEnvKeys)[number],
+  string | undefined
+> = {
   YTSEJAM_LTM_EMBEDDER: undefined,
   YTSEJAM_LTM_COPILOT_MODEL: undefined,
   YTSEJAM_LTM_COPILOT_URL: undefined,
@@ -102,7 +105,9 @@ describe("ltmReplay CLI", () => {
     expect(out.length).toBe(1);
     const stats = JSON.parse(out[0]!);
     expect(stats.errors).toBeGreaterThanOrEqual(1);
-    expect(err.join("\n")).toContain("[ltm replay] [warn] malformed line skipped");
+    expect(err.join("\n")).toContain(
+      "[ltm replay] [warn] malformed line skipped",
+    );
   });
 
   it("exits 1 with single-writer-lock guidance when LTM is held by another process", async () => {
@@ -125,7 +130,6 @@ describe("ltmReplay CLI", () => {
       holder.close();
     }
   });
-
 
   it("exits 1 and reports invalid embedder config when YTSEJAM_LTM_EMBEDDER cannot be parsed", async () => {
     process.env.YTSEJAM_LTM_EMBEDDER = "garbage";
@@ -172,6 +176,22 @@ describe("ltmReplay CLI", () => {
     expect(stats.scannedFiles).toBe(0);
   });
 
+  it("warns and ignores prune when rebuild is false", async () => {
+    await mkdir(join(dataDir, "memory"), { recursive: true });
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      prune: true,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+    expect(code).toBe(0);
+    expect(err).toContain(
+      "[ltm replay] --prune requires --rebuild; ignoring prune",
+    );
+    const stats = JSON.parse(out[0]!);
+    expect(stats.pruned).toBe(0);
+  });
 
   it("accepts rebuild and threads it to the reconciler", async () => {
     await mkdir(join(dataDir, "memory", "personal"), { recursive: true });

@@ -30,7 +30,12 @@ import { mergeConfig, type LtmConfigPatch } from "../types.ts";
 import { HashEmbedder, type Embedder } from "../embedding/embedder.ts";
 import { VectorIndex } from "../embedding/vector-index.ts";
 import { EpisodicStore } from "../episodic/store.ts";
-import { consolidate, extractiveSummary, summaryId, type Summarizer } from "../episodic/consolidate.ts";
+import {
+  consolidate,
+  extractiveSummary,
+  summaryId,
+  type Summarizer,
+} from "../episodic/consolidate.ts";
 import { retention } from "../episodic/decay.ts";
 import { SemanticStore } from "../semantic/store.ts";
 import { PreferenceGraph } from "../semantic/graph.ts";
@@ -99,7 +104,9 @@ export class MemorySystem {
     this.retrievalLog = opts.retrievalLog ?? process.env.LTM_RETRIEVAL_LOG;
     this.episodic = EpisodicStore.open(this.storeDir);
     this.semantic = SemanticStore.open(this.storeDir);
-    this.auditLog = new JsonlLog<AuditRecord>(path.join(this.storeDir, "redactions.jsonl"));
+    this.auditLog = new JsonlLog<AuditRecord>(
+      path.join(this.storeDir, "redactions.jsonl"),
+    );
     this.auditSeq = this.auditLog.load().size;
     this.pipeline = new IngestPipeline({
       storeDir: this.storeDir,
@@ -132,7 +139,9 @@ export class MemorySystem {
     fs.mkdirSync(this.storeDir, { recursive: true });
     let holder: number | undefined;
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as { pid?: number };
+      const parsed = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as {
+        pid?: number;
+      };
       if (typeof parsed.pid === "number") holder = parsed.pid;
     } catch {
       // no lock or unreadable lock — treat as stale
@@ -144,7 +153,10 @@ export class MemorySystem {
       );
     }
     // Free, stale (dead pid), or a leaked same-pid lock: take over.
-    fs.writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+    fs.writeFileSync(
+      this.lockPath,
+      JSON.stringify({ pid: process.pid, at: new Date().toISOString() }),
+    );
     MemorySystem.openDirs.add(key);
   }
 
@@ -154,7 +166,9 @@ export class MemorySystem {
     this.closed = true;
     MemorySystem.openDirs.delete(path.resolve(this.storeDir));
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as { pid?: number };
+      const parsed = JSON.parse(fs.readFileSync(this.lockPath, "utf8")) as {
+        pid?: number;
+      };
       if (parsed.pid === process.pid) fs.rmSync(this.lockPath);
     } catch {
       // lock already gone
@@ -162,7 +176,10 @@ export class MemorySystem {
   }
 
   private rebuildGraph(): PreferenceGraph {
-    this.graph = PreferenceGraph.build(this.semantic.allFacts(), this.episodic.all());
+    this.graph = PreferenceGraph.build(
+      this.semantic.allFacts(),
+      this.episodic.all(),
+    );
     return this.graph;
   }
 
@@ -181,13 +198,15 @@ export class MemorySystem {
 
   async ingestSessionFile(filePath: string): Promise<IngestReport> {
     const report = await this.pipeline.ingestFile(filePath);
-    if (report.recordsCreated > 0 || report.turnsIngested > 0) this.rebuildDerived();
+    if (report.recordsCreated > 0 || report.turnsIngested > 0)
+      this.rebuildDerived();
     return report;
   }
 
   async ingestSessionDir(dir: string): Promise<IngestReport> {
     const report = await this.pipeline.ingestDir(dir);
-    if (report.recordsCreated > 0 || report.turnsIngested > 0) this.rebuildDerived();
+    if (report.recordsCreated > 0 || report.turnsIngested > 0)
+      this.rebuildDerived();
     return report;
   }
 
@@ -271,6 +290,24 @@ export class MemorySystem {
     return this.episodic.all().some((r) => r.origin === origin);
   }
 
+  /**
+   * Return a map of all currently-live (non-redacted) observation records
+   * with a cog: origin, keyed by origin → record id.
+   *
+   * Used by the reconciler's prune pass to identify orphan records (cog
+   * origins not present in the current cog file scan).
+   */
+  allObservationsByOrigin(): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const r of this.episodic.all()) {
+      if (r.kind !== "observation") continue;
+      if (r.state === "redacted") continue;
+      if (!r.origin || !r.origin.startsWith("cog:")) continue;
+      out.set(r.origin, r.id);
+    }
+    return out;
+  }
+
   /** Return the dimension of currently stored episodic vectors, or null when the index is empty. */
   indexDimension(): number | null {
     const vectors = new VectorIndex();
@@ -280,7 +317,10 @@ export class MemorySystem {
     return vectors.sampleDimension();
   }
 
-  async retrieve(query: string, opts: RetrieveOptions = {}): Promise<RetrievalResult> {
+  async retrieve(
+    query: string,
+    opts: RetrieveOptions = {},
+  ): Promise<RetrievalResult> {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
     const profile = this.semantic.profile(now, this.config.profile);
@@ -297,25 +337,27 @@ export class MemorySystem {
     // a slot answer beats a lexical near-miss). Synthetic records — never
     // persisted. Episodic accessCount is never bumped for facts; stale dormant
     // facts instead get a rehearsal bump via semantic.recordRecall (below).
-    const promoted = promoteFacts(query, profile).map((record): RetrievedMemory => ({
-      record,
-      score: 1,
-      ...(record.stale ? { stale: true } : {}),
-      breakdown: {
-        vector: 0,
-        lexical: 0,
-        recency: 0,
-        salience: record.salience, // = fact.strength
-        graph: 0,
-        retention: 1,
-        total: 1,
-      },
-    }));
-
-    const items = packToBudget([...promoted, ...ranked], opts.tokenBudget ?? 1200).slice(
-      0,
-      Math.max(k, promoted.length),
+    const promoted = promoteFacts(query, profile).map(
+      (record): RetrievedMemory => ({
+        record,
+        score: 1,
+        ...(record.stale ? { stale: true } : {}),
+        breakdown: {
+          vector: 0,
+          lexical: 0,
+          recency: 0,
+          salience: record.salience, // = fact.strength
+          graph: 0,
+          retention: 1,
+          total: 1,
+        },
+      }),
     );
+
+    const items = packToBudget(
+      [...promoted, ...ranked],
+      opts.tokenBudget ?? 1200,
+    ).slice(0, Math.max(k, promoted.length));
     if (!opts.dryRun) {
       for (const item of items) {
         if (item.record.kind === "fact") {
@@ -333,7 +375,12 @@ export class MemorySystem {
   }
 
   /** Append one retrieval-trace line; tracing failures never break retrieval. */
-  private trace(query: string, k: number, at: string, items: RetrievedMemory[]): void {
+  private trace(
+    query: string,
+    k: number,
+    at: string,
+    items: RetrievedMemory[],
+  ): void {
     if (!this.retrievalLog) return;
     try {
       fs.mkdirSync(path.dirname(this.retrievalLog), { recursive: true });
@@ -361,7 +408,10 @@ export class MemorySystem {
    * the user profile (identity, preferences, directives) followed by
    * relevant episodic memories with their dates.
    */
-  async composeContext(query: string, opts: RetrieveOptions = {}): Promise<string> {
+  async composeContext(
+    query: string,
+    opts: RetrieveOptions = {},
+  ): Promise<string> {
     const { items, profile } = await this.retrieve(query, opts);
     const lines: string[] = [];
 
@@ -370,9 +420,15 @@ export class MemorySystem {
         f.kind === "preference" && f.polarity < 0 ? " (dislikes)" : ""
       }: ${f.object}`;
 
-    if (profile.identity.length || profile.preferences.length || profile.directives.length || profile.attributes.length) {
+    if (
+      profile.identity.length ||
+      profile.preferences.length ||
+      profile.directives.length ||
+      profile.attributes.length
+    ) {
       lines.push("## What you know about the user");
-      for (const f of [...profile.identity, ...profile.attributes]) lines.push(factLine(f));
+      for (const f of [...profile.identity, ...profile.attributes])
+        lines.push(factLine(f));
       for (const f of profile.preferences) lines.push(factLine(f));
       if (profile.directives.length) {
         lines.push("", "Standing instructions:");
@@ -384,7 +440,8 @@ export class MemorySystem {
       lines.push("", "## Relevant past conversation");
       for (const item of items) {
         const date = item.record.timestamp.slice(0, 10);
-        const who = item.record.role === "summary" ? "summary" : item.record.role;
+        const who =
+          item.record.role === "summary" ? "summary" : item.record.role;
         lines.push(`- [${date}, ${who}] ${item.record.text}`);
       }
     }
@@ -398,7 +455,9 @@ export class MemorySystem {
 
   // -- maintenance ------------------------------------------------------------
 
-  async consolidate(opts: { now?: string } = {}): Promise<{ created: number; folded: number }> {
+  async consolidate(
+    opts: { now?: string } = {},
+  ): Promise<{ created: number; folded: number }> {
     const now = opts.now ?? this.clock();
     const result = await consolidate(
       this.episodic,
@@ -409,15 +468,22 @@ export class MemorySystem {
       this.summarizer,
     );
     if (result.created.length > 0) this.rebuildDerived();
-    return { created: result.created.length, folded: result.consolidatedChildren };
+    return {
+      created: result.created.length,
+      folded: result.consolidatedChildren,
+    };
   }
 
   // -- inspection (user control surface) --------------------------------------
 
-  listEpisodic(filter: { sessionId?: string; state?: EpisodicRecord["state"] } = {}): EpisodicRecord[] {
+  listEpisodic(
+    filter: { sessionId?: string; state?: EpisodicRecord["state"] } = {},
+  ): EpisodicRecord[] {
     return this.episodic
       .all()
-      .filter((r) => (filter.sessionId ? r.sessionId === filter.sessionId : true))
+      .filter((r) =>
+        filter.sessionId ? r.sessionId === filter.sessionId : true,
+      )
       .filter((r) => (filter.state ? r.state === filter.state : true))
       .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }
@@ -440,7 +506,13 @@ export class MemorySystem {
   }
 
   stats(now?: string): {
-    episodic: { total: number; active: number; consolidated: number; redacted: number; meanRetention: number };
+    episodic: {
+      total: number;
+      active: number;
+      consolidated: number;
+      redacted: number;
+      meanRetention: number;
+    };
     facts: { total: number; active: number };
     entities: { total: number; active: number };
   } {
@@ -448,7 +520,10 @@ export class MemorySystem {
     const records = this.episodic.all();
     const active = records.filter((r) => r.state === "active");
     const meanRetention = active.length
-      ? active.reduce((sum, r) => sum + retention(r, at, this.config.decay), 0) / active.length
+      ? active.reduce(
+          (sum, r) => sum + retention(r, at, this.config.decay),
+          0,
+        ) / active.length
       : 0;
     return {
       episodic: {
@@ -458,21 +533,51 @@ export class MemorySystem {
         redacted: records.filter((r) => r.state === "redacted").length,
         meanRetention,
       },
-      facts: { total: this.semantic.allFacts().length, active: this.semantic.activeFacts().length },
-      entities: { total: this.semantic.allEntities().length, active: this.semantic.activeEntities().length },
+      facts: {
+        total: this.semantic.allFacts().length,
+        active: this.semantic.activeFacts().length,
+      },
+      entities: {
+        total: this.semantic.allEntities().length,
+        active: this.semantic.activeEntities().length,
+      },
     };
   }
 
   /** Full dump for user transparency/export. */
-  export(): { episodic: EpisodicRecord[]; facts: SemanticFact[]; entities: EntityRecord[] } {
+  export(): {
+    episodic: EpisodicRecord[];
+    facts: SemanticFact[];
+    entities: EntityRecord[];
+  } {
     return {
-      episodic: this.episodic.all().map((r) => ({ ...r, embedding: undefined })),
+      episodic: this.episodic
+        .all()
+        .map((r) => ({ ...r, embedding: undefined })),
       facts: this.semantic.allFacts(),
       entities: this.semantic.allEntities(),
     };
   }
 
   // -- redaction ---------------------------------------------------------------
+
+  /**
+   * Tombstone many episodic records by id, in one compaction pass.
+   *
+   * Lower-cost sibling of redact(selector) for reconciler bulk-prune paths:
+   *   - No RedactionEvent audit (caller logs at its own layer).
+   *   - No semantic/consolidated cascade (caller is responsible for the
+   *     invariant that pruned records have no live cascade targets — e.g.
+   *     orphan observations whose source line is gone from cog memory have
+   *     no current children to rebuild from).
+   *
+   * Returns the count actually tombstoned (already-redacted skipped).
+   */
+  episodicRedactMany(ids: Iterable<string>): number {
+    const n = this.episodic.redactMany(ids);
+    if (n > 0) this.rebuildDerived();
+    return n;
+  }
 
   /**
    * Forget memories matching the selector. Episodic records are tombstoned
@@ -496,7 +601,10 @@ export class MemorySystem {
       if (this.episodic.redact(record.id)) {
         result.episodicRedacted++;
         if (record.entryId) {
-          redactedSources.push({ sessionId: record.sessionId, entryId: record.entryId });
+          redactedSources.push({
+            sessionId: record.sessionId,
+            entryId: record.entryId,
+          });
         }
       }
     }
@@ -508,8 +616,12 @@ export class MemorySystem {
       result.entitiesRedacted += r.entities;
     }
     if (redactedSources.length > 0) {
-      const keys = new Set(redactedSources.map((s) => `${s.sessionId}/${s.entryId}`));
-      const r = this.semantic.redactBySources((s) => keys.has(`${s.sessionId}/${s.entryId}`));
+      const keys = new Set(
+        redactedSources.map((s) => `${s.sessionId}/${s.entryId}`),
+      );
+      const r = this.semantic.redactBySources((s) =>
+        keys.has(`${s.sessionId}/${s.entryId}`),
+      );
       result.factsRedacted += r.facts;
       result.entitiesRedacted += r.entities;
     }
@@ -517,19 +629,30 @@ export class MemorySystem {
     // Rebuild consolidated summaries that included a redacted child.
     const redactedIds = new Set(targets.map((t) => t.id));
     for (const summary of this.episodic.all()) {
-      if (summary.kind !== "consolidated" || summary.state !== "active") continue;
+      if (summary.kind !== "consolidated" || summary.state !== "active")
+        continue;
       if (!summary.sourceIds?.some((id) => redactedIds.has(id))) continue;
       const survivors = (summary.sourceIds ?? [])
         .filter((id) => !redactedIds.has(id))
         .map((id) => this.episodic.get(id))
-        .filter((r): r is EpisodicRecord => !!r && r.state !== "redacted" && !!r.text);
+        .filter(
+          (r): r is EpisodicRecord => !!r && r.state !== "redacted" && !!r.text,
+        );
       this.episodic.redact(summary.id);
       if (survivors.length >= 2) {
-        const text = (await this.summarizer(survivors, this.config.consolidation.maxSummaryChars)).trim();
+        const text = (
+          await this.summarizer(
+            survivors,
+            this.config.consolidation.maxSummaryChars,
+          )
+        ).trim();
         if (text) {
           this.episodic.upsert({
             ...summary,
-            id: summaryId(summary.sessionId, survivors.map((r) => r.id)),
+            id: summaryId(
+              summary.sessionId,
+              survivors.map((r) => r.id),
+            ),
             sourceIds: survivors.map((r) => r.id),
             text,
             embedding: await this.embedder.embed(text),
@@ -571,7 +694,9 @@ export class MemorySystem {
 
   /** Redaction audit trail (ids and counts only — no content). */
   auditTrail(): RedactionEvent[] {
-    return [...this.auditLog.load().values()].sort((a, b) => a.id.localeCompare(b.id));
+    return [...this.auditLog.load().values()].sort((a, b) =>
+      a.id.localeCompare(b.id),
+    );
   }
 }
 
@@ -589,13 +714,20 @@ function pidAlive(pid: number): boolean {
  * Record/session ids are opaque and safe to keep; entity names and patterns
  * are the content the user wants forgotten, so only a digest is logged.
  */
-function sanitizeSelector(selector: RedactionSelector): RedactionEvent["selector"] {
-  const digest = (s: string) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 12);
-  if ("recordId" in selector) return { type: "recordId", ref: selector.recordId };
-  if ("sessionId" in selector) return { type: "sessionId", ref: selector.sessionId };
-  if ("entity" in selector) return { type: "entity", ref: digest(selector.entity.toLowerCase()) };
+function sanitizeSelector(
+  selector: RedactionSelector,
+): RedactionEvent["selector"] {
+  const digest = (s: string) =>
+    crypto.createHash("sha256").update(s).digest("hex").slice(0, 12);
+  if ("recordId" in selector)
+    return { type: "recordId", ref: selector.recordId };
+  if ("sessionId" in selector)
+    return { type: "sessionId", ref: selector.sessionId };
+  if ("entity" in selector)
+    return { type: "entity", ref: digest(selector.entity.toLowerCase()) };
   // An origin prefix is a file/domain pointer, not the forgotten content —
   // safe to keep verbatim, like recordId/sessionId.
-  if ("originPrefix" in selector) return { type: "originPrefix", ref: selector.originPrefix };
+  if ("originPrefix" in selector)
+    return { type: "originPrefix", ref: selector.originPrefix };
   return { type: "pattern", ref: digest(selector.pattern) };
 }
