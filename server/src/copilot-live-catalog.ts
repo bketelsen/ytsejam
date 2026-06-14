@@ -11,7 +11,9 @@
  * the first call. No-sibling cases fall back to a type-by-prefix template.
  */
 
-import type { Model } from "@earendil-works/pi-ai";
+import { getModels, type Model } from "@earendil-works/pi-ai";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import type { PiAuthStore } from "./pi-auth.ts";
 
 const PREFIX_FLOOR = 8;
 
@@ -101,4 +103,144 @@ export function mergeCatalogs(
   }
 
   return { overlay, prunedIds };
+}
+
+
+export interface LoadOptions {
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 5000;
+
+interface CopilotModelsListEntry {
+  id?: unknown;
+  policy?: { state?: unknown } | unknown;
+  model_picker_enabled?: unknown;
+}
+
+interface CopilotModelsListResponse {
+  data?: CopilotModelsListEntry[];
+}
+
+function sanitize(cause: unknown): string {
+  // Defensive — never leak the OAuth token even on error. fetch error messages
+  // typically don't include the body, but be paranoid.
+  if (cause instanceof Error) return cause.message.replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [REDACTED]");
+  return String(cause).replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [REDACTED]");
+}
+
+function resolveBaseUrl(auth: PiAuthStore): string {
+  // Reuse the pi-ai OAuth provider's modifyModels hook to compute the
+  // correct enterprise-vs-individual baseUrl for this token. We probe with
+  // a placeholder model record so we don't depend on getModels() ordering.
+  const provider = getOAuthProvider("github-copilot");
+  const creds = auth.getCredentials("github-copilot");
+  if (!provider?.modifyModels || !creds) return DEFAULT_COPILOT_BASE_URL;
+  const probe = [{ id: "_probe", provider: "github-copilot", baseUrl: DEFAULT_COPILOT_BASE_URL } as any];
+  return provider.modifyModels(probe, creds)[0]?.baseUrl ?? DEFAULT_COPILOT_BASE_URL;
+}
+
+export async function loadLiveCopilotModels(
+  auth: PiAuthStore,
+  opts: LoadOptions = {},
+): Promise<MergeResult> {
+  const empty: MergeResult = { overlay: [], prunedIds: new Set() };
+
+  if (process.env.YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG === "1") {
+    console.info("github-copilot live catalog disabled by env; using static catalog only");
+    return empty;
+  }
+
+  let hasCopilotCredentials: boolean;
+  try {
+    hasCopilotCredentials = auth.hasCredentials("github-copilot");
+  } catch (err) {
+    console.warn(`github-copilot credential check failed: ${sanitize(err)}; live model catalog skipped`);
+    return empty;
+  }
+
+  if (!hasCopilotCredentials) {
+    console.info("github-copilot OAuth not configured; live model catalog skipped");
+    return empty;
+  }
+
+  let apiKey: string | undefined;
+  try {
+    apiKey = await auth.getApiKey("github-copilot");
+  } catch (err) {
+    console.warn(`github-copilot OAuth token refresh failed: ${sanitize(err)}; live model catalog skipped`);
+    return empty;
+  }
+  if (!apiKey) {
+    console.warn("github-copilot OAuth token refresh returned no key; live model catalog skipped");
+    return empty;
+  }
+
+  let baseUrl: string;
+  try {
+    baseUrl = resolveBaseUrl(auth);
+  } catch (err) {
+    console.warn(`github-copilot baseUrl resolution failed: ${sanitize(err)}; live model catalog skipped`);
+    return empty;
+  }
+
+  const fetchImpl = opts.fetch ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  let res: Response;
+  try {
+    res = await fetchImpl(`${baseUrl}/models`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...COPILOT_HEADERS,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    console.warn(`github-copilot /models fetch failed: ${sanitize(err)}; using static catalog`);
+    return empty;
+  }
+
+  if (!res.ok) {
+    console.warn(`github-copilot /models returned HTTP ${res.status}; using static catalog`);
+    return empty;
+  }
+
+  let body: CopilotModelsListResponse;
+  try {
+    body = (await res.json()) as CopilotModelsListResponse;
+  } catch (err) {
+    console.warn(`github-copilot /models response malformed (parse error): ${sanitize(err)}; using static catalog`);
+    return empty;
+  }
+
+  if (!body || !Array.isArray(body.data)) {
+    console.warn("github-copilot /models response malformed (no data[]); using static catalog");
+    return empty;
+  }
+
+  const liveIds: string[] = [];
+  for (const entry of body.data) {
+    if (!entry || typeof entry !== "object") continue;
+    const id = entry.id;
+    if (typeof id !== "string") continue;
+    const policy = (entry.policy as { state?: unknown } | undefined)?.state;
+    const picker = entry.model_picker_enabled;
+    if (policy !== "enabled") continue;
+    if (picker !== true) continue;
+    liveIds.push(id);
+  }
+
+  try {
+    const staticCopilot = getModels("github-copilot" as any) as Model<any>[];
+    const merged = mergeCatalogs(staticCopilot, liveIds);
+    console.info(
+      `github-copilot live catalog: ${liveIds.length} live models, ${merged.overlay.length} added (sibling-inherited), ${merged.prunedIds.size} pruned`,
+    );
+    return merged;
+  } catch (err) {
+    console.warn(`github-copilot live catalog merge failed: ${sanitize(err)}; using static catalog`);
+    return empty;
+  }
 }

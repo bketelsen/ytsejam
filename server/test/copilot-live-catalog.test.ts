@@ -136,3 +136,148 @@ describe("mergeCatalogs", () => {
     assert.equal(result.overlay.length, 0);
   });
 });
+
+import { loadLiveCopilotModels } from "../src/copilot-live-catalog.ts";
+import type { PiAuthStore } from "../src/pi-auth.ts";
+
+/**
+ * Minimal PiAuthStore shape — the loader only calls `hasCredentials`,
+ * `getCredentials`, and `getApiKey`. Verified against server/src/pi-auth.ts.
+ */
+function fakeAuthWithCopilot(): PiAuthStore {
+  return {
+    hasCredentials: (p: string) => p === "github-copilot",
+    getCredentials: (p: string) =>
+      p === "github-copilot" ? ({ type: "oauth", access: "fake-token", expires: Date.now() + 60000 } as any) : undefined,
+    getApiKey: async (p: string) => (p === "github-copilot" ? "fake-token" : undefined),
+  } as unknown as PiAuthStore;
+}
+
+function fakeAuthNoCopilot(): PiAuthStore {
+  return {
+    hasCredentials: () => false,
+    getCredentials: () => undefined,
+    getApiKey: async () => undefined,
+  } as unknown as PiAuthStore;
+}
+
+function makeFetchOk(body: unknown): typeof fetch {
+  return (async () =>
+    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })) as any;
+}
+
+function makeFetchStatus(status: number, body: string = "{}"): typeof fetch {
+  return (async () => new Response(body, { status })) as any;
+}
+
+function makeFetchThrow(err: Error): typeof fetch {
+  return (async () => { throw err; }) as any;
+}
+
+describe("loadLiveCopilotModels", () => {
+  it("happy path — returns overlay from filtered live ids", async () => {
+    const fetchImpl = makeFetchOk({
+      data: [
+        { id: "claude-opus-4.7", policy: { state: "enabled" }, model_picker_enabled: true },
+        { id: "claude-opus-4.7-1m-internal", policy: { state: "enabled" }, model_picker_enabled: true },
+        { id: "text-embedding-3-small", policy: { state: "enabled" }, model_picker_enabled: false },
+        { id: "gpt-3.5-turbo", policy: { state: "disabled" }, model_picker_enabled: false },
+      ],
+    });
+    const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: fetchImpl });
+    // claude-opus-4.7 may overlap with pi-ai static (it does in prod); we only assert the new id appears.
+    const overlayIds = result.overlay.map((m) => m.id);
+    assert.ok(overlayIds.includes("claude-opus-4.7-1m-internal"));
+    assert.ok(!overlayIds.includes("text-embedding-3-small"), "embeddings must be filtered out");
+    assert.ok(!overlayIds.includes("gpt-3.5-turbo"), "disabled must be filtered out");
+  });
+
+  it("no copilot creds — returns empty, fetch never called", async () => {
+    let called = false;
+    const fetchImpl = (async () => { called = true; return new Response("{}"); }) as any;
+    const result = await loadLiveCopilotModels(fakeAuthNoCopilot(), { fetch: fetchImpl });
+    assert.equal(result.overlay.length, 0);
+    assert.equal(result.prunedIds.size, 0);
+    assert.equal(called, false);
+  });
+
+  it("oauth refresh fails (undefined apiKey) — returns empty", async () => {
+    const auth = {
+      hasCredentials: () => true,
+      getCredentials: () => ({ type: "oauth", access: "x", expires: 0 } as any),
+      getApiKey: async () => undefined,
+    } as unknown as PiAuthStore;
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      return new Response(
+        JSON.stringify({
+          data: [{ id: "claude-opus-4.7-1m-internal", policy: { state: "enabled" }, model_picker_enabled: true }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as any;
+    const result = await loadLiveCopilotModels(auth, { fetch: fetchImpl });
+    assert.equal(result.overlay.length, 0);
+    assert.equal(called, false);
+  });
+
+  it("401 from /models — returns empty", async () => {
+    const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: makeFetchStatus(401, '{"error":"bad token"}') });
+    assert.equal(result.overlay.length, 0);
+  });
+
+  it("5xx from /models — returns empty", async () => {
+    const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: makeFetchStatus(503) });
+    assert.equal(result.overlay.length, 0);
+  });
+
+  it("network throw — returns empty", async () => {
+    const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: makeFetchThrow(new Error("ECONNREFUSED")) });
+    assert.equal(result.overlay.length, 0);
+  });
+
+  it("malformed JSON — returns empty", async () => {
+    const fetchImpl = (async () => new Response("not json {{{", { status: 200 })) as any;
+    const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: fetchImpl });
+    assert.equal(result.overlay.length, 0);
+  });
+
+  it("missing data[] — returns empty", async () => {
+    const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: makeFetchOk({ models: [] }) });
+    assert.equal(result.overlay.length, 0);
+  });
+
+  it("env disable — returns empty, fetch never called", async () => {
+    const prev = process.env.YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG;
+    process.env.YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG = "1";
+    try {
+      let called = false;
+      const fetchImpl = (async () => { called = true; return new Response("{}"); }) as any;
+      const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: fetchImpl });
+      assert.equal(result.overlay.length, 0);
+      assert.equal(called, false);
+    } finally {
+      if (prev === undefined) delete process.env.YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG;
+      else process.env.YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG = prev;
+    }
+  });
+
+  it("AbortError-style timeout — returns empty within timeout window", async () => {
+    // The loader should be configured with a small timeout for the test (50ms override).
+    const fetchImpl = ((_url: any, init?: any) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        if (signal) {
+          if (signal.aborted) reject(new Error("aborted"));
+          else signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }
+        // Never resolves on its own
+      })) as any;
+    const start = Date.now();
+    const result = await loadLiveCopilotModels(fakeAuthWithCopilot(), { fetch: fetchImpl, timeoutMs: 50 });
+    const elapsed = Date.now() - start;
+    assert.equal(result.overlay.length, 0);
+    assert.ok(elapsed < 500, `expected timeout under 500ms wall clock, got ${elapsed}ms`);
+  });
+});
