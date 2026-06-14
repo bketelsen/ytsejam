@@ -5,6 +5,7 @@ import { loadConfig } from "./config.ts";
 import { EventBus } from "./events.ts";
 import { Indexer } from "./indexer.ts";
 import { AgentManager } from "./manager.ts";
+import { loadLiveCopilotModels } from "./copilot-live-catalog.ts";
 import { resolveModel } from "./models.ts";
 import { PiAuthStore } from "./pi-auth.ts";
 import { PersonaStore } from "./persona.ts";
@@ -41,6 +42,7 @@ const config = loadConfig();
 fs.mkdirSync(config.dataDir, { recursive: true });
 
 const authStore = new PiAuthStore(config.piAuthPath);
+const liveCopilotCatalog = await loadLiveCopilotModels(authStore);
 const indexer = new Indexer(path.join(config.dataDir, "index.db"));
 const bus = new EventBus();
 const persona = new PersonaStore(path.join(config.dataDir, "persona"));
@@ -63,7 +65,7 @@ const manager = new AgentManager({
   indexer,
   bus,
   persona,
-  resolveModel: (ref) => resolveModel(ref, authStore),
+  resolveModel: (ref) => resolveModel(ref, authStore, liveCopilotCatalog),
   defaultModel: config.defaultModel,
   tools: [
     ...createGlobalTools(),
@@ -92,7 +94,7 @@ taskManager = new TaskManager({
   bus,
   persona,
   authStore,
-  resolveModel: (ref) => resolveModel(ref, authStore),
+  resolveModel: (ref) => resolveModel(ref, authStore, liveCopilotCatalog),
   subagentModel: config.subagentModel,
   // worker tools are built per task in task-manager.ts so the bash/file
   // tools resolve against the parent session's working dir; pass only the
