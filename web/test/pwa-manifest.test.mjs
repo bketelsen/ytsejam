@@ -8,6 +8,28 @@ const manifest = JSON.parse(
   readFileSync(join(root, "public/manifest.webmanifest"), "utf8"),
 );
 
+/**
+ * Read App.tsx and strip its line and block comments before returning the
+ * source text, so file-scope assertions can't be spoofed by a comment that
+ * contains the asserted literal (e.g. `// action === "new"` accidentally
+ * making a deleted real branch look present).
+ *
+ * Reviewer-noted hazard from PR #125: file-scope regex matching is more
+ * robust to refactor than handler-body extraction, but it's
+ * comment-spoofable. Stripping comments closes that gap cheaply without
+ * needing an AST parser.
+ */
+function readAppSrcCodeOnly() {
+  const raw = readFileSync(join(root, "src/App.tsx"), "utf8");
+  return raw
+    // Block comments — non-greedy, dot matches newline via [\s\S].
+    .replaceAll(/\/\*[\s\S]*?\*\//g, "")
+    // Line comments — to end of line. Doesn't strip URLs in strings because
+    // a string would need to contain `//` outside any other escaping,
+    // which we don't write in App.tsx. (If we ever do, switch to AST.)
+    .replaceAll(/\/\/[^\n]*/g, "");
+}
+
 test("manifest declares both 'any' and 'maskable' icon variants in each size", () => {
   // Issue #22: Android adaptive icons need purpose:maskable variants with a
   // safe-zone-aware render. We ship both purposes side-by-side so the OS can
@@ -145,7 +167,7 @@ test("App.tsx handles every shortcut action declared in the manifest (forward SS
   // flat regex is robust against function-style refactors (arrow vs
   // function, indentation changes, extraction to a hook) while still
   // catching the spec-violation we care about.
-  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  const appSrc = readAppSrcCodeOnly();
   const actions = manifest.shortcuts
     .map((s) => new URL(s.url, "https://example.test").searchParams.get("action"))
     .filter(Boolean);
@@ -164,7 +186,7 @@ test("App.tsx clears the action param after firing (so refresh doesn't re-trigge
   // the action (re-open a dialog, re-create a new session). The contract
   // is one-shot. File-scope match: replaceState only appears in the
   // shortcut handler, so a flat assertion is robust to refactors.
-  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  const appSrc = readAppSrcCodeOnly();
   assert.match(
     appSrc,
     /history\.replaceState\(/,
@@ -173,20 +195,40 @@ test("App.tsx clears the action param after firing (so refresh doesn't re-trigge
 });
 
 test("App.tsx URL-action handler short-circuits on bare and unknown actions", () => {
-  // Coverage for the no-op paths: `if (!action) return` (bare load with
-  // no `?action=` should be a no-op) and the unknown-action branch
-  // (random ?action=bogus must NOT clear the URL and must NOT call any
-  // app handler). We assert both by source-text since the test stack is
-  // node:test without RTL — but the assertions are precise: the bare
-  // guard is the literal `if (!action) return` token, and the unknown
-  // path is structurally enforced by the chain of `else if (action === ...)`
-  // dispatch lines (no fallthrough action would be wired without showing
-  // up in the forward-SSOT test above).
-  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  // Coverage for the no-op paths:
+  //   1. bare load (no `?action=`)        -> `if (!action) return;`
+  //   2. unknown action (?action=bogus)   -> dispatcher's final `else return;`
+  //      MUST run BEFORE `history.replaceState` so an unknown action
+  //      leaves the URL untouched (for debugging) AND fires no handler.
+  // Source-text-only (test stack is node:test, no RTL). Assertions are
+  // precise: literal bare-guard text + structural ordering of the final
+  // `else return` BEFORE `window.history.replaceState`.
+  const appSrc = readAppSrcCodeOnly();
+  // Bare-action guard: literal `if (!action) return`.
   assert.match(
     appSrc,
     /if\s*\(\s*!action\s*\)\s*return/,
     "App.tsx URL-action handler must early-return when ?action= is absent (bare load is a no-op)",
+  );
+  // Unknown-action fallthrough: there must be an `else return;` between
+  // the action === branches and the replaceState call, so an unmatched
+  // action exits BEFORE the URL is cleared and before any handler fires.
+  // We assert by ordering: the LAST `else return;` must appear before
+  // the `history.replaceState(` call in the source.
+  const elseReturnIdx = appSrc.lastIndexOf("else return");
+  const replaceStateIdx = appSrc.indexOf("history.replaceState(");
+  assert.ok(
+    elseReturnIdx !== -1,
+    "App.tsx URL-action handler must have an `else return` for unknown actions (so ?action=bogus is a no-op)",
+  );
+  assert.ok(
+    replaceStateIdx !== -1,
+    "App.tsx URL-action handler must call history.replaceState (separately tested above)",
+  );
+  assert.ok(
+    elseReturnIdx < replaceStateIdx,
+    "the unknown-action `else return` must come BEFORE history.replaceState, " +
+      "so an unknown ?action= leaves the URL untouched and fires no handler",
   );
 });
 
@@ -194,7 +236,7 @@ test("App.tsx listens for popstate so a desktop PWA reused by a second shortcut 
   // On desktop Chrome, clicking a shortcut while the PWA window is already
   // open navigates the existing window same-origin — fires popstate, not a
   // remount. The useEffect must register a popstate listener.
-  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  const appSrc = readAppSrcCodeOnly();
   assert.match(
     appSrc,
     /addEventListener\(["']popstate["']/,
@@ -212,7 +254,7 @@ test("App.tsx URL-action useEffect mounts once (no `app` in dep array — would 
   // render and `Main` re-renders per streamed token, so `[app]` deps
   // churn add/removeEventListener + re-invoke the handler per token.
   // The handler must be registered once (empty deps + ref for latest state).
-  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  const appSrc = readAppSrcCodeOnly();
   // Find the dep array trailing the URL-action useEffect. We anchor on
   // the popstate registration line so we're definitely matching the
   // shortcut-handler effect and not some other effect that might appear
