@@ -125,18 +125,30 @@ Before promoting, check if the pattern ALREADY EXISTS:
 **Gate 3: Synthesis & Write**
 
 For each uncovered cluster:
-- Distill into one actionable, timeless pattern line
-- Style-match against existing patterns (same voice, same structure)
-- Add `<!-- promoted:YYYY-MM-DD theme:tag -->` audit trail at the end of the line
-- `cog_patch` it into `cog-meta/patterns.md` (universal) or `{domain-path}/patterns.md` (domain-specific) — edit the relevant section or add the new bullet
-- If replacing an existing pattern, `cog_patch` the old line into the new one
+1. Distill into one actionable, timeless pattern line
+2. Style-match against existing patterns (same voice, same structure)
+3. Add `<!-- promoted:YYYY-MM-DD theme:tag -->` audit trail at the end of the line
+4. **Classify tier (split test):** ask yourself this single question — *"Would this rule be true if {dominant_domain} did not exist?"* If yes → **global** (`cog-meta/patterns.md`). If no → **domain** (`{dominant_domain_path}/patterns.md`). When ambiguous, default to **global** (visible token cost is preferable to silent rule-invisibility when the domain isn't active).
+5. Write:
+   - **global** → `cog_patch` `cog-meta/patterns.md` (edit the relevant section or add the new bullet)
+   - **domain** → `cog_patch` `{dominant_domain_path}/patterns.md`. If the file does not yet exist, **create it first** with shell write (`cog_write` rejects whole-file patterns.md writes); minimum template:
+     ```
+     <!-- L0: {domain} domain-specific patterns -->
+     # {domain} — Domain Patterns
+     <!-- Edit in place. ≤40 lines / 3.5KB. Loaded by the {domain} skill on activation. -->
+
+     ## {Theme}
+     - {the new bullet}
+     ```
+6. If replacing an existing pattern, `cog_patch` the old line into the new one (same tier).
 
 **Replacement is healthy** — patterns evolve. A new pattern that subsumes 2 older ones should replace both. Track replacements in debrief.
 
 **Pattern file caps:**
-- Core `patterns.md`: hard limit 70 lines / 5.5KB — universal rules only
-- Satellite files: soft cap 30 lines each
-- `housekeeping_scan.thresholds.patterns_over_cap` flags files near the cap. If near cap: merge overlapping rules or replace weaker patterns (`cog_patch`). Never just truncate.
+- Global tier `cog-meta/patterns.md`: hard limit 70 lines / 6KB — cross-project rules only
+- Per-domain tier `{domain-path}/patterns.md`: hard limit 40 lines / 3.5KB each — project-specific rules
+- `housekeeping_scan.thresholds.patterns_over_cap` flags the global file; `domain_patterns_over_cap` flags per-domain files. If near cap: merge overlapping rules or replace weaker patterns (`cog_patch`). Never just truncate.
+- Mis-classification recovery: if a rule was placed in the wrong tier, the cap will trip first on the over-stuffed side. Move via `cog_patch` (delete from source tier) + append (to correct tier) at the next /reflect run.
 
 **Spike Detection (below promotion bar):**
 
