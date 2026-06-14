@@ -5,6 +5,41 @@ import { join } from "node:path";
 import { MemorySystem } from "ltm";
 import { ltmReplay, ltmHealth } from "../../src/cli/ltm-commands.ts";
 
+const ltmEmbedderEnvKeys = [
+  "YTSEJAM_LTM_EMBEDDER",
+  "YTSEJAM_LTM_COPILOT_MODEL",
+  "YTSEJAM_LTM_COPILOT_URL",
+  "YTSEJAM_LTM_OLLAMA_MODEL",
+  "YTSEJAM_LTM_OLLAMA_URL",
+] as const;
+
+let savedLtmEmbedderEnv: Record<(typeof ltmEmbedderEnvKeys)[number], string | undefined> = {
+  YTSEJAM_LTM_EMBEDDER: undefined,
+  YTSEJAM_LTM_COPILOT_MODEL: undefined,
+  YTSEJAM_LTM_COPILOT_URL: undefined,
+  YTSEJAM_LTM_OLLAMA_MODEL: undefined,
+  YTSEJAM_LTM_OLLAMA_URL: undefined,
+};
+
+beforeEach(() => {
+  savedLtmEmbedderEnv = Object.fromEntries(
+    ltmEmbedderEnvKeys.map((key) => [key, process.env[key]]),
+  ) as Record<(typeof ltmEmbedderEnvKeys)[number], string | undefined>;
+  process.env.YTSEJAM_LTM_EMBEDDER = "hash";
+  delete process.env.YTSEJAM_LTM_COPILOT_MODEL;
+  delete process.env.YTSEJAM_LTM_COPILOT_URL;
+  delete process.env.YTSEJAM_LTM_OLLAMA_MODEL;
+  delete process.env.YTSEJAM_LTM_OLLAMA_URL;
+});
+
+afterEach(() => {
+  for (const key of ltmEmbedderEnvKeys) {
+    const value = savedLtmEmbedderEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
+
 describe("ltmReplay CLI", () => {
   let dataDir = "";
   let ltmDir = "";

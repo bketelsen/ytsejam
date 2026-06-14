@@ -42,7 +42,11 @@ async function postEmbedding(
       "Content-Type": "application/json",
       "Copilot-Integration-Id": "vscode-chat",
     },
-    body: JSON.stringify({ input: text, model }),
+    // Copilot enterprise embeddings REQUIRES input as a string array — sending
+    // a scalar string returns HTTP 400 (verified against the live endpoint
+    // 2026-06-14). OpenAI's API accepts both shapes; Copilot only accepts the
+    // array form.
+    body: JSON.stringify({ input: [text], model }),
   });
 }
 

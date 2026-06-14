@@ -9,7 +9,7 @@ import type { Embedder } from "../src/embedding/embedder.ts";
 interface RecordedCall {
   url: string;
   headers: Record<string, string>;
-  body: { model: string; input: string };
+  body: { model: string; input: string[] };
 }
 
 function vectorFor(text: string, dimension: number): number[] {
@@ -31,7 +31,7 @@ function fakeCopilot(dimension = 1536): { calls: RecordedCall[] } {
     calls.push({ url: String(url), headers: init.headers as Record<string, string>, body });
     return new Response(
       JSON.stringify({
-        data: [{ embedding: vectorFor(body.input, dimension), index: 0 }],
+        data: [{ embedding: vectorFor(body.input[0] ?? "", dimension), index: 0 }],
         model: body.model,
         usage: {},
       }),
@@ -78,7 +78,7 @@ describe("copilot embedder adapter", () => {
     });
     expect(copilot.calls[0].body).toEqual({
       model: "text-embedding-3-small",
-      input: "dimension probe",
+      input: ["dimension probe"],
     });
   });
 
@@ -88,7 +88,7 @@ describe("copilot embedder adapter", () => {
     await embedder.embed("first");
     await embedder.embed("second");
     expect(embedder.dimension).toBe(1536);
-    const probes = copilot.calls.filter((c) => c.body.input === "dimension probe");
+    const probes = copilot.calls.filter((c) => c.body.input[0] === "dimension probe");
     expect(probes).toHaveLength(1);
     expect(copilot.calls).toHaveLength(3); // probe + two embeds
   });
@@ -124,7 +124,7 @@ describe("copilot embedder adapter", () => {
         return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
       }
       return new Response(
-        JSON.stringify({ data: [{ embedding: vectorFor(body.input, 1536), index: 0 }] }),
+        JSON.stringify({ data: [{ embedding: vectorFor(body.input[0] ?? "", 1536), index: 0 }] }),
         { status: 200 },
       );
     });
@@ -229,6 +229,32 @@ describe("copilot embedder adapter", () => {
     const b = await cached.embed("hello world");
     expect(inner.calls).toBe(1); // cache hit, no new inner embed
     expect(b).toEqual(a);
+  });
+
+  it("always sends input as a string array (Copilot rejects scalar input)", async () => {
+    const calls: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL, init: RequestInit) => {
+      calls.push(JSON.parse(init.body as string));
+      return new Response(
+        JSON.stringify({
+          data: [{ embedding: new Array(1536).fill(0).map((_, i) => i + 1), index: 0 }],
+        }),
+        { status: 200 },
+      );
+    });
+    const e = await CopilotEmbedder.create({
+      getApiKey: () => Promise.resolve("test-key"),
+      model: "text-embedding-3-small",
+    });
+    await e.embed("hello");
+    await e.embed("world");
+    // First call is the dimension probe (constructor), second is "hello", third is "world".
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    for (const body of calls) {
+      expect(Array.isArray((body as { input: unknown }).input)).toBe(true);
+      expect((body as { input: string[] }).input).toHaveLength(1);
+      expect(typeof (body as { input: string[] }).input[0]).toBe("string");
+    }
   });
 
   it("skips probe for configured dimension and fails loudly when the wire disagrees", async () => {
