@@ -179,8 +179,10 @@ export interface HousekeepingCaps {
   completed_actions: number;
   improvements_done: number;
   hot_memory_lines: number;
-  patterns_lines: number;
-  patterns_bytes: number;
+  global_patterns_lines: number;
+  global_patterns_bytes: number;
+  domain_patterns_lines: number;
+  domain_patterns_bytes: number;
   dormant_domain_days: number;
   stale_action_item_days: number;
   changed_recently_fallback_days: number;
@@ -219,6 +221,14 @@ export interface PatternsOverCap {
   size_cap: number;
 }
 
+export interface DomainPatternsOverCap {
+  path: string;
+  lines: number;
+  size: number;
+  lines_cap: number;
+  size_cap: number;
+}
+
 /** Threshold-cap violation groups returned by housekeeping_scan. */
 export interface HousekeepingThresholds {
   observations_over_cap: ObservationsOverCap[];
@@ -226,6 +236,7 @@ export interface HousekeepingThresholds {
   improvements_implemented_over_cap: ImprovementsImplementedOverCap[];
   hot_memory_over_cap: HotMemoryOverCap[];
   patterns_over_cap: PatternsOverCap[];
+  domain_patterns_over_cap: DomainPatternsOverCap[];
 }
 
 /** Dormant domain reported by housekeeping_scan. */
