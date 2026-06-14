@@ -93,14 +93,53 @@ describe("computeReserveTokens", () => {
     expect(computeReserveTokens(fauxModel(1_000_000, 128_000))).toBe(144_384);
   });
 
-  it("returns 32k floor for small-output models", () => {
+  it("returns 32k floor for small-output, large-window models", () => {
+    // Floor applies when maxTokens + 16k < 32k AND the contextWindow is large
+    // enough that the cap doesn't kick in (floor(cw*0.5) > 32k → cw > 64k).
+    // The (8_192, 1_024) case from before was the bug example for #75 — it
+    // is now covered by the small-context cap describe below.
     expect(computeReserveTokens(fauxModel(128_000, 4_096))).toBe(32_768);
-    expect(computeReserveTokens(fauxModel(8_192, 1_024))).toBe(32_768);
+    expect(computeReserveTokens(fauxModel(100_000, 8_000))).toBe(32_768);
   });
 
   it("uses maxTokens + 16k when above floor", () => {
     // 17k + 16,384 = 33,384 > 32k floor
     expect(computeReserveTokens(fauxModel(200_000, 17_000))).toBe(33_384);
+  });
+
+  // Issue #75: small-context models had reserve >= contextWindow, producing a
+  // negative budget that made shouldCompact() fire on every turn. Reserve is
+  // now capped at floor(contextWindow * 0.5) so budget stays positive.
+  describe("small-context cap (issue #75)", () => {
+    it("never returns a reserve larger than half the context window", () => {
+      // cw=4000: uncapped formula wants 32_768 (floor); capped at floor(4000*0.5)=2000.
+      expect(computeReserveTokens(fauxModel(4_000, 1_024))).toBe(2_000);
+      // cw=8192: capped at 4096; the old 32k floor would have produced a -24_576 budget.
+      expect(computeReserveTokens(fauxModel(8_192, 1_024))).toBe(4_096);
+      // cw=16_384: capped at 8192; still capped because 32k floor > 16k window.
+      expect(computeReserveTokens(fauxModel(16_384, 4_096))).toBe(8_192);
+    });
+
+    it("guarantees a positive budget for every conceivable contextWindow", () => {
+      // Property: contextWindow - computeReserveTokens(model) > 0 for any
+      // contextWindow >= 2 (window of 1 still produces budget=0 from floor(0.5)).
+      for (const cw of [2, 100, 1_000, 4_000, 8_192, 16_384, 32_768, 65_536, 200_000]) {
+        const reserve = computeReserveTokens(fauxModel(cw, Math.floor(cw / 4)));
+        const budget = cw - reserve;
+        expect(budget, `cw=${cw} produced reserve=${reserve} budget=${budget}`).toBeGreaterThan(0);
+      }
+    });
+
+    it("does not change behavior for large-context models (regression guard)", () => {
+      // The cap only kicks in when contextWindow*0.5 < target. For cw=200k,
+      // cap = 100k which is >> the 33k target — no change.
+      expect(computeReserveTokens(fauxModel(200_000, 17_000))).toBe(33_384);
+      expect(computeReserveTokens(fauxModel(1_000_000, 64_000))).toBe(80_384);
+      // Even a model where maxTokens equals contextWindow (misconfigured but
+      // legal): cw=100k, mt=100k. target = 100k + 16k = 116k. cap = 50k.
+      // Reserve clamps to 50k, budget = 50k > 0. Sane, not crashy.
+      expect(computeReserveTokens(fauxModel(100_000, 100_000))).toBe(50_000);
+    });
   });
 });
 
