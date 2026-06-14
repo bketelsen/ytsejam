@@ -11,3 +11,5 @@ import "./ws-watchdog.test.mjs";
 import "./pwa-manifest.test.mjs";
 import "./sw.test.mjs";
 import "./api-skills.test.mjs";
+
+import "./slash-menu.test.mjs";
