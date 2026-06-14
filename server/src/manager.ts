@@ -691,15 +691,19 @@ export class AgentManager {
     const opened = await this.getOrOpen(id);
     // Per-turn override: /yolo or /careful prefix wins over the persisted session toggle.
     const { override, message } = extractTurnOverride(text);
-    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
-    opened.currentEffectiveMode.value = override ?? sessionMode;
+    const effectiveText = message;
     if (opened.running) {
-      await opened.harness.steer(message);
+      // Mid-turn steer: do NOT touch currentEffectiveMode — the running turn
+      // keeps its starting mode (locked design decision).
+      await opened.harness.steer(effectiveText);
       return;
     }
+    // Fresh turn: resolve effective mode now.
+    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+    opened.currentEffectiveMode.value = override ?? sessionMode;
     if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
-    opened.harness.prompt(message).catch((err) => {
+    opened.harness.prompt(effectiveText).catch((err) => {
       // run failures already surface as assistant error messages via events;
       // this catches pre-run rejections (e.g. "busy") so they don't crash the process
       console.error(`prompt failed for session ${id}`, err);
@@ -715,15 +719,18 @@ export class AgentManager {
   async injectMessage(id: string, text: string): Promise<void> {
     const opened = await this.getOrOpen(id);
     const { override, message } = extractTurnOverride(text);
-    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
-    opened.currentEffectiveMode.value = override ?? sessionMode;
+    const effectiveText = message;
     if (opened.running) {
-      await opened.harness.followUp(message);
+      // Mid-turn followUp: do NOT touch currentEffectiveMode — the running
+      // turn keeps its starting mode (locked design decision).
+      await opened.harness.followUp(effectiveText);
       return;
     }
+    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+    opened.currentEffectiveMode.value = override ?? sessionMode;
     if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true;
-    opened.harness.prompt(message).catch((err) => {
+    opened.harness.prompt(effectiveText).catch((err) => {
       console.error(`task result injection failed for session ${id}`, err);
       opened.running = false;
     });
@@ -794,9 +801,14 @@ export class AgentManager {
     this.opts.indexer.setApprovalMode(id, mode);
     this.emitMeta(id);
     this.opts.bus.emit({ type: "approval_mode_changed", sessionId: id, mode });
-    // Update the live ref so the change applies to the next turn immediately
-    // (without waiting for the next session-open).
-    opened.currentEffectiveMode.value = mode;
+    const liveOpened = this.open.get(id);
+    if (liveOpened && !liveOpened.running) {
+      // Mid-turn flips must not leak into the running turn — locked design
+      // decision (docs/plans/2026-06-14-approval-mode-design.md lines 205-207).
+      // The next sendMessage/injectMessage reads indexer.approvalMode and sets
+      // the ref, so next-turn propagation is preserved without the live write.
+      liveOpened.currentEffectiveMode.value = mode;
+    }
   }
 
   /**

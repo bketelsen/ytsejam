@@ -57,8 +57,12 @@ function makeApprovalHarness() {
   return { ...made, coordinator, events, probeTool };
 }
 
+function approvalRequests(h: ApprovalHarness) {
+  return h.events.filter((event): event is Extract<ServerEvent, { type: "approval_request" }> => event.type === "approval_request");
+}
+
 function approvalRequest(h: ApprovalHarness) {
-  return h.events.find((event): event is Extract<ServerEvent, { type: "approval_request" }> => event.type === "approval_request");
+  return approvalRequests(h)[0];
 }
 
 function userTexts(messages: any[]): string[] {
@@ -173,7 +177,7 @@ describe("AgentManager approval-mode tool wrapping", () => {
     expect(readFileSync(marker.path, "utf8")).toBe("override-careful");
   });
 
-  test("setApprovalMode mid-session updates the live ref", async () => {
+  test("setApprovalMode between turns updates the next turn's mode", async () => {
     const h = makeApprovalHarness();
     const first = writeCommand(h, "first", "first");
     const second = writeCommand(h, "second", "second");
@@ -199,6 +203,86 @@ describe("AgentManager approval-mode tool wrapping", () => {
     await h.manager.waitForIdle(row.id);
     expect(readFileSync(second.path, "utf8")).toBe("second");
   });
+
+  test("setApprovalMode mid-running-turn does NOT downgrade in-flight turn (ASK→YOLO leak)", async () => {
+    const h = makeApprovalHarness();
+    const first = writeCommand(h, "ask-yolo-first", "first");
+    const second = writeCommand(h, "ask-yolo-second", "second");
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("bash", { command: first.command })]),
+      fauxAssistantMessage([fauxToolCall("bash", { command: second.command })]),
+      fauxAssistantMessage("done"),
+    ]);
+    const row = await h.manager.createSession();
+    await h.manager.setApprovalMode(row.id, "ask");
+
+    await h.manager.sendMessage(row.id, "run two commands");
+    await waitFor(() => approvalRequests(h).length === 1);
+    const firstReq = approvalRequests(h)[0];
+    expect(firstReq).toMatchObject({ sessionId: row.id, toolName: "bash", params: { command: first.command } });
+    expect(existsSync(first.path)).toBe(false);
+
+    await h.manager.setApprovalMode(row.id, "yolo");
+    expect(h.coordinator.resolve(firstReq.approvalId, "approve")).toBe(true);
+
+    await waitFor(() => approvalRequests(h).length === 2);
+    const secondReq = approvalRequests(h)[1];
+    expect(secondReq).toMatchObject({ sessionId: row.id, toolName: "bash", params: { command: second.command } });
+    expect(readFileSync(first.path, "utf8")).toBe("first");
+    expect(existsSync(second.path)).toBe(false);
+    expect(h.coordinator.list()).toHaveLength(1);
+
+    expect(h.coordinator.resolve(secondReq.approvalId, "approve")).toBe(true);
+    await h.manager.waitForIdle(row.id);
+    expect(readFileSync(second.path, "utf8")).toBe("second");
+  });
+
+  test("steer mid-running-turn does NOT override the running turn's mode", async () => {
+    const h = makeApprovalHarness();
+    const first = writeCommand(h, "steer-first", "first");
+    const firstCommand = `${first.command}; sleep 0.5`;
+    const second = writeCommand(h, "steer-second", "second");
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("bash", { command: firstCommand })]),
+      fauxAssistantMessage([fauxToolCall("bash", { command: second.command })]),
+      fauxAssistantMessage("done"),
+    ]);
+    const row = await h.manager.createSession();
+    await h.manager.setApprovalMode(row.id, "ask");
+
+    await h.manager.sendMessage(row.id, "/yolo run two commands");
+    await waitFor(() => existsSync(first.path));
+    await h.manager.sendMessage(row.id, "/careful steer while running");
+    await h.manager.waitForIdle(row.id);
+
+    expect(readFileSync(first.path, "utf8")).toBe("first");
+    expect(readFileSync(second.path, "utf8")).toBe("second");
+    expect(h.events.some((event) => event.type === "approval_request")).toBe(false);
+  });
+
+  test("injectMessage mid-running-turn does NOT override the running turn's mode", async () => {
+    const h = makeApprovalHarness();
+    const first = writeCommand(h, "inject-first", "first");
+    const firstCommand = `${first.command}; sleep 0.5`;
+    const second = writeCommand(h, "inject-second", "second");
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("bash", { command: firstCommand })]),
+      fauxAssistantMessage([fauxToolCall("bash", { command: second.command })]),
+      fauxAssistantMessage("done"),
+    ]);
+    const row = await h.manager.createSession();
+    await h.manager.setApprovalMode(row.id, "ask");
+
+    await h.manager.sendMessage(row.id, "/yolo run two commands");
+    await waitFor(() => existsSync(first.path));
+    await h.manager.injectMessage(row.id, "/careful injected while running");
+    await h.manager.waitForIdle(row.id);
+
+    expect(readFileSync(first.path, "utf8")).toBe("first");
+    expect(readFileSync(second.path, "utf8")).toBe("second");
+    expect(h.events.some((event) => event.type === "approval_request")).toBe(false);
+  });
+
 
   test("manager wrapping preserves ungated tool reference equality", async () => {
     const h = makeApprovalHarness();
