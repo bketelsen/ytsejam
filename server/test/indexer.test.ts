@@ -19,6 +19,7 @@ const row: SessionRow = {
   preview: "",
   unread: false,
   archived: false,
+  approvalMode: "yolo",
 };
 
 describe("Indexer", () => {

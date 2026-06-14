@@ -84,3 +84,9 @@ When migrating a single-store write to a multi-store write (cog → cog SSOT + b
 (seen in: server/src/tools/cog.ts multi-line observation append → recordObservation per-line migration)
 
 _Added: 2026-06-13 | Task: Task 5 of 9 for PR 1 of the cog-LTM bridge roadmap_
+
+## Assert Timer Count In Coordinator Tests
+
+When testing `ApprovalCoordinator` in `server/test/approval-coordinator.test.ts`, asserting the resolved value and `resolutions.length` is insufficient — the `if (this.pending.delete(id))` guard satisfies those assertions whether or not `clearTimeout(entry.timer)` actually ran, so timer leaks stay invisible. After any explicit `resolve()` or `cancelSession()`, add `expect(vi.getTimerCount()).toBe(0)` (with `vi.useFakeTimers()`) so removing the `clearTimeout` call fails the suite; mutation-test both directions to confirm the assertion bites. Also make `cancelSession` in `server/src/approval/coordinator.ts` defensive: wrap the trusted `onResolved(id, decision)` callback (not the internal `entry.resolve`) in try/catch so one throwing callback can't strand sibling pending approvals for the full 5-minute timeout, and cover it with a test that asserts no throw, both promises resolve to `"deny"`, and `list()` is empty.
+
+_Added: 2026-06-14 | Task: Task 5 — ApprovalCoordinator (approval-mode)_
