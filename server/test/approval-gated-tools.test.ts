@@ -19,9 +19,12 @@ describe("gated tools registry", () => {
     for (const name of [
       "read", "ls", "grep", "find",
       "web_search", "web_fetch",
-      "cancel_task",
+      "cancel_task", "check_task",
       "cog_read", "cog_write", "cog_append", "cog_patch", "cog_search", "cog_list",
+      "cog_outline", "cog_move", "cog_rpc",
+      "list_schedules",
       "recall",
+      "skill",
     ]) {
       expect(isGatedTool(name)).toBe(false);
     }
