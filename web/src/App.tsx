@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
@@ -27,13 +27,28 @@ function Main() {
   // desktop fires popstate on the same-origin URL change) or by mounting a
   // fresh one. We handle both paths through one handler and clear the param
   // after firing so a refresh doesn't re-trigger the action.
+  //
+  // The handler is registered ONCE on mount via the empty dep array, and
+  // reads the latest `app`/setters through a ref so we don't re-register
+  // (and re-fire) on every render. `useApp()` returns a fresh object
+  // literal per render and `Main` re-renders on every streamed token, so a
+  // `[app]` dep would churn add/removeEventListener + re-invoke the handler
+  // body per token — wasteful today, and a re-fire trap if any future
+  // branch ever fails to clear the URL synchronously.
+  const handlerStateRef = useRef({
+    newSession: app.newSession,
+    openTasks: () => setTasksOpen(true),
+    openSettings: () => setSettingsOpen(true),
+  });
+  handlerStateRef.current.newSession = app.newSession;
   useEffect(() => {
     const handleAction = () => {
       const action = new URLSearchParams(window.location.search).get("action");
       if (!action) return;
-      if (action === "new") void app.newSession();
-      else if (action === "tasks") setTasksOpen(true);
-      else if (action === "settings") setSettingsOpen(true);
+      const s = handlerStateRef.current;
+      if (action === "new") void s.newSession();
+      else if (action === "tasks") s.openTasks();
+      else if (action === "settings") s.openSettings();
       else return; // unknown action -> leave URL untouched for debugging
       // Clear the param so refresh / share-URL doesn't re-fire.
       window.history.replaceState(null, "", window.location.pathname);
@@ -41,7 +56,7 @@ function Main() {
     handleAction();
     window.addEventListener("popstate", handleAction);
     return () => window.removeEventListener("popstate", handleAction);
-  }, [app]);
+  }, []);
 
   const runningTasks = Object.values(app.tasks).filter(
     (t) => t.status === "running" || t.status === "pending",

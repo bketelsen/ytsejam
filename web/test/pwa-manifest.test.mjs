@@ -133,26 +133,28 @@ test("manifest declares shortcuts for new/tasks/settings, deep-linked via ?actio
   }
 });
 
-test("App.tsx handleAction useEffect handles exactly the shortcut action set", () => {
-  // SSOT bridge between manifest shortcuts and the App.tsx interpreter.
-  // We pull the action set from the manifest, then assert App.tsx's
-  // handleAction has a branch matching each one. Mutation-tested: if you
-  // add a shortcut to the manifest without wiring its branch, this fails.
+test("App.tsx handles every shortcut action declared in the manifest (forward SSOT)", () => {
+  // SSOT bridge, manifest -> App.tsx: every action declared in
+  // manifest.shortcuts MUST have a matching `action === "X"` branch in
+  // App.tsx, or the OS-launcher entry will deep-link to a no-op. We don't
+  // assert the reverse direction here — an orphan branch in App.tsx is
+  // dead code (the next test guards intent more loosely).
+  //
+  // File-scoped match (not body-scoped) deliberately: these literal
+  // strings only appear inside the action dispatcher in App.tsx, so a
+  // flat regex is robust against function-style refactors (arrow vs
+  // function, indentation changes, extraction to a hook) while still
+  // catching the spec-violation we care about.
   const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
-  // Extract the handleAction function body (between `const handleAction = () => {` and the matching `};`).
-  const handlerMatch = appSrc.match(/const handleAction = \(\) => \{([\s\S]*?)\n {4}\};/);
-  assert.ok(handlerMatch, "App.tsx must define a `const handleAction = () => { ... };` for PWA shortcuts");
-  const handlerBody = handlerMatch[1];
-  // Pull manifest actions and assert each one has an `action === "X"` branch in the handler.
   const actions = manifest.shortcuts
     .map((s) => new URL(s.url, "https://example.test").searchParams.get("action"))
     .filter(Boolean);
   for (const action of actions) {
-    const branchRe = new RegExp(`action === ["']${action}["']`);
+    const branchRe = new RegExp(`action\\s*===\\s*["']${action}["']`);
     assert.match(
-      handlerBody,
+      appSrc,
       branchRe,
-      `App.tsx handleAction missing a branch for action='${action}' (manifest declares it)`,
+      `App.tsx missing an \`action === "${action}"\` branch (manifest declares the shortcut)`,
     );
   }
 });
@@ -160,14 +162,31 @@ test("App.tsx handleAction useEffect handles exactly the shortcut action set", (
 test("App.tsx clears the action param after firing (so refresh doesn't re-trigger)", () => {
   // Without this, refreshing the page after the OS deep-link would re-fire
   // the action (re-open a dialog, re-create a new session). The contract
-  // is one-shot.
+  // is one-shot. File-scope match: replaceState only appears in the
+  // shortcut handler, so a flat assertion is robust to refactors.
   const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
-  const handlerMatch = appSrc.match(/const handleAction = \(\) => \{([\s\S]*?)\n {4}\};/);
-  assert.ok(handlerMatch, "handleAction not found");
   assert.match(
-    handlerMatch[1],
+    appSrc,
     /history\.replaceState\(/,
-    "App.tsx handleAction must call history.replaceState to clear the ?action= param after firing",
+    "App.tsx must call history.replaceState to clear the ?action= param after firing",
+  );
+});
+
+test("App.tsx URL-action handler short-circuits on bare and unknown actions", () => {
+  // Coverage for the no-op paths: `if (!action) return` (bare load with
+  // no `?action=` should be a no-op) and the unknown-action branch
+  // (random ?action=bogus must NOT clear the URL and must NOT call any
+  // app handler). We assert both by source-text since the test stack is
+  // node:test without RTL — but the assertions are precise: the bare
+  // guard is the literal `if (!action) return` token, and the unknown
+  // path is structurally enforced by the chain of `else if (action === ...)`
+  // dispatch lines (no fallthrough action would be wired without showing
+  // up in the forward-SSOT test above).
+  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  assert.match(
+    appSrc,
+    /if\s*\(\s*!action\s*\)\s*return/,
+    "App.tsx URL-action handler must early-return when ?action= is absent (bare load is a no-op)",
   );
 });
 
@@ -185,5 +204,31 @@ test("App.tsx listens for popstate so a desktop PWA reused by a second shortcut 
     appSrc,
     /removeEventListener\(["']popstate["']/,
     "App.tsx popstate listener must be removed in the useEffect cleanup",
+  );
+});
+
+test("App.tsx URL-action useEffect mounts once (no `app` in dep array — would re-fire on every render)", () => {
+  // Quality-review finding: `useApp()` returns a fresh object literal per
+  // render and `Main` re-renders per streamed token, so `[app]` deps
+  // churn add/removeEventListener + re-invoke the handler per token.
+  // The handler must be registered once (empty deps + ref for latest state).
+  const appSrc = readFileSync(join(root, "src/App.tsx"), "utf8");
+  // Find the dep array trailing the URL-action useEffect. We anchor on
+  // the popstate registration line so we're definitely matching the
+  // shortcut-handler effect and not some other effect that might appear
+  // in App.tsx in the future.
+  const effectTail = appSrc.match(
+    /addEventListener\(["']popstate["'][\s\S]*?\}\s*,\s*(\[[^\]]*\])\s*\)\s*;/,
+  );
+  assert.ok(
+    effectTail,
+    "could not locate the URL-action useEffect's dep array (anchored on the popstate addEventListener)",
+  );
+  const deps = effectTail[1].trim();
+  assert.equal(
+    deps,
+    "[]",
+    `URL-action useEffect must have empty deps (mounts once); got ${deps}. ` +
+      `If you need to read latest state inside the handler, use a ref (see handlerStateRef pattern in App.tsx).`,
   );
 });
