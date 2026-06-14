@@ -51,6 +51,7 @@ Review with fresh eyes —
 - **Completeness:** implemented everything in the spec? missed requirements? unhandled edge cases?
 - **Quality:** best work? clear names? clean and maintainable?
 - **Discipline:** avoided overbuilding? only built what was requested? followed existing patterns?
+- **Formatting scope:** formatted ONLY the lines you touched. DO NOT run `prettier`/`gofmt`/`black`/etc on the whole file — reflow of unrelated regions inflates the PR diff with cosmetic noise that buries the logic change. If the repo enforces a formatter via CI, that's its job; your job is to leave untouched lines untouched.
 - **Testing:** tests verify behavior (not just mocks)? followed TDD? comprehensive?
 Fix issues before reporting.
 
