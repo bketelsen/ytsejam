@@ -31,18 +31,50 @@ function isCacheable(res) {
   return res && res.ok && res.status !== 206;
 }
 
+// Capture once at module load: AbortSignal.timeout is the cheapest "this
+// fetch can't hang forever" guard, but it's Safari 16+ / Chrome 103+ /
+// Firefox 100+ (~mid-2022). On older browsers it's undefined and calling
+// it throws TypeError synchronously, which would poison the cache-hit
+// path. Feature-detect once and pass `undefined` (i.e. no signal) on the
+// pre-2022 minority — they lose the timeout cap on background refresh
+// but cache-hit navigations still work.
+const HAS_ABORT_TIMEOUT = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function";
+function refreshSignal(ms) {
+  return HAS_ABORT_TIMEOUT ? AbortSignal.timeout(ms) : undefined;
+}
+
 self.addEventListener("install", (event) => {
   // Take over as soon as install completes — don't wait for old tabs to close.
   // Vite hashed assets are immutable, so silent takeover can't cause a stale
   // asset reference in a live tab.
   //
-  // skipWaiting() called bare (not wrapped in waitUntil): the install
-  // lifetime should be governed by the precache work, not by skipWaiting.
-  // If precache fails, skipWaiting still happens — but the new SW activates
-  // with whatever it managed to cache, which is the desired graceful-degrade.
+  // skipWaiting() called bare (not wrapped in waitUntil): it's fire-and-
+  // forget per spec, doesn't need lifetime extension, and separating it
+  // from the precache means a precache rejection rejects ONLY the precache
+  // waitUntil, not the skipWaiting promise.
   self.skipWaiting();
+  // Precache `/` (the navigation fallback). Wrapped in .catch so a
+  // transient fetch failure at install time (server hiccup, dev/prod
+  // mismatch, brief 5xx) doesn't fail the whole install. Failed install
+  // would mean the new SW never activates — keeping the app exactly as it
+  // was pre-install, which is correct but loses the upgrade opportunity.
+  // Lenient catch trades "guaranteed fallback target on first install"
+  // for "install always succeeds; cache fills at runtime on next online
+  // visit" — more consistent with the design's runtime-first philosophy.
+  // On the catch path, the navigation fallback target won't exist until a
+  // normal online visit caches `/` via the fetch handler, so cold offline
+  // launch via a shortcut would still hit the OS error page. Acceptable:
+  // it's the same failure mode users would have had pre-Tier-2.
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)),
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .catch((err) => {
+        console.warn(
+          "[sw] precache failed; install proceeds without shell fallback:",
+          err,
+        );
+      }),
   );
 });
 
@@ -94,7 +126,7 @@ self.addEventListener("fetch", (event) => {
         // AbortSignal.timeout caps how long a slow refresh can hold the
         // SW alive on each cache-hit navigation.
         event.waitUntil(
-          fetch(req, { signal: AbortSignal.timeout(5000) })
+          fetch(req, { signal: refreshSignal(5000) })
             .then((res) => {
               if (isCacheable(res)) return cache.put(req, res.clone());
             })
