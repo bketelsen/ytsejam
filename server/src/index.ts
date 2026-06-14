@@ -23,6 +23,7 @@ import { createCogTools } from "./tools/cog.ts";
 import { createSkillTool } from "./tools/skills.ts";
 import { WorkdirStore, resolveWorkdir } from "./workdirs.ts";
 import { ArchiveStore } from "./archive-store.ts";
+import { ApprovalCoordinator } from "./approval/coordinator.ts";
 import { loadContextFiles } from "./context-files.ts";
 import { MemorySystem } from "ltm";
 import * as memory from "./memory/index.ts";
@@ -45,6 +46,22 @@ const authStore = new PiAuthStore(config.piAuthPath);
 const liveCopilotCatalog = await loadLiveCopilotModels(authStore);
 const indexer = new Indexer(path.join(config.dataDir, "index.db"));
 const bus = new EventBus();
+const approvalCoordinator = new ApprovalCoordinator({
+  timeoutMs: 5 * 60 * 1000,
+  onRequest: (req) => {
+    bus.emit({
+      type: "approval_request",
+      approvalId: req.approvalId,
+      sessionId: req.sessionId,
+      toolName: req.toolName,
+      toolLabel: req.toolLabel,
+      params: req.params,
+    });
+  },
+  onResolved: (approvalId, decision) => {
+    bus.emit({ type: "approval_resolved", approvalId, decision });
+  },
+});
 const persona = new PersonaStore(path.join(config.dataDir, "persona"));
 const cogBrief = new CogBriefProvider();
 const skills = new SkillsStore(path.join(config.dataDir, "skills"));
@@ -85,6 +102,7 @@ const manager = new AgentManager({
   authStore,
   cogBrief,
   skills,
+  approvalCoordinator,
 });
 
 taskManager = new TaskManager({
@@ -228,7 +246,7 @@ try {
   console.warn(`memory health check failed: ${(err as Error).message} — memory disabled until it recovers`);
 }
 
-const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills });
+const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills, approvalCoordinator });
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
   const allInterfaces = info.address === "0.0.0.0" || info.address === "::";
   const displayHost = allInterfaces ? "<all interfaces>" : info.address;

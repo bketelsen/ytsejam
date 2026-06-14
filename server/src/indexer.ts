@@ -223,6 +223,10 @@ export class Indexer {
     this.db.prepare("UPDATE sessions SET archived=? WHERE id=?").run(archived ? 1 : 0, id);
   }
 
+  setApprovalMode(id: string, mode: "yolo" | "ask"): void {
+    this.db.prepare("UPDATE sessions SET approval_mode=? WHERE id=?").run(mode, id);
+  }
+
   getSession(id: string): SessionRow | undefined {
     const r = this.db.prepare("SELECT * FROM sessions WHERE id=?").get(id) as SessionDbRow | undefined;
     return r ? this.toRow(r) : undefined;

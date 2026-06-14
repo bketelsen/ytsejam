@@ -7,6 +7,7 @@ import type { Config } from "./config.ts";
 import type { EventBus, ServerEvent } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { AgentManager } from "./manager.ts";
+import type { ApprovalCoordinator } from "./approval/coordinator.ts";
 import * as memory from "./memory/index.ts";
 import { listAvailableModels } from "./models.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
@@ -29,6 +30,8 @@ export interface AppDeps {
   workdirs?: WorkdirStore;
   /** Optional: when supplied, exposes GET /api/skills. */
   skills?: SkillsStore;
+  /** Optional approval coordinator for WS approval lifecycle messages. */
+  approvalCoordinator?: ApprovalCoordinator;
 }
 
 export function createApp(deps: AppDeps) {
@@ -38,6 +41,21 @@ export function createApp(deps: AppDeps) {
 
   /** events every client gets regardless of subscription (sidebar liveness) */
   const LIGHTWEIGHT = new Set(["agent_start", "agent_end"]);
+
+  function shouldSendWsEvent(event: ServerEvent, subscribed: string | null): boolean {
+    if (event.type === "approval_request") return event.sessionId === subscribed;
+    if (event.type === "approval_resolved" || event.type === "approval_mode_changed") return true;
+    if (event.type !== "agent") return true;
+    return event.sessionId === subscribed || LIGHTWEIGHT.has(event.event.type);
+  }
+
+  function isApprovalResponse(value: unknown): value is { type: "approval_response"; approvalId: string; decision: "approve" | "deny" } {
+    if (typeof value !== "object" || value === null) return false;
+    const msg = value as Record<string, unknown>;
+    return msg.type === "approval_response" &&
+      typeof msg.approvalId === "string" &&
+      (msg.decision === "approve" || msg.decision === "deny");
+  }
 
   app.post("/api/login", async (c) => {
     const body = await c.req.json().catch(() => ({}));
@@ -67,18 +85,27 @@ export function createApp(deps: AppDeps) {
       return {
         onOpen: (_evt, ws) => {
           unsubscribeBus = deps.bus.subscribe((event: ServerEvent) => {
-            const send =
-              event.type !== "agent" ||
-              event.sessionId === subscribed ||
-              LIGHTWEIGHT.has(event.event.type);
-            if (send && ws.readyState === 1 /* OPEN */) ws.send(JSON.stringify(event));
+            if (shouldSendWsEvent(event, subscribed) && ws.readyState === 1 /* OPEN */) {
+              ws.send(JSON.stringify(event));
+            }
           });
+          // Direct reconnect-only snapshot. This is a WS control message, not a
+          // ServerEvent, because it targets only the newly-opened client.
+          if (deps.approvalCoordinator && ws.readyState === 1 /* OPEN */) {
+            ws.send(JSON.stringify({
+              type: "pending_approvals",
+              approvals: deps.approvalCoordinator.list(),
+            }));
+          }
         },
         onMessage: (evt) => {
           try {
             const msg = JSON.parse(String(evt.data));
-            if (msg.type === "subscribe") subscribed = msg.sessionId;
+            if (msg.type === "subscribe" && typeof msg.sessionId === "string") subscribed = msg.sessionId;
             if (msg.type === "unsubscribe") subscribed = null;
+            if (isApprovalResponse(msg) && deps.approvalCoordinator) {
+              deps.approvalCoordinator.resolve(msg.approvalId, msg.decision);
+            }
           } catch {
             // ignore malformed client messages
           }
@@ -150,6 +177,12 @@ export function createApp(deps: AppDeps) {
     if (typeof body.title === "string") await manager.rename(id, body.title);
     if (body.unread === false) manager.markRead(id);
     if (typeof body.model === "string") await manager.setModel(id, body.model);
+    if (body.approvalMode !== undefined) {
+      if (body.approvalMode !== "yolo" && body.approvalMode !== "ask") {
+        return c.json({ error: "approvalMode must be 'yolo' or 'ask'" }, 400);
+      }
+      await manager.setApprovalMode(id, body.approvalMode);
+    }
     return c.json({ ok: true });
   });
 

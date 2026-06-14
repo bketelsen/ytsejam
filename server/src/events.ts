@@ -11,7 +11,25 @@ export type ServerEvent =
   | { type: "task"; task: TaskRow }
   | { type: "schedule"; schedule: ScheduleRow }
   | { type: "compaction_start"; sessionId: string; trigger: "proactive" | "reactive" }
-  | { type: "compaction_end"; sessionId: string; status: "succeeded" | "surrendered" | "failed" };
+  | { type: "compaction_end"; sessionId: string; status: "succeeded" | "surrendered" | "failed" }
+  | {
+      type: "approval_request";
+      approvalId: string;
+      sessionId: string;
+      toolName: string;
+      toolLabel: string;
+      params: unknown;
+    }
+  | {
+      type: "approval_resolved";
+      approvalId: string;
+      decision: "approve" | "deny" | "timeout";
+    }
+  | {
+      type: "approval_mode_changed";
+      sessionId: string;
+      mode: "yolo" | "ask";
+    };
 
 export class EventBus {
   private listeners = new Set<(event: ServerEvent) => void>();

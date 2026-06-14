@@ -16,6 +16,9 @@ import {
   type AssistantMessage,
   type Model,
 } from "@earendil-works/pi-ai";
+import type { ApprovalCoordinator } from "./approval/coordinator.ts";
+import { deriveApprovalMode } from "./approval/session-entry.ts";
+import type { ApprovalMode } from "./approval/types.ts";
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -105,6 +108,8 @@ export interface AgentManagerOptions {
   cogBrief?: { promptSection(): Promise<string> };
   /** renders the "## Skills" routing-table system-prompt section */
   skills?: { promptSection(): Promise<string> };
+  /** Approval prompt coordinator, plumbed now for gated-tool integration. */
+  approvalCoordinator?: ApprovalCoordinator;
 }
 
 interface OpenSession {
@@ -745,6 +750,21 @@ export class AgentManager {
     await opened.harness.setModel(this.opts.resolveModel(modelRef));
   }
 
+  async setApprovalMode(id: string, mode: ApprovalMode): Promise<void> {
+    const opened = await this.getOrOpen(id);
+    const storage = opened.session.getStorage();
+    await storage.appendEntry({
+      type: "set_approval_mode",
+      id: await storage.createEntryId(),
+      parentId: await storage.getLeafId(),
+      timestamp: new Date().toISOString(),
+      mode,
+    } as any);
+    this.opts.indexer.setApprovalMode(id, mode);
+    this.emitMeta(id);
+    this.opts.bus.emit({ type: "approval_mode_changed", sessionId: id, mode });
+  }
+
   /**
    * Apply a workdir change to a session: rebuild its cwd-bearing tools
    * against the freshly-resolved workdir. The persistence step (appending
@@ -817,7 +837,7 @@ export class AgentManager {
           preview,
           unread: false,
           archived: this.opts.isArchived?.(metadata.id) ?? false,
-          approvalMode: "yolo",
+          approvalMode: deriveApprovalMode(entries),
         });
       } catch (err) {
         console.error(`failed to index session ${metadata.path}`, err);
