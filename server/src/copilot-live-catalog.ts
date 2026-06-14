@@ -123,11 +123,11 @@ interface CopilotModelsListResponse {
   data?: CopilotModelsListEntry[];
 }
 
-function sanitize(cause: unknown): string {
+export function sanitize(cause: unknown): string {
   // Defensive — never leak the OAuth token even on error. fetch error messages
   // typically don't include the body, but be paranoid.
-  if (cause instanceof Error) return cause.message.replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [REDACTED]");
-  return String(cause).replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [REDACTED]");
+  const text = cause instanceof Error ? cause.message : String(cause);
+  return text.replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]");
 }
 
 function resolveBaseUrl(auth: PiAuthStore): string {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import type { Model } from "@earendil-works/pi-ai";
 import { inferModelTemplate } from "../src/copilot-live-catalog.ts";
-import { mergeCatalogs } from "../src/copilot-live-catalog.ts";
+import { mergeCatalogs, sanitize } from "../src/copilot-live-catalog.ts";
 
 /**
  * Minimal Model<any> shape fixtures matching what pi-ai's catalog produces
@@ -175,6 +175,29 @@ function makeFetchThrow(err: Error): typeof fetch {
 }
 
 describe("loadLiveCopilotModels", () => {
+  it("sanitize redacts Copilot proxy-ep token format", () => {
+    const input =
+      "Authorization: Bearer tid=abc;exp=123;sku=foo;proxy-ep=proxy.enterprise.githubcopilot.com;st=dotcom:sig";
+    const out = sanitize(input);
+    assert.equal(out, "Authorization: Bearer [REDACTED]");
+    assert.ok(!out.includes("proxy-ep"), `proxy-ep survived: ${out}`);
+    assert.ok(!out.includes("tid="), `tid survived: ${out}`);
+    assert.ok(!out.includes(":sig"), `signature survived: ${out}`);
+  });
+
+  it("sanitize redacts gho_ tokens", () => {
+    const input = "Authorization: Bearer gho_abcdefghijklmnopqrstuvwxyz0123456789";
+    const out = sanitize(input);
+    assert.equal(out, "Authorization: Bearer [REDACTED]");
+    assert.ok(!out.includes("gho_"), `gho token survived: ${out}`);
+  });
+
+  it("sanitize is case-insensitive", () => {
+    const input = "Authorization: bearer tid=abc;proxy-ep=proxy.enterprise.githubcopilot.com:sig";
+    const out = sanitize(input);
+    assert.equal(out, "Authorization: Bearer [REDACTED]");
+    assert.ok(!out.includes("proxy-ep"), `lowercase bearer token survived: ${out}`);
+  });
   it("happy path — returns overlay from filtered live ids", async () => {
     const fetchImpl = makeFetchOk({
       data: [
