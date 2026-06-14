@@ -7,8 +7,8 @@ import { APPROVAL_MODE_DEFAULT } from "./types.ts";
  */
 export function deriveApprovalMode(entries: ReadonlyArray<{ type: string; mode?: unknown }>): ApprovalMode {
   for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.type === "set_approval_mode" && (entry.mode === "yolo" || entry.mode === "ask")) {
+    const entry = entries[i];
+    if (entry?.type === "set_approval_mode" && (entry.mode === "yolo" || entry.mode === "ask")) {
       return entry.mode;
     }
   }
