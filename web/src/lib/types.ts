@@ -75,6 +75,12 @@ export interface ModelInfo {
   ref: string;
 }
 
+export interface SkillSummary {
+  name: string;
+  description: string;
+  triggers: string[];
+}
+
 export type ScheduleSpec = { type: "once"; at: string } | { type: "cron"; expr: string };
 
 export interface ScheduleRow {

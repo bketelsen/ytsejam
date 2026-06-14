@@ -10,3 +10,4 @@ import "./health-status.test.mjs";
 import "./ws-watchdog.test.mjs";
 import "./pwa-manifest.test.mjs";
 import "./sw.test.mjs";
+import "./api-skills.test.mjs";
