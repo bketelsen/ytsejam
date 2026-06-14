@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApprovalCoordinator } from "../src/approval/coordinator.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { createApp } from "../src/server.ts";
@@ -130,7 +130,13 @@ describe("websocket", () => {
 
     expect(events).toContainEqual({
       type: "pending_approvals",
-      approvals: [{ approvalId, sessionId: "s-pending" }],
+      approvals: [{
+        approvalId,
+        sessionId: "s-pending",
+        toolName: "bash",
+        toolLabel: "Bash",
+        params: {},
+      }],
     });
     approvalCoordinator.resolve(approvalId, "deny");
     await pending;
@@ -183,6 +189,33 @@ describe("websocket", () => {
     await expect(pending).resolves.toBe("deny");
     await new Promise((r) => setTimeout(r, 50));
     expect(events).toContainEqual({ type: "approval_resolved", approvalId, decision: "deny" });
+    ws.close();
+  });
+
+  test("malformed approval_response messages are ignored and keep socket open", async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/api/ws?token=test-token`);
+    await new Promise((r) => ws.addEventListener("open", r));
+    const resolveSpy = vi.spyOn(approvalCoordinator, "resolve");
+
+    ws.send(JSON.stringify({ type: "approval_response", approvalId: 5, decision: "approve" }));
+    ws.send(JSON.stringify({ type: "approval_response", approvalId: "x", decision: "timeout" }));
+    ws.send(JSON.stringify({ type: "approval_response" }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(resolveSpy).not.toHaveBeenCalled();
+
+    const pending = approvalCoordinator.request({
+      sessionId: "s-valid-after-malformed",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: {},
+    });
+    const approvalId = approvalCoordinator.list()[0]!.approvalId;
+    resolveSpy.mockClear();
+    ws.send(JSON.stringify({ type: "approval_response", approvalId, decision: "approve" }));
+    await expect(pending).resolves.toBe("approve");
+    expect(resolveSpy).toHaveBeenCalledWith(approvalId, "approve");
     ws.close();
   });
 

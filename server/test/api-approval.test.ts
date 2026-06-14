@@ -72,6 +72,25 @@ describe("approval-mode session API", () => {
     expect(lines.some((entry) => entry.type === "set_approval_mode" && entry.mode === "ask")).toBe(true);
   });
 
+  test("setApprovalMode round-trips through JSONL on rebuild", async () => {
+    const row = await createSession();
+    expect(deps.indexer.getSession(row.id)?.approvalMode).toBe("yolo");
+
+    const res = await app.request(`/api/sessions/${row.id}`, {
+      method: "PATCH",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ approvalMode: "ask" }),
+    });
+    expect(res.status).toBe(200);
+    expect(deps.indexer.getSession(row.id)?.approvalMode).toBe("ask");
+
+    deps.indexer.setApprovalMode(row.id, "yolo");
+    expect(deps.indexer.getSession(row.id)?.approvalMode).toBe("yolo");
+
+    await deps.manager.rebuildIndex();
+    expect(deps.indexer.getSession(row.id)?.approvalMode).toBe("ask");
+  });
+
   test.each(["bogus", null, 1, false, {}, [], "undefined"])(
     "PATCH rejects invalid approvalMode %j",
     async (approvalMode) => {

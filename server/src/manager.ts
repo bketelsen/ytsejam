@@ -18,7 +18,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ApprovalCoordinator } from "./approval/coordinator.ts";
 import { deriveApprovalMode } from "./approval/session-entry.ts";
-import type { ApprovalMode } from "./approval/types.ts";
+import type { ApprovalMode, SetApprovalModeEntry } from "./approval/types.ts";
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -753,13 +753,14 @@ export class AgentManager {
   async setApprovalMode(id: string, mode: ApprovalMode): Promise<void> {
     const opened = await this.getOrOpen(id);
     const storage = opened.session.getStorage();
-    await storage.appendEntry({
+    const entry: SetApprovalModeEntry = {
       type: "set_approval_mode",
       id: await storage.createEntryId(),
       parentId: await storage.getLeafId(),
       timestamp: new Date().toISOString(),
       mode,
-    } as any);
+    };
+    await storage.appendEntry(entry as unknown as SessionTreeEntry);
     this.opts.indexer.setApprovalMode(id, mode);
     this.emitMeta(id);
     this.opts.bus.emit({ type: "approval_mode_changed", sessionId: id, mode });

@@ -22,7 +22,7 @@ export interface ApprovalCoordinatorOptions {
 interface PendingEntry {
   resolve: (decision: ApprovalDecision) => void;
   timer: NodeJS.Timeout;
-  sessionId: string;
+  request: ApprovalRequest;
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -50,6 +50,7 @@ export class ApprovalCoordinator {
    */
   request(input: Omit<ApprovalRequest, "approvalId">): Promise<ApprovalDecision> {
     const approvalId = randomUUID();
+    const fullRequest: ApprovalRequest = { approvalId, ...input };
     return new Promise<ApprovalDecision>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(approvalId)) {
@@ -57,8 +58,8 @@ export class ApprovalCoordinator {
           resolve("timeout");
         }
       }, this.timeoutMs);
-      this.pending.set(approvalId, { resolve, timer, sessionId: input.sessionId });
-      this.onRequest({ approvalId, ...input });
+      this.pending.set(approvalId, { resolve, timer, request: fullRequest });
+      this.onRequest(fullRequest);
     });
   }
 
@@ -76,7 +77,7 @@ export class ApprovalCoordinator {
   /** Cancel all pending approvals for a session (e.g. on abort). */
   cancelSession(sessionId: string, decision: ApprovalDecision = "deny"): void {
     for (const [id, entry] of this.pending) {
-      if (entry.sessionId !== sessionId) continue;
+      if (entry.request.sessionId !== sessionId) continue;
       clearTimeout(entry.timer);
       this.pending.delete(id);
       try {
@@ -90,10 +91,7 @@ export class ApprovalCoordinator {
   }
 
   /** Snapshot of currently-pending approvals (for client reconnect catch-up). */
-  list(): ReadonlyArray<{ approvalId: string; sessionId: string }> {
-    return [...this.pending.entries()].map(([approvalId, entry]) => ({
-      approvalId,
-      sessionId: entry.sessionId,
-    }));
+  list(): ReadonlyArray<ApprovalRequest> {
+    return [...this.pending.values()].map((entry) => entry.request);
   }
 }

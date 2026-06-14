@@ -73,8 +73,14 @@ describe("ApprovalCoordinator", () => {
     const p2 = coord.request({ sessionId: "s2", toolName: "bash", toolLabel: "Bash", params: {} });
     coord.cancelSession("s1");
     await expect(p1).resolves.toBe("deny");
-    // p2 should still be pending
-    expect(coord.list().some((e) => e.sessionId === "s2")).toBe(true);
+    // p2 should still be pending with the full request payload for reconnect snapshots
+    expect(coord.list()).toEqual([{
+      approvalId: reqs[1]!.approvalId,
+      sessionId: "s2",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: {},
+    }]);
     // Clean up
     coord.resolve(reqs[1]!.approvalId, "approve");
     await p2;
@@ -148,12 +154,24 @@ describe("ApprovalCoordinator", () => {
     });
     expect(coord.list()).toEqual([]);
     const p1 = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
-    expect(coord.list()).toEqual([{ approvalId: requests[0]!.approvalId, sessionId: "s1" }]);
+    expect(coord.list()).toEqual([{
+      approvalId: requests[0]!.approvalId,
+      sessionId: "s1",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: {},
+    }]);
     const p2 = coord.request({ sessionId: "s2", toolName: "write", toolLabel: "Write", params: {} });
     expect(coord.list()).toHaveLength(2);
     coord.resolve(requests[0]!.approvalId, "approve");
     await p1;
-    expect(coord.list()).toEqual([{ approvalId: requests[1]!.approvalId, sessionId: "s2" }]);
+    expect(coord.list()).toEqual([{
+      approvalId: requests[1]!.approvalId,
+      sessionId: "s2",
+      toolName: "write",
+      toolLabel: "Write",
+      params: {},
+    }]);
     coord.resolve(requests[1]!.approvalId, "deny");
     await p2;
     expect(coord.list()).toEqual([]);
