@@ -117,6 +117,32 @@ describe("resolveModel — overlay + prunedIds (copilot live-catalog)", () => {
     );
   });
 
+  test("pruned id wins over overlay match (locks pruned-before-overlay ordering)", () => {
+    const overlay: any[] = [
+      {
+        id: "raptor-mini",
+        name: "Raptor Mini (overlay copy)",
+        api: "openai-completions",
+        provider: "github-copilot",
+        baseUrl: "https://api.individual.githubcopilot.com",
+        headers: {},
+        input: ["text"],
+      },
+    ];
+    const prunedIds = new Set(["raptor-mini"]);
+    expect(() =>
+      resolveModel("github-copilot/raptor-mini", undefined, { overlay, prunedIds }),
+    ).toThrow(/not in your Copilot entitlement/i);
+  });
+
+  test("prunedIds is ignored for non-copilot providers", () => {
+    const prunedIds = new Set(["claude-sonnet-4-6"]);
+    // The pruned-check guard requires provider === "github-copilot"; an anthropic
+    // id with the same name must resolve normally, not throw the entitlement error.
+    const m = resolveModel("anthropic/claude-sonnet-4-6", undefined, { prunedIds });
+    expect(m.id).toBe("claude-sonnet-4-6");
+  });
+
   test("still resolves a normal pi-ai static model when overlay doesn't have it", () => {
     // Pick any model known to be in the pi-ai static catalog. claude-opus-4.7 is in prod today.
     const m = resolveModel("github-copilot/claude-opus-4.7", undefined, { overlay: [] });
