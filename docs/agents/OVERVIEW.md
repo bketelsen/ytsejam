@@ -104,6 +104,29 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   WebSocket relays (agent stream events, session/task/schedule metadata, compaction lifecycle).
   See [`observability.md`](observability.md) for the full event list.
 
+#### Model catalog (live Copilot merge)
+
+Model resolution flows through [`resolveModel(ref, oauth?, opts?)`](../../server/src/models.ts),
+not directly through pi-ai. At boot, [`loadLiveCopilotModels(authStore)`](../../server/src/copilot-live-catalog.ts)
+fetches GitHub Copilot's live `/models` endpoint and returns a `MergeResult`: `overlay` for live
+Copilot models absent from pi-ai's static catalog, plus `prunedIds` for static pi-ai Copilot models
+the user's account is not entitled to. [`index.ts`](../../server/src/index.ts) threads that same
+merge into both [`AgentManager`](../../server/src/manager.ts) and
+[`TaskManager`](../../server/src/task-manager.ts), so chat sessions and delegated subagents honor
+the same resolver behavior.
+
+Overlay records are inferred, not persisted: [`inferModelTemplate`](../../server/src/copilot-live-catalog.ts)
+clones the closest static sibling by prefix, preserving sibling metadata; unknown `claude-*` ids
+default to `anthropic-messages`, and other ids default to `openai-completions`. `prunedIds` are
+checked before static lookup, so ghost models listed by pi-ai but absent from the live entitlement
+throw `Model X is in pi-ai's catalog but not in your Copilot entitlement...` instead of surfacing
+Copilot's later `400 not supported`.
+
+Failure is graceful: auth/fetch/parse errors log a WARN and return an empty `MergeResult`, leaving
+boot on the static catalog. The live catalog is startup-only; restart ytsejam to pick up entitlement
+changes. Set `YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG=1` to skip the boot fetch and use pi-ai's static
+catalog only.
+
 ### `server/src/tools/` — the agent's tool surface
 
 Tools are `AgentTool` factories wired explicitly at boot (no auto-registry). Split into
@@ -234,6 +257,7 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 | `YTSEJAM_WEB_DIST` | `../web/dist` (prod unit sets the release's) | built web assets to serve |
 | `YTSEJAM_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | `provider/modelId`, must exist in the pi-ai catalog |
 | `YTSEJAM_SUBAGENT_MODEL` | = default model | model for delegated subagents |
+| `YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG` | unset | set `1` to skip the Copilot `/models` boot fetch and use pi-ai's static catalog only |
 | `YTSEJAM_TASK_CONCURRENCY` | `4` (clamped ≥1) | max concurrent subagent tasks |
 | `YTSEJAM_TASK_TIMEOUT_MIN` | `15` (clamped ≥1) | per-task timeout in minutes |
 | `YTSEJAM_GENERATE_TITLES` | `true` | LLM-generated session titles |

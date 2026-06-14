@@ -69,8 +69,8 @@ Wiring: one new call site in **`server/src/index.ts`** boot path, before the
 agent manager + task manager + tool registration touch `resolveModel`.
 
 The merge result lives in process memory. `models.ts:resolveModel` is extended
-to accept an optional `extras: Model<any>[]` array, searched before pi-ai's
-static catalog. Default `extras: []` preserves current behavior for callers
+to accept an optional `overlay: Model<any>[]` array, searched before pi-ai's
+static catalog. Default `overlay: []` preserves current behavior for callers
 that don't thread the overlay through (e.g. unit tests).
 
 No data persistence. No SQLite changes. No JSONL changes. No new config file.
@@ -112,7 +112,7 @@ export function inferModelTemplate(
 
 1. Construct `PiAuthStore`.
 2. `const { overlay, prunedIds } = await loadLiveCopilotModels(authStore);`
-3. Construct the per-process model resolver: `(ref) => resolveModel(ref, authStore, { extras: overlay, prunedIds })`.
+3. Construct the per-process model resolver: `(ref) => resolveModel(ref, authStore, { overlay, prunedIds })`.
 4. Thread that resolver into AgentManager, TaskManager, tool registration.
 
 ### `loadLiveCopilotModels` internals
@@ -166,14 +166,14 @@ export function inferModelTemplate(
 export function resolveModel(
   ref: string,
   oauth?: PiAuthStore,
-  opts?: { extras?: Model<any>[]; prunedIds?: Set<string> },
+  opts?: { overlay?: Model<any>[]; prunedIds?: Set<string> },
 ): Model<any>;
 ```
 
 - Parse `ref` into `(provider, modelId)` as today.
 - If `provider === "github-copilot" && opts?.prunedIds?.has(modelId)`:
-  throw `Error("Model ${ref} is in pi-ai's catalog but not in your Copilot entitlement. Restart may help if you were recently enrolled.")`.
-- Check `opts?.extras` first for a match. Return it (after applyOAuthModelOverrides).
+  throw `Error("Model ${ref} is in pi-ai's catalog but not in your Copilot entitlement. Restart ytsejam if you were recently enrolled, or pick a different model.")`.
+- Check `opts?.overlay` first for a match. Return it (after applyOAuthModelOverrides).
 - Else fall through to pi-ai static catalog as today.
 - Default behavior unchanged for callers that don't pass `opts`.
 
@@ -253,7 +253,7 @@ established for `lastError.message`.
 
 - Build tiny static catalog `[claude-opus-4.7, claude-opus-4.6]`
 - Loader with mock fetch returning `[claude-opus-4.7, claude-opus-4.7-1m-internal]`
-- `resolveModel("github-copilot/claude-opus-4.7-1m-internal", ..., {extras, prunedIds})` → record with `api === "anthropic-messages"` and `forceAdaptiveThinking: true`
+- `resolveModel("github-copilot/claude-opus-4.7-1m-internal", ..., {overlay, prunedIds})` → record with `api === "anthropic-messages"` and `forceAdaptiveThinking: true`
 - Pruned id (`raptor-mini` in static, omitted from live) → resolver throws clear error before any API call
 
 ### Mutation-test requirement
