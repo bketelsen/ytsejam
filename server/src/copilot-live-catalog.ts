@@ -60,7 +60,7 @@ function makeFallbackTemplate(liveId: string): Model<any> {
     api: isClaude ? "anthropic-messages" : "openai-completions",
     provider: "github-copilot",
     baseUrl: DEFAULT_COPILOT_BASE_URL,
-    headers: COPILOT_HEADERS,
+    headers: { ...COPILOT_HEADERS },
     input: ["text"],
   } as unknown as Model<any>;
 }

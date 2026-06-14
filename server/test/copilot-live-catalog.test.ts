@@ -33,7 +33,7 @@ function makeClaudeOpus47(): Model<any> {
 }
 
 function makeClaudeOpus46(): Model<any> {
-  return { ...makeClaudeOpus47(), id: "claude-opus-4.6", name: "Claude Opus 4.6" } as Model<any>;
+  return { ...makeClaudeOpus47(), id: "claude-opus-4.6", name: "Claude Opus 4.6", contextWindow: 1000000 } as Model<any>;
 }
 
 describe("inferModelTemplate", () => {
