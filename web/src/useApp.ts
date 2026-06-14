@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { client } from "./lib/api";
 import { connectWs } from "./lib/ws";
-import type { ChatMessage, HealthState, ServerEvent, SessionRow, TaskRow } from "./lib/types";
+import type { ApprovalDecision, ApprovalMode, ApprovalRequest, ChatMessage, HealthState, PendingApprovalsSnapshot, ServerEvent, SessionRow, TaskRow } from "./lib/types";
 
 const LTM_UNHEALTHY_THRESHOLD = 3;
 const LTM_POLL_MS = 10_000;
@@ -15,6 +15,7 @@ export function useApp() {
   const [ltmState, setLtmState] = useState<HealthState>("unknown");
   const [ltmLastError, setLtmLastError] = useState<string | undefined>(undefined);
   const [tasks, setTasks] = useState<Record<string, TaskRow>>({});
+  const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalRequest>>({});
   // Working directory for the currently-open session. Loaded from getSession;
   // the listSessions endpoint does not include it. Undefined while no session
   // is selected or before the per-session fetch resolves.
@@ -79,6 +80,31 @@ export function useApp() {
       );
       return;
     }
+    if (event.type === "approval_request") {
+      const request: ApprovalRequest = {
+        approvalId: event.approvalId,
+        sessionId: event.sessionId,
+        toolName: event.toolName,
+        toolLabel: event.toolLabel,
+        params: event.params,
+      };
+      setPendingApprovals((prev) => ({ ...prev, [request.approvalId]: request }));
+      return;
+    }
+    if (event.type === "approval_resolved") {
+      setPendingApprovals((prev) => {
+        const next = { ...prev };
+        delete next[event.approvalId];
+        return next;
+      });
+      return;
+    }
+    if (event.type === "approval_mode_changed") {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === event.sessionId ? { ...s, approvalMode: event.mode } : s)),
+      );
+      return;
+    }
     // agent events
     if (event.sessionId !== currentIdRef.current) {
       if (event.event.type === "agent_start" || event.event.type === "agent_end") {
@@ -106,8 +132,16 @@ export function useApp() {
     }
   }, []);
 
+  const onPendingApprovals = useCallback((snapshot: PendingApprovalsSnapshot) => {
+    setPendingApprovals(Object.fromEntries(snapshot.approvals.map((a) => [a.approvalId, a])));
+  }, []);
+
   useEffect(() => {
-    wsRef.current = connectWs({ onEvent, onStatus: (c) => setWsState(c ? "ok" : "bad") });
+    wsRef.current = connectWs({
+      onEvent,
+      onStatus: (c) => setWsState(c ? "ok" : "bad"),
+      onPendingApprovals,
+    });
     void refreshSessions();
     void client.listTasks().then((r) => {
       setTasks(Object.fromEntries(r.tasks.map((t) => [t.id, t])));
@@ -116,7 +150,7 @@ export function useApp() {
       void Notification.requestPermission();
     }
     return () => wsRef.current?.close();
-  }, [onEvent, refreshSessions]);
+  }, [onEvent, onPendingApprovals, refreshSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +217,18 @@ export function useApp() {
     [newSession],
   );
 
+  const respondToApproval = useCallback(
+    (approvalId: string, decision: Exclude<ApprovalDecision, "timeout">) => {
+      wsRef.current?.respondToApproval(approvalId, decision);
+    },
+    [],
+  );
+
+  const setApprovalMode = useCallback(async (sessionId: string, mode: ApprovalMode) => {
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, approvalMode: mode } : s)));
+    await client.setSessionApprovalMode(sessionId, mode);
+  }, []);
+
   return {
     sessions,
     currentId,
@@ -192,11 +238,14 @@ export function useApp() {
     ltmState,
     ltmLastError,
     tasks,
+    pendingApprovals,
     currentCwd,
     setCurrentCwd,
     selectSession,
     newSession,
     send,
+    respondToApproval,
+    setApprovalMode,
     refreshSessions,
   };
 }

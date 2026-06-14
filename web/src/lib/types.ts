@@ -1,3 +1,20 @@
+export type ApprovalMode = "yolo" | "ask";
+export type ApprovalDecision = "approve" | "deny" | "timeout";
+
+export interface ApprovalRequest {
+  approvalId: string;
+  sessionId: string;
+  toolName: string;
+  toolLabel: string;
+  params: unknown;
+  createdAt?: string;
+}
+
+export interface PendingApprovalsSnapshot {
+  type: "pending_approvals";
+  approvals: ApprovalRequest[];
+}
+
 export interface SessionRow {
   id: string;
   title: string | null;
@@ -8,6 +25,7 @@ export interface SessionRow {
   archived?: boolean;
   running: boolean;
   compacting?: boolean;
+  approvalMode: ApprovalMode;
   // Only the GET /api/sessions/:id response carries this; the list endpoint omits it.
   cwd?: string;
 }
@@ -105,4 +123,7 @@ export type ServerEvent =
   | { type: "task"; task: TaskRow }
   | { type: "schedule"; schedule: ScheduleRow }
   | { type: "compaction_start"; sessionId: string; trigger: "proactive" | "reactive" }
-  | { type: "compaction_end"; sessionId: string; status: "succeeded" | "surrendered" | "failed" };
+  | { type: "compaction_end"; sessionId: string; status: "succeeded" | "surrendered" | "failed" }
+  | { type: "approval_request"; approvalId: string; sessionId: string; toolName: string; toolLabel: string; params: unknown }
+  | { type: "approval_resolved"; approvalId: string; decision: ApprovalDecision }
+  | { type: "approval_mode_changed"; sessionId: string; mode: ApprovalMode };

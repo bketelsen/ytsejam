@@ -1,5 +1,5 @@
 import { getToken } from "./api";
-import type { ServerEvent } from "./types";
+import type { ApprovalDecision, PendingApprovalsSnapshot, ServerEvent } from "./types";
 
 // If a WebSocket connect attempt is still in `CONNECTING` after this window, the
 // watchdog forces a close() — which fires onclose → onStatus(false) → the existing
@@ -12,7 +12,12 @@ const CONNECT_WATCHDOG_MS = 5_000;
 export function connectWs(handlers: {
   onEvent: (event: ServerEvent) => void;
   onStatus: (connected: boolean) => void;
-}): { subscribe: (sessionId: string | null) => void; close: () => void } {
+  onPendingApprovals?: (snapshot: PendingApprovalsSnapshot) => void;
+}): {
+  subscribe: (sessionId: string | null) => void;
+  close: () => void;
+  respondToApproval: (approvalId: string, decision: Exclude<ApprovalDecision, "timeout">) => void;
+} {
   let ws: WebSocket | null = null;
   let subscribed: string | null = null;
   let closed = false;
@@ -39,7 +44,14 @@ export function connectWs(handlers: {
       handlers.onStatus(true);
       if (subscribed) ws?.send(JSON.stringify({ type: "subscribe", sessionId: subscribed }));
     };
-    ws.onmessage = (e) => handlers.onEvent(JSON.parse(String(e.data)));
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(String(e.data));
+      if (msg.type === "pending_approvals") {
+        handlers.onPendingApprovals?.(msg);
+        return;
+      }
+      handlers.onEvent(msg);
+    };
     ws.onclose = () => {
       clearWatchdog(); // clearTimeout(...) lives in clearWatchdog()
       handlers.onStatus(false);
@@ -59,6 +71,11 @@ export function connectWs(handlers: {
       closed = true;
       clearWatchdog();
       ws?.close();
+    },
+    respondToApproval(approvalId, decision) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "approval_response", approvalId, decision }));
+      }
     },
   };
 }
