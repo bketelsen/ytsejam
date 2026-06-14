@@ -8,3 +8,4 @@ import "./compaction-pill.test.mjs";
 import "./health-icon.test.mjs";
 import "./health-status.test.mjs";
 import "./ws-watchdog.test.mjs";
+import "./pwa-manifest.test.mjs";
