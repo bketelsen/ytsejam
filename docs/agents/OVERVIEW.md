@@ -24,16 +24,21 @@ This is the substrate the calling assistant itself runs on. Be careful and preci
 npm workspaces, TypeScript end to end, Node ≥ 22 (uses the built-in `node:sqlite`).
 
 ```
-server/   Hono + WebSocket API, agent hosting, indexer, task/schedule managers, tools, cog client
-web/      React 19 + Vite + Tailwind/shadcn UI, built to static assets served by the server
-scripts/  the quality gate
-deploy/   systemd unit + install/deploy/rollback/dev/migrate scripts
-patches/  patch-package patches against node_modules
-docs/     plans, specs, audits, bugs, and these agent docs
+server/    Hono + WebSocket API, agent hosting, indexer, task/schedule managers, tools, cog client
+web/       React 19 + Vite + Tailwind/shadcn UI, built to static assets served by the server
+packages/  vendored workspaces — currently `packages/ltm/` (long-term memory engine, ingested via
+           `npm workspace`, opened in-process by the server alongside cog memory)
+scripts/   the quality gate
+deploy/    systemd unit + install/deploy/rollback/dev/migrate scripts
+patches/   patch-package patches against node_modules
+contrib/   reference copies of skill playbooks (not the live source — live skills load from the
+           user's data dir)
+docs/      plans, specs, audits, bugs, the user-facing USAGE.md/MEMORY.md, and these agent docs
 ```
 
 Root npm scripts (`package.json`): `start` (build web + run server), `dev:server`, `dev:web`,
-`build` (web), `test` (server + web), `check` (server typecheck). `postinstall` runs `patch-package`.
+`build` (web), `test` (server + web + ltm), `check` (server + ltm typecheck), `ltm` (one-shot
+wrapper for the `node server/src/index.ts ltm …` CLI). `postinstall` runs `patch-package`.
 
 ## Architecture
 
@@ -43,22 +48,32 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
 
 - **`index.ts`** — composition root. Loads config, constructs every store/service, wires tools into
   the `AgentManager`, rebuilds the sqlite index from JSONL, recovers interrupted tasks, catches up
-  schedules, then starts the Hono server + WebSocket.
+  schedules, opens LTM + starts the cog→LTM bridge, then starts the Hono server + WebSocket. Also
+  intercepts CLI argv via `runCli()` **before** any of that boot work, so `node server/src/index.ts
+  ltm replay` exits without ever opening the HTTP listener.
+- **`cli/`** — argv subcommands that share the server's modules but never boot it. `dispatch.ts`
+  owns the `ltm` namespace; `ltm-commands.ts` implements `ltm replay [--force]` and `ltm health`
+  by opening LTM directly + running one reconcile tick. Used for one-off back-fill from the shell
+  (`npm run ltm -- replay`); requires the server stopped because LTM is single-writer. See
+  [`memory-bridge.md`](memory-bridge.md) § CLI.
 - **`config.ts`** — `loadConfig()` reads env into a typed `Config`. The only required var is
-  `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout; expands `~` in the cog socket path.
+  `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout.
 - **`server.ts`** — `createApp()` builds the Hono app: bearer-token auth on `/api/*`, the REST routes
-  (sessions, messages, tasks, schedules, persona, models, cwd, archive), the `/api/ws` WebSocket
-  (per-client session subscription + lightweight global liveness events), and static serving of
-  `web/dist` with SPA fallback.
+  (sessions, messages, tasks, schedules, persona, models, cwd, archive, **memory health**), the
+  `/api/ws` WebSocket (per-client session subscription + lightweight global liveness events), and
+  static serving of `web/dist` with SPA fallback.
 - **`manager.ts`** — `AgentManager` owns chat sessions: opens/caches a pi `AgentHarness` per session,
   composes the system prompt each turn, forwards harness events to the bus, mirrors metadata into the
-  index, generates titles, and handles rename/archive/workdir/model changes. JSONL stays SSOT (e.g.
+  index, generates titles, drives compaction (idle, inner-loop via the `context` event hook, and the
+  reactive backstop), and handles rename/archive/workdir/model changes. JSONL stays SSOT (e.g.
   a rename mid-run updates the index immediately but flushes to JSONL on `agent_end`).
 - **`indexer.ts`** — `Indexer`, the **only** sqlite writer. Schema-versioned; drops+rebuilds on
   version mismatch (safe because derived). Tables: `sessions`, `tasks`, `schedules`, `meta`.
+  Periodic `wal_checkpoint(TRUNCATE)` keeps the WAL bounded.
 - **`task-manager.ts` / `tasks.ts`** — background subagent delegation. `TaskManager` runs subagents
-  in-process with their own JSONL sessions; `TaskStore` is the append-only per-task event log folded
-  into a row. See [`delegation.md`](delegation.md).
+  in-process with their own JSONL sessions and the same three-entry-point compaction wiring as the
+  chat session; `TaskStore` is the append-only per-task event log folded into a row. See
+  [`delegation.md`](delegation.md).
 - **`scheduler.ts` / `schedules.ts`** — one-shot + cron reminders that inject a prompt into a session
   at fire time. `ScheduleStore` is the append-only event log; `SchedulerService` ticks every 30s,
   records the fire event *before* injecting (crash-safe, no double-fire), and on boot fires overdue
@@ -71,7 +86,13 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
 - **`workdirs.ts` / `archive-store.ts`** — per-session sidecar JSONL logs (latest-wins) for the
   agent working directory and the archive (soft-delete) flag. Both are SSOT the index is rebuilt
   from. See [`storage.md`](storage.md).
-- **`compaction.ts`** — model-aware context-window compaction triggered at idle boundaries before a session hits the catalog's `contextWindow`. Wired into the chat session via `manager.ts` and into subagents via `task-manager.ts`; emergency-disable via `YTSEJAM_COMPACTION_ENABLED=false`. See `deploy/README.md` § Runtime operations.
+- **`compaction.ts`** — model-aware context-window compaction. Three entry points wired by the
+  manager/task-manager: **idle** (between turns of an autonomous run), **inner_loop** (inside the
+  next turn via pi's `context` event hook, bypassing the harness's idle-only guard), and the
+  **reactive_path** backstop after a context-overflow stop reason. Emergency-disable via
+  `YTSEJAM_COMPACTION_ENABLED=false`. Each compaction emits `compaction_start`/`compaction_end` bus
+  events, a one-line cog dev-log entry, and a `.compactions.jsonl` sidecar record with the
+  `entry_point` field. See [`observability.md`](observability.md).
 - **`context-files.ts`** — faithful port of pi-coding-agent's "context files": loads `AGENTS.md`/
   `CLAUDE.md` from `~/.pi/agent` and the workdir's ancestor chain into the system prompt
   (`YTSEJAM_CONTEXT_FILES=false` disables).
@@ -80,24 +101,32 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   `PiAuthStore` is a read-mostly view over the pi CLI's `~/.pi/agent/auth.json` OAuth credentials
   (refreshing + writing back expired tokens at mode 0600). Env API keys win over OAuth.
 - **`events.ts`** — `EventBus`, a synchronous in-memory pub/sub. `ServerEvent` is the union the
-  WebSocket relays (agent stream events, session/task/schedule metadata).
+  WebSocket relays (agent stream events, session/task/schedule metadata, compaction lifecycle).
+  See [`observability.md`](observability.md) for the full event list.
 
 ### `server/src/tools/` — the agent's tool surface
 
 Tools are `AgentTool` factories wired explicitly at boot (no auto-registry). Split into
 **cwd-independent** globals (`web_search`, `web_fetch`) built once, and **cwd-bearing** tools
 (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`) built per session/per task against a working
-directory. Plus per-session `delegate`/`schedule` tools, the global `skill` tool, and the `cog_*`
-memory tools. Files: `index.ts` (assembly), `shell.ts`, `files.ts`, `search.ts`, `web.ts`,
-`delegation.ts`, `scheduling.ts`, `skills.ts`, `cog.ts`. See [`tools.md`](tools.md).
+directory. Plus per-session `delegate`/`schedule` tools, the global `skill` tool, the `cog_*`
+memory tools, and `recall` (unified cog + LTM retrieval). Files: `index.ts` (assembly), `shell.ts`,
+`files.ts`, `search.ts`, `web.ts`, `delegation.ts`, `scheduling.ts`, `skills.ts`, `cog.ts`. See
+[`tools.md`](tools.md).
 
 ### `server/src/memory/` + `server/src/cog/` — persistent memory
 
-Persistent memory is served in-process by `server/src/memory/`; there is no separate process, socket,
-or JSON-RPC hop. `server/src/cog/brief.ts` (`CogBriefProvider`) fetches a `session_brief` through the
-memory module and renders the `## Memory (cog)` system-prompt section (cached with a short TTL, never
-throws — sessions degrade gracefully if a memory read fails). The model-facing `cog_*` tool vocabulary
-is retained for skill compatibility. See [`storage.md`](storage.md) and `server/src/memory/README.md`.
+Persistent memory is served in-process by `server/src/memory/`; there is no separate process,
+socket, or JSON-RPC hop. `server/src/cog/brief.ts` (`CogBriefProvider`) fetches a `session_brief`
+through the memory module and renders the `## Memory (cog)` system-prompt section (cached with a
+short TTL, never throws — sessions degrade gracefully if a memory read fails). The model-facing
+`cog_*` tool vocabulary is retained for skill compatibility.
+
+The memory module also drives the **cog→LTM bridge**: cog observation writes are mirrored into
+the long-term-memory substrate at `packages/ltm/` (opened against `<dataDir>/ltm/`), with a
+back-fill reconciler for anything that missed the inline path. The `recall` tool queries both
+substrates and interleaves results. See [`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md),
+and `server/src/memory/README.md`.
 
 ### `server/skills/` — seeded skill playbooks
 
@@ -110,17 +139,23 @@ React 19 SPA, Vite build, Tailwind v4 + shadcn/ui. The server serves the built `
 `npm run dev:web` runs Vite on :5173 proxying `/api` (incl. WebSocket) to :3000.
 
 - **`App.tsx`** — top-level layout (sidebar + chat + settings/tasks dialogs); gates on login.
-- **`useApp.ts`** — the app state hook: holds sessions/messages/streaming/tasks, opens the WebSocket,
-  routes `ServerEvent`s into React state (streaming assistant tokens, session metadata, task updates,
-  archive/unarchive), and exposes `send`/`selectSession`/`newSession`.
-- **`components/`** — `Sidebar` (session list + new/archived/settings/tasks), `Chat` (transcript +
-  composer + per-session cwd editor + task-transcript dialog), `Message` (renders a transcript message,
-  incl. tool calls/results, markdown), `TaskCard`/`TasksDialog` (delegated-task status + transcript),
-  `Settings` (persona editor, model picker, schedules), `Login`, and generated shadcn primitives in
-  `components/ui/`.
-- **`lib/`** — `api.ts` (typed REST client + bearer token in `localStorage`), `ws.ts` (auto-reconnecting
-  WebSocket with per-session subscribe), `types.ts` (shared row/event types mirroring the server),
-  `time.ts`, `utils.ts`.
+  Renders the WebSocket + LTM **health icons** in the chat header (`Plug` for WS, `Brain` for LTM,
+  gray/green/red outline by state).
+- **`useApp.ts`** — the app state hook: holds sessions/messages/streaming/tasks plus the WS and LTM
+  health states, opens the WebSocket, routes `ServerEvent`s into React state (streaming assistant
+  tokens, session metadata incl. live `compacting` flag, task updates, archive/unarchive,
+  `compaction_start`/`compaction_end` lifecycle), polls `/api/memory/health` for the brain-icon
+  state, and exposes `send`/`selectSession`/`newSession`.
+- **`components/`** — `Sidebar` (session list + new/archived/settings/tasks; per-row compaction
+  indicator), `Chat` (transcript + composer + per-session cwd editor + task-transcript dialog +
+  in-flight compaction pill), `Message` (renders a transcript message, incl. tool calls/results,
+  markdown), `TaskCard`/`TasksDialog` (delegated-task status + transcript), `Settings` (persona
+  editor, model picker, schedules), `Login`, `HealthIcon` (the WS + LTM status indicators), and
+  generated shadcn primitives in `components/ui/`.
+- **`lib/`** — `api.ts` (typed REST client + bearer token in `localStorage`, plus
+  `getMemoryHealth`), `ws.ts` (auto-reconnecting WebSocket with per-session subscribe + connect
+  watchdog), `types.ts` (shared row/event types mirroring the server, incl. `HealthState` SSOT and
+  the compaction-lifecycle events), `time.ts`, `utils.ts`.
 
 UI styling rule (`web/CLAUDE.md`): **only shadcn semantic theme tokens**, never raw Tailwind palette
 classes — enforced by `web/test/theme.test.mjs` in the gate.
@@ -165,16 +200,27 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 - **Delegation runs in-process background subagents** with concurrency cap `YTSEJAM_TASK_CONCURRENCY`
   and per-task timeout `YTSEJAM_TASK_TIMEOUT_MIN`. **Subagents cannot delegate further** (the tools
   aren't wired into the worker toolset). → [`delegation.md`](delegation.md)
-- **The quality gate is `scripts/gate.sh`** — server typecheck + server tests + web build/typecheck +
-  web tests, in that order. **There is no CI; the gate is the bar.** → [`quality-gate.md`](quality-gate.md)
+- **The quality gate is `scripts/gate.sh`** — server typecheck + server tests + ltm tests + web
+  build/typecheck + web tests, in that order. **There is no CI; the gate is the bar.** →
+  [`quality-gate.md`](quality-gate.md)
 - **Subagent worktree gotcha:** the harness shell inherits `NODE_ENV=production`, so a bare
   `npm install` skips devDeps the gate needs. Symlink `node_modules` from a good checkout, or install
   with `env -u NODE_ENV npm ci --include=dev`; the gate clears `NODE_ENV` itself. → [`delegation.md`](delegation.md)
-- **Memory is in-process**, with no separate service/socket. Prod and dev isolate it by using different
-  data dirs; the assistant degrades gracefully if a memory read fails. → `server/src/memory/README.md`.
+- **Memory is in-process, with two substrates.** Cog memory (markdown SSOT under `<dataDir>/memory/`)
+  is the human-readable one the `cog_*` tools talk to. LTM (`packages/ltm`, opened against
+  `<dataDir>/ltm/`) is a derived episodic+semantic index that cog observation writes mirror into via
+  the **cog→LTM bridge**. Prod and dev isolate both by data dir. The assistant degrades gracefully
+  if either substrate fails (LTM is wrapped in a try/catch at boot; bridge failures don't fail the
+  cog write). → [`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md),
+  `server/src/memory/README.md`.
 - **Crash-safety via event-sourcing:** tasks and schedules record their state-changing event *before*
   the side effect (a cancel before abort; a schedule fire before inject), so a crash never
   double-fires and recovery is a fold over the log.
+- **Compaction has three entry points and explicit telemetry.** `idle`, `inner_loop`, and
+  `reactive_path` all flow through the same pure `buildCompactionEvent()` and emit
+  `compaction_start`/`compaction_end` bus events plus a `.compactions.jsonl` sidecar with the
+  `entry_point` label. A "successful" compaction is gated on `tokensAfterEstimated < budget`, not
+  just on the trim running to completion. → [`observability.md`](observability.md)
 
 ## Configuration
 
@@ -184,7 +230,7 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 | --- | --- | --- |
 | `YTSEJAM_AUTH_TOKEN` | **required** | shared bearer login token (checked on every `/api/*` request and at WS connect) |
 | `YTSEJAM_PORT` | `3000` (prod unit sets `9873`) | HTTP port |
-| `YTSEJAM_DATA_DIR` | `./data` (prod unit sets `~/.ytsejam/data`) | JSONL SSOT + `index.db` |
+| `YTSEJAM_DATA_DIR` | `./data` (prod unit sets `~/.ytsejam/data`) | JSONL SSOT + `index.db` + cog `memory/` + `ltm/` |
 | `YTSEJAM_WEB_DIST` | `../web/dist` (prod unit sets the release's) | built web assets to serve |
 | `YTSEJAM_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | `provider/modelId`, must exist in the pi-ai catalog |
 | `YTSEJAM_SUBAGENT_MODEL` | = default model | model for delegated subagents |
@@ -192,7 +238,10 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 | `YTSEJAM_TASK_TIMEOUT_MIN` | `15` (clamped ≥1) | per-task timeout in minutes |
 | `YTSEJAM_GENERATE_TITLES` | `true` | LLM-generated session titles |
 | `YTSEJAM_CONTEXT_FILES` | `true` | auto-load `AGENTS.md`/`CLAUDE.md` into the prompt |
+| `YTSEJAM_COMPACTION_ENABLED` | `true` | emergency kill-switch for all compaction (idle/inner-loop/reactive) |
 | `YTSEJAM_PI_AUTH` | `~/.pi/agent/auth.json` | pi CLI OAuth credentials (Copilot/Codex subscriptions) |
+| `LTM_STORE_DIR` | `<dataDir>/ltm` | LTM substrate directory (single-writer). Empty-string falls through to default. |
+| `LTM_RECONCILE_INTERVAL_MS` | `300000` (5 min) | cog→LTM back-fill reconciler tick interval |
 | `BRAVE_API_KEY` | — | enables the `web_search` tool |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, … | — | enabling a provider's key adds its models to the picker |
 
@@ -209,15 +258,31 @@ Config files:
 ## Subsystem docs
 
 - [`storage.md`](storage.md) — JSONL layout (sessions, tasks, schedules, persona, skills, workdirs,
-  archive), the sqlite index schema/role, rebuild semantics, and where each kind of data lives.
+  archive, memory, ltm), the sqlite index schema/role, rebuild semantics, memory-module internal
+  shape, auto-commit cadence, and where each kind of data lives.
 - [`tools.md`](tools.md) — how tools are registered/called, the cwd-binding split, the full tool
-  surface, and the absolute-path rule for subagent file tools.
+  surface (including `recall` and the `cog_rpc` allow-list), and the absolute-path rule for
+  subagent file tools.
 - [`skills.md`](skills.md) — seeded vs user skill discovery + precedence, runtime invocation, skill
   file structure, and the "skills are cheap, server code is expensive" bias.
 - [`delegation.md`](delegation.md) — how `delegate` works, the background-task lifecycle, concurrency/
   timeout config, the no-nested-delegation rule, subagent absolute-path requirement, and the
   `NODE_ENV=production` install workaround.
+- [`memory-bridge.md`](memory-bridge.md) — the cog→LTM bridge: two write paths (inline +
+  reconciler), public surface (`attachLtm`/`attachReconciler`/`recordObservation`/`getLtm`),
+  `recall()` semantics, the `server/src/cli/` LTM subcommands, and the health surface that drives
+  the web brain icon.
+- [`observability.md`](observability.md) — the `EventBus`/`ServerEvent` union, compaction
+  telemetry (three entry points, `compaction_start`/`compaction_end`, the `entry_point` field, the
+  per-session `.compactions.jsonl` sidecar), health icons in the chat header, and
+  `/api/memory/health`.
 - [`deployment.md`](deployment.md) — systemd `--user` unit, `current`→release symlink, `deploy.sh`
   flow with auto-rollback, `dev.sh` isolation, and `migrate-data.sh` semantics.
 - [`quality-gate.md`](quality-gate.md) — what `scripts/gate.sh` runs, in what order, how to read a
   failure, and when to run it.
+
+The themed lessons files — `architecture.md`, `documentation.md`, `planning.md`, `quality-gate.md`,
+`release-workflow.md`, `security.md`, `testing.md`, `tooling.md` — are append-only logs of
+fix-cycle lessons captured by the `lessons` skill (see `contrib/skills/lessons/SKILL.md`). They
+read as a sequence of `## <Title>` paragraphs and are best skimmed when working in the relevant
+area.
