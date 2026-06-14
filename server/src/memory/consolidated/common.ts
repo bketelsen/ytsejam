@@ -1,14 +1,8 @@
 import { Controller } from "../domain/index.ts";
 import { memoryRoot } from "../store/index.ts";
-import type { Domain } from "../types.ts";
 
 export function controller(): Controller {
   return new Controller(memoryRoot());
-}
-
-export function domainFilePath(domain: Domain, file: string): string {
-  const base = domain.path.replace(/\/+$/, "");
-  return base ? `${base}/${file}.md` : `${file}.md`;
 }
 
 export function splitLines(content: string): string[] {

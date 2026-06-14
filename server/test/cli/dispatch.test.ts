@@ -137,6 +137,28 @@ describe("runCli", () => {
     });
   });
 
+  it("routes `ltm replay --verbose` to ltmReplay with verbose=true", async () => {
+    expect(await runCli(["ltm", "replay", "--verbose"])).toBe(0);
+    expect(ltmReplay).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({
+      force: false,
+      rebuild: false,
+      prune: false,
+      verbose: true,
+    });
+  });
+
+  it("routes `ltm replay --quiet` to ltmReplay with quiet=true", async () => {
+    expect(await runCli(["ltm", "replay", "--quiet"])).toBe(0);
+    expect(ltmReplay).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmReplay).mock.calls[0]![0]).toEqual({
+      force: false,
+      rebuild: false,
+      prune: false,
+      quiet: true,
+    });
+  });
+
   it("routes `ltm health` to ltmHealth", async () => {
     expect(await runCli(["ltm", "health"])).toBe(0);
     expect(ltmHealth).toHaveBeenCalledTimes(1);
