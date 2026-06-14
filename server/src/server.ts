@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { Hono } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createNodeWebSocket } from "@hono/node-ws";
 import type { Config } from "./config.ts";
@@ -231,6 +231,35 @@ export function createApp(deps: AppDeps) {
   app.get("/api/models", (c) =>
     c.json({ models: listAvailableModels({ oauth: deps.authStore }), defaultModel: config.defaultModel }),
   );
+
+  // Cache-control for files whose freshness matters for the PWA update flow:
+  //   - sw.js MUST revalidate every request, or the browser caches the old
+  //     service worker and never sees deploys.
+  //   - index.html MUST revalidate so updated bundle hashes are picked up.
+  //   - manifest.webmanifest MUST revalidate so shortcut/icon edits land.
+  //
+  // ⚠ Hono path-matching gotcha: `app.use("/index.html", ...)` matches the
+  // REQUEST PATH `/index.html`, not the file the SPA fallback serves. A
+  // bare `GET /` (or `GET /?action=tasks` from a PWA shortcut) is a `/`
+  // request that serveStatic resolves to the index.html bytes; the path
+  // the middleware matches against is `/`, not `/index.html`. So BOTH
+  // routes are required — without `app.use("/", ...)` the no-cache header
+  // never lands on real-browser navigation traffic, and the entire update
+  // flow silently breaks.
+  //
+  // Query strings don't affect Hono path matching, so `/` covers every
+  // `/?action=…` shortcut URL too.
+  //
+  // We set this BEFORE serveStatic so the header lands on the response
+  // body that serveStatic produces (via await next()).
+  const noCacheMiddleware = async (c: Context, next: Next) => {
+    await next();
+    c.header("Cache-Control", "no-cache");
+  };
+  app.use("/sw.js", noCacheMiddleware);
+  app.use("/", noCacheMiddleware);
+  app.use("/index.html", noCacheMiddleware);
+  app.use("/manifest.webmanifest", noCacheMiddleware);
 
   // static web app (built assets); SPA fallback to index.html
   // serveStatic root must be relative to process cwd; compute a relative path from cwd to webDistDir
