@@ -20,6 +20,12 @@ features, architecture/refactor decisions, performance work, or anything that ne
 discussion. If you spot one of those, note it separately for the user; it goes through
 `brainstorm`, not the weed bed.
 
+**Also NOT a weed: a `// ponytail:` comment.** These mark *intentional* simplifications (often
+naming the known ceiling and upgrade path, e.g. `// ponytail: O(n²), swap for index when n > 1k`).
+The comment IS the contract — don't flag the simplification it's defending. If the upgrade
+trigger has demonstrably fired (the n is now > 1k, the throughput is now the bottleneck),
+that's a `brainstorm` item, not a weed.
+
 ## Step 0 — Cap check (BEFORE anything else)
 
 The weed bed holds at most **5 open issues**. Pull before you plant more.

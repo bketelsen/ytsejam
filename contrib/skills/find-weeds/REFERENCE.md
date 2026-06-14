@@ -38,6 +38,14 @@ intentional React effect or ref-write, a startup banner, a library-imposed `any`
 **NOT a weed**. Do not flag it as one. List such items separately under
 "NOT WEEDS (needs design)". When in doubt, it is NOT a weed.
 
+**Specifically: any `// ponytail:` (or `# ponytail:`, `<!-- ponytail:` etc.) comment marks
+an INTENTIONAL simplification.** The comment often names the ceiling and upgrade trigger
+(e.g. `// ponytail: O(n²), swap for index when n > 1k`). Do NOT flag the simplification
+itself — that's contracted, not a weed. If you can VERIFY the named upgrade trigger has
+fired (the n is demonstrably > 1k, the throughput IS the bottleneck), list it under
+"NOT WEEDS (needs design)" as a ponytail-promise-came-due, not as a weed. `grep -rn
+"ponytail:"` is the cheap pre-scan to see what intentional shortcuts already exist.
+
 Explore systematically; use grep/glob. Read package.json scripts, tsconfig, config, and the
 linter config to GROUND each finding (don't guess that a lint rule fires — confirm it).
 

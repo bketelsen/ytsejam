@@ -15,6 +15,7 @@ the repo:
 - **Authoring** — `write-a-skill`, `write-plan`, `brainstorm`
 - **Dev loop** — `develop`, `review`, `ship`, `lessons`
 - **Maintenance** — `find-weeds`, `pull-weeds`, `maintain-docs`
+- **Laziness** — `ponytail`, `ponytail-review`, `ponytail-audit`
 - **Research** — `pkb-research`
 - **Browser** — `agent-browser`
 
