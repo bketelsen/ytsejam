@@ -6,7 +6,7 @@
 
 **Spec:** [docs/plans/2026-06-14-copilot-live-catalog-design.md](./2026-06-14-copilot-live-catalog-design.md)
 
-**Architecture:** One new module `server/src/copilot-live-catalog.ts` exports `loadLiveCopilotModels(auth)` returning `{overlay, prunedIds}`. `server/src/models.ts:resolveModel` is extended with an optional `opts: {extras, prunedIds}` so the overlay is searched first and pruned ids throw a clear error. `server/src/index.ts` calls the loader once at boot and threads the result through to both `manager.resolveModel` and `taskManager.resolveModel`.
+**Architecture:** One new module `server/src/copilot-live-catalog.ts` exports `loadLiveCopilotModels(auth)` returning `{overlay, prunedIds}`. `server/src/models.ts:resolveModel` is extended with an optional `opts: {overlay, prunedIds}` so the overlay is searched first and pruned ids throw a clear error. `server/src/index.ts` calls the loader once at boot and threads the result through to both `manager.resolveModel` and `taskManager.resolveModel`.
 
 **Tech Stack:** TypeScript, Node 22 (native test runner), `@earendil-works/pi-ai` (v0.79.1), Node `fetch` + `AbortSignal.timeout`.
 
@@ -762,14 +762,14 @@ Expected: PASS — all existing `resolveModel` tests + new 4 tests green.
 
 ```bash
 git add server/src/models.ts server/test/models.test.ts
-git commit -m "feat(server): extend resolveModel with extras+prunedIds (copilot-live-catalog task 4)"
+git commit -m "feat(server): extend resolveModel with overlay+prunedIds (copilot-live-catalog task 4)"
 ```
 
 ---
 
 ## Task 5: Wire the loader into `index.ts` boot
 
-Single call site, threads `{extras, prunedIds}` through to both manager + taskManager resolvers.
+Single call site, threads `{overlay, prunedIds}` through to both manager + taskManager resolvers.
 
 **Files:**
 - Modify: `server/src/index.ts` (lines ~8, ~42, ~65, ~94)

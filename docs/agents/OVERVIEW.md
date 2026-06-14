@@ -123,7 +123,7 @@ throw `Model X is in pi-ai's catalog but not in your Copilot entitlement...` ins
 Copilot's later `400 not supported`.
 
 Failure is graceful: auth/fetch/parse errors log a WARN and return an empty `MergeResult`, leaving
-boot on the static catalog. The live catalog is startup-only; restart ytsejam to pick up entitlement
+boot on the static catalog. On success, boot logs `github-copilot live catalog: N live models, M added (sibling-inherited), K pruned` — check `journalctl` for that line when debugging which models actually resolved. The live catalog is startup-only; restart ytsejam to pick up entitlement
 changes. Set `YTSEJAM_DISABLE_COPILOT_LIVE_CATALOG=1` to skip the boot fetch and use pi-ai's static
 catalog only.
 
