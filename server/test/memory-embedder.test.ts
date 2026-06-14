@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CachedEmbedder, HashEmbedder } from "ltm";
 import {
+  checkDimensionMismatch,
   createLtmEmbedder,
   parseLtmEmbedderMode,
   type AuthStoreLike,
@@ -68,6 +69,41 @@ describe("parseLtmEmbedderMode", () => {
     expect(() => parseLtmEmbedderMode("foo")).toThrow(
       /YTSEJAM_LTM_EMBEDDER=.*auto.*copilot.*ollama.*hash/,
     );
+  });
+});
+
+
+describe("checkDimensionMismatch", () => {
+  it("returns null when the existing store has no dimension", () => {
+    expect(checkDimensionMismatch(null, { label: "hash:256", dimension: 256 })).toBeNull();
+  });
+
+  it("returns null when the existing and selected embedder dimensions match", () => {
+    expect(checkDimensionMismatch(256, { label: "hash:256", dimension: 256 })).toBeNull();
+  });
+
+  it("returns an actionable error message when dimensions differ", () => {
+    const message = checkDimensionMismatch(256, {
+      label: "copilot:text-embedding-3-small",
+      dimension: 1536,
+    });
+
+    expect(message).not.toBeNull();
+    expect(message).toContain("dimension mismatch");
+    expect(message).toContain("existing index dimension=256");
+    expect(message).toContain("new embedder dimension=1536");
+    expect(message).toContain("embedder=copilot:text-embedding-3-small");
+    expect(message).toContain("ltm replay --force");
+    expect(message).toContain("nothing is deleted");
+    expect(message).toContain("YTSEJAM_LTM_EMBEDDER=hash");
+  });
+
+  it("names arbitrary existing and new embedder dimensions correctly", () => {
+    const message = checkDimensionMismatch(768, { label: "custom:test", dimension: 1024 });
+
+    expect(message).not.toBeNull();
+    expect(message).toContain("existing index dimension=768");
+    expect(message).toContain("new embedder dimension=1024");
   });
 });
 

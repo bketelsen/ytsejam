@@ -26,7 +26,7 @@ import { loadContextFiles } from "./context-files.ts";
 import { MemorySystem } from "ltm";
 import * as memory from "./memory/index.ts";
 import { LtmReconciler } from "./memory/bridge/ltm-reconciler.ts";
-import { createLtmEmbedder, parseLtmEmbedderMode } from "./memory/embedder.ts";
+import { checkDimensionMismatch, createLtmEmbedder, parseLtmEmbedderMode } from "./memory/embedder.ts";
 import { runCli } from "./cli/dispatch.ts";
 
 // CLI short-circuit: if argv matches a CLI subcommand, run it and exit
@@ -151,14 +151,9 @@ try {
     },
   });
   ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder });
-  const existingDimension = ltm.indexDimension();
-  if (existingDimension !== null && existingDimension !== embedderResult.dimension) {
-    throw new Error(
-      `dimension mismatch: existing index dimension=${existingDimension}, ` +
-        `new embedder dimension=${embedderResult.dimension}, embedder=${embedderResult.label}. ` +
-        "Run `ytsejam ltm replay --force` with the same embedder config to rewrite the index, " +
-        "or set YTSEJAM_LTM_EMBEDDER to match the existing index dimension.",
-    );
+  const mismatch = checkDimensionMismatch(ltm.indexDimension(), embedderResult);
+  if (mismatch) {
+    throw new Error(mismatch);
   }
   const intervalEnv = Number(process.env.LTM_RECONCILE_INTERVAL_MS);
   const ctorOpts: ConstructorParameters<typeof LtmReconciler>[0] = {

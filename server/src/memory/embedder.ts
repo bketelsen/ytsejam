@@ -114,6 +114,29 @@ async function wrapOllama(opts: LtmEmbedderOptions): Promise<LtmEmbedderResult> 
   };
 }
 
+/**
+ * Compare an existing on-disk LTM index dimension against a freshly-selected
+ * embedder's dimension. Returns null if they match (or if the index is empty
+ * and no comparison is needed); returns an actionable error message string
+ * if they mismatch. Caller decides what to do with the message (server logs
+ * + cog-only continue; CLI replay ignores; etc.).
+ */
+export function checkDimensionMismatch(
+  existing: number | null,
+  embedder: { label: string; dimension: number },
+): string | null {
+  if (existing === null) return null;
+  if (existing === embedder.dimension) return null;
+  return (
+    `dimension mismatch: existing index dimension=${existing}, ` +
+    `new embedder dimension=${embedder.dimension}, embedder=${embedder.label}. ` +
+    `Run \`node server/src/index.ts ltm replay --force\` with the same embedder config ` +
+    `to rewrite existing memories under the new model (nothing is deleted), ` +
+    `or set YTSEJAM_LTM_EMBEDDER to match the existing index dimension ` +
+    `(e.g. \`YTSEJAM_LTM_EMBEDDER=hash\` for 256-dim).`
+  );
+}
+
 export function parseLtmEmbedderMode(raw: string | undefined): LtmEmbedderMode {
   const v = (raw ?? "auto").trim().toLowerCase();
   if (v === "auto" || v === "copilot" || v === "ollama" || v === "hash") return v;

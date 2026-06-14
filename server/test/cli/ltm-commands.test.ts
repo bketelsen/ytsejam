@@ -10,15 +10,23 @@ describe("ltmReplay CLI", () => {
   let ltmDir = "";
   let out: string[] = [];
   let err: string[] = [];
+  let prevLtmEmbedder: string | undefined;
+  let prevOllamaUrl: string | undefined;
 
   beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "cli-data-"));
     ltmDir = await mkdtemp(join(tmpdir(), "cli-ltm-"));
     out = [];
     err = [];
+    prevLtmEmbedder = process.env.YTSEJAM_LTM_EMBEDDER;
+    prevOllamaUrl = process.env.YTSEJAM_LTM_OLLAMA_URL;
   });
 
   afterEach(async () => {
+    if (prevLtmEmbedder === undefined) delete process.env.YTSEJAM_LTM_EMBEDDER;
+    else process.env.YTSEJAM_LTM_EMBEDDER = prevLtmEmbedder;
+    if (prevOllamaUrl === undefined) delete process.env.YTSEJAM_LTM_OLLAMA_URL;
+    else process.env.YTSEJAM_LTM_OLLAMA_URL = prevOllamaUrl;
     if (dataDir) await rm(dataDir, { recursive: true, force: true });
     if (ltmDir) await rm(ltmDir, { recursive: true, force: true });
   });
@@ -86,6 +94,37 @@ describe("ltmReplay CLI", () => {
     } finally {
       holder.close();
     }
+  });
+
+
+  it("exits 1 and reports invalid embedder config when YTSEJAM_LTM_EMBEDDER cannot be parsed", async () => {
+    process.env.YTSEJAM_LTM_EMBEDDER = "garbage";
+
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+
+    expect(code).toBe(1);
+    expect(err.join("\n")).toContain("Invalid YTSEJAM_LTM_EMBEDDER");
+  });
+
+  it("exits 1 and reports embedder factory failures with nested Ollama URL details", async () => {
+    process.env.YTSEJAM_LTM_EMBEDDER = "ollama";
+    process.env.YTSEJAM_LTM_OLLAMA_URL = "http://127.0.0.1:1";
+
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+
+    expect(code).toBe(1);
+    expect(err.join("\n")).toContain("could not create LTM embedder");
+    expect(err.join("\n")).toContain("http://127.0.0.1:1");
   });
 
   it("exits 0 with no observations to replay on an empty memory tree", async () => {
