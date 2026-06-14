@@ -60,7 +60,7 @@ function makeFallbackTemplate(liveId: string): Model<any> {
     baseUrl: DEFAULT_COPILOT_BASE_URL,
     headers: COPILOT_HEADERS,
     input: ["text"],
-  } as Model<any>;
+  } as unknown as Model<any>;
 }
 
 export function inferModelTemplate(liveId: string, staticModels: Model<any>[]): Model<any> {
