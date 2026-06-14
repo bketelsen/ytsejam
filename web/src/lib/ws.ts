@@ -19,6 +19,10 @@ export function connectWs(handlers: {
   let retryMs = 500;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
 
+  function clearWatchdog() {
+    if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+  }
+
   function open() {
     if (closed) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -30,14 +34,14 @@ export function connectWs(handlers: {
       if (ws?.readyState === WebSocket.CONNECTING) ws.close();
     }, CONNECT_WATCHDOG_MS);
     ws.onopen = () => {
-      if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+      clearWatchdog(); // clearTimeout(...) lives in clearWatchdog()
       retryMs = 500;
       handlers.onStatus(true);
       if (subscribed) ws?.send(JSON.stringify({ type: "subscribe", sessionId: subscribed }));
     };
     ws.onmessage = (e) => handlers.onEvent(JSON.parse(String(e.data)));
     ws.onclose = () => {
-      if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+      clearWatchdog(); // clearTimeout(...) lives in clearWatchdog()
       handlers.onStatus(false);
       if (!closed) setTimeout(open, (retryMs = Math.min(retryMs * 2, 10_000)));
     };
@@ -53,7 +57,7 @@ export function connectWs(handlers: {
     },
     close() {
       closed = true;
-      if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+      clearWatchdog();
       ws?.close();
     },
   };

@@ -193,6 +193,73 @@ describe("ltmReplay CLI", () => {
     expect(stats.pruned).toBe(0);
   });
 
+  it("suppresses info logs by default while keeping JSON stats on stdout", async () => {
+    await mkdir(join(dataDir, "memory"), { recursive: true });
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+    expect(code).toBe(0);
+    expect(out.length).toBe(1);
+    expect(JSON.parse(out[0]!).errors).toBe(0);
+    expect(err).toEqual([]);
+  });
+
+  it("--verbose lets info logs through on stderr and leaves JSON stats on stdout", async () => {
+    await mkdir(join(dataDir, "memory"), { recursive: true });
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      verbose: true,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+    expect(code).toBe(0);
+    expect(out.length).toBe(1);
+    const stats = JSON.parse(out[0]!);
+    expect(stats.errors).toBe(0);
+    expect(err).toHaveLength(1);
+    expect(err[0]).toContain("[ltm replay] tick complete");
+    expect(err[0]).toContain('"errors":0');
+  });
+
+  it("--quiet suppresses reconciler warn and info output", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- not-a-date [bad]: malformed\n",
+    );
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      quiet: true,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+    expect(code).toBe(1);
+    expect(out.length).toBe(1);
+    expect(JSON.parse(out[0]!).errors).toBeGreaterThanOrEqual(1);
+    expect(err).toEqual([]);
+  });
+
+  it("refuses mutually exclusive --verbose and --quiet", async () => {
+    const code = await ltmReplay({
+      dataDir,
+      ltmStoreDir: ltmDir,
+      verbose: true,
+      quiet: true,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+    expect(code).toBe(2);
+    expect(out).toEqual([]);
+    expect(err.join("\n")).toContain(
+      "[ltm replay] --verbose and --quiet are mutually exclusive",
+    );
+  });
+
   it("accepts rebuild and threads it to the reconciler", async () => {
     await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(

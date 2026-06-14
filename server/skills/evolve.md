@@ -27,7 +27,7 @@ Evolve audits rules — there need to be rules to audit.
 Four RPCs cover the architectural envelope:
 
 1. `cog_rpc("session_brief")` — the session-start envelope: hot-memory body, patterns, and the **domain list with paths** (keep the paths, you need them for INDEX freshness below). What housekeeping/reflect actually did comes from a SEPARATE call: `cog_rpc("recent_observations", {"since": "30d"})` — it is NOT a field of session_brief.
-2. `cog_rpc("housekeeping_scan")` — the structural-health envelope. Fields: `since`, `changed_recently[]`, `thresholds{observations_over_cap[], completed_actions_over_cap, improvements_implemented_over_cap, hot_memory_over_cap, patterns_over_cap[]}`, `dormant_domains[]`, `stale_action_items[]`. This is the scorecard substrate and the bloat signal in one call.
+2. `cog_rpc("housekeeping_scan")` — the structural-health envelope. Fields: `since`, `changed_recently[]`, `thresholds{observations_over_cap[], completed_actions_over_cap, improvements_implemented_over_cap, hot_memory_over_cap, patterns_over_cap[], domain_patterns_over_cap[]}`, `dormant_domains[]`, `stale_action_items[]`. This is the scorecard substrate and the bloat signal in one call.
 3. `cog_rpc("entity_audit")` — returns `total_entries` and `total_lines`; the entity compression ratio is `total_lines / total_entries`, a divide on the response, not a multi-file scan.
 4. `cog_rpc("recent_observations", {"since": "30d"})` — what housekeeping/reflect/you actually did recently; drives the process-effectiveness audit (§2) and rule-drift detection.
    - Note: `recent_observations` accepts a `domain:` filter (canonical as of cogmemory PR #22). evolve intentionally does **not** use it — this is the monthly cross-domain process audit, so it spans all domains by design and the call stays unscoped on purpose.
@@ -71,7 +71,7 @@ Review output of recent housekeeping and reflect runs (the `recent_observations`
 
 **Scorecard metrics:**
 - Core `patterns.md`: line count / 70 (target: ≤1.0) — from `thresholds.patterns_over_cap[]`
-- Satellite pattern files: list each over its cap (cap: 30) — also from `thresholds.patterns_over_cap[]`
+- Per-domain pattern files: list each over its cap (cap: 40 lines / 3.5KB) — from `thresholds.domain_patterns_over_cap[]`
 - Entity compression ratio: total entity lines / total entries (target: ≤3.0) — from `entity_audit` (`total_lines / total_entries`)
 - Hot-memory line counts vs 50-line cap — from `thresholds.hot_memory_over_cap`
 - Domain INDEX.md freshness: last-updated date vs today (target: <7 days) — for each domain path from session_brief, `cog_read("{domain_path}/INDEX.md", start=1, end=5)` and parse the header timestamp
@@ -86,7 +86,7 @@ This is the critical difference between theatrical evolve (reporting problems) a
 | Metric | Threshold | Action |
 |--------|-----------|--------|
 | `patterns.md` line ratio > 1.0 | Exceeds 70 lines | → `cog-meta/action-items.md`: "Merge or replace patterns to bring below 70 lines" |
-| Satellite pattern file > 30 lines | Exceeds soft cap | → domain `action-items.md`: "Compress {domain} patterns" |
+| Per-domain patterns file > 40 lines / 3.5KB | Exceeds cap | → domain `action-items.md`: "Compress {domain} patterns" |
 | Entity compression > 3.0 | Entries too verbose | → domain `action-items.md`: "Compress entities or promote to threads" |
 | Hot-memory > 50 lines | Exceeds cap | → `cog-meta/action-items.md`: "Prune {domain} hot-memory (run housekeeping)" |
 | INDEX.md > 14 days stale | Drift risk | → `cog-meta/action-items.md`: "Rebuild domain indexes (run housekeeping)" |

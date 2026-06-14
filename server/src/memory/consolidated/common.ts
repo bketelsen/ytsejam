@@ -1,14 +1,8 @@
 import { Controller } from "../domain/index.ts";
 import { memoryRoot } from "../store/index.ts";
-import type { Domain } from "../types.ts";
 
 export function controller(): Controller {
   return new Controller(memoryRoot());
-}
-
-export function domainFilePath(domain: Domain, file: string): string {
-  const base = domain.path.replace(/\/+$/, "");
-  return base ? `${base}/${file}.md` : `${file}.md`;
 }
 
 export function splitLines(content: string): string[] {
@@ -20,10 +14,6 @@ export function countLines(content: string): number {
   if (content.length === 0) return 0;
   const n = content.match(/\n/g)?.length ?? 0;
   return content.endsWith("\n") ? n : n + 1;
-}
-
-export async function fileExists(path: string): Promise<boolean> {
-  return (await import("../store/index.ts")).stats(path).then((s) => s.per_file.some((f) => f.path === path));
 }
 
 export async function fileModifiedDate(path: string): Promise<Date | null> {
