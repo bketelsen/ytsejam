@@ -26,6 +26,7 @@ import { loadContextFiles } from "./context-files.ts";
 import { MemorySystem } from "ltm";
 import * as memory from "./memory/index.ts";
 import { LtmReconciler } from "./memory/bridge/ltm-reconciler.ts";
+import { createLtmEmbedder, parseLtmEmbedderMode } from "./memory/embedder.ts";
 import { runCli } from "./cli/dispatch.ts";
 
 // CLI short-circuit: if argv matches a CLI subcommand, run it and exit
@@ -136,7 +137,29 @@ try {
   // certainly user misconfiguration, not an intentional override.
   const ltmStoreDir =
     process.env.LTM_STORE_DIR || path.join(config.dataDir, "ltm");
-  ltm = MemorySystem.open({ storeDir: ltmStoreDir });
+  const mode = parseLtmEmbedderMode(process.env.YTSEJAM_LTM_EMBEDDER);
+  const embedderResult = await createLtmEmbedder(authStore, {
+    mode,
+    cacheDir: path.join(ltmStoreDir, "embed-cache"),
+    copilot: {
+      model: process.env.YTSEJAM_LTM_COPILOT_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_COPILOT_URL,
+    },
+    ollama: {
+      model: process.env.YTSEJAM_LTM_OLLAMA_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_OLLAMA_URL,
+    },
+  });
+  ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder });
+  const existingDimension = ltm.indexDimension();
+  if (existingDimension !== null && existingDimension !== embedderResult.dimension) {
+    throw new Error(
+      `dimension mismatch: existing index dimension=${existingDimension}, ` +
+        `new embedder dimension=${embedderResult.dimension}, embedder=${embedderResult.label}. ` +
+        "Run `ytsejam ltm replay --force` with the same embedder config to rewrite the index, " +
+        "or set YTSEJAM_LTM_EMBEDDER to match the existing index dimension.",
+    );
+  }
   const intervalEnv = Number(process.env.LTM_RECONCILE_INTERVAL_MS);
   const ctorOpts: ConstructorParameters<typeof LtmReconciler>[0] = {
     ltm,
@@ -149,7 +172,7 @@ try {
   memory.attachLtm(ltm);
   memory.attachReconciler(reconciler);
   reconciler.start();
-  console.log(`[memory] LTM bridge attached, store=${ltmStoreDir}`);
+  console.log(`[memory] LTM bridge attached, store=${ltmStoreDir}, embedder=${embedderResult.label}`);
 } catch (err) {
   console.warn(
     `[memory] LTM bridge init failed (continuing cog-only): ${(err as Error).message}`,

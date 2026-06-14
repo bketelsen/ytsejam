@@ -48,6 +48,10 @@ describe("parseLtmEmbedderMode", () => {
     expect(parseLtmEmbedderMode("AUTO")).toBe("auto");
   });
 
+  it("trims whitespace before parsing", () => {
+    expect(parseLtmEmbedderMode("  AUTO  ")).toBe("auto");
+  });
+
   it("lowercases Copilot to copilot", () => {
     expect(parseLtmEmbedderMode("Copilot")).toBe("copilot");
   });
@@ -194,6 +198,7 @@ describe("runtime LTM embedder factory", () => {
 
     expect(result.label).toBe("hash:256");
     expect(result.dimension).toBe(256);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Ollama probe failed"));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Falling back to HashEmbedder"));
   });
 

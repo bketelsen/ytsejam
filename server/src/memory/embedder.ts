@@ -67,8 +67,8 @@ export async function createLtmEmbedder(
   }
   try {
     return await wrapOllama(opts);
-  } catch {
-    // Ollama not reachable — silent fall-through is OK in auto mode.
+  } catch (err) {
+    console.warn(`[ltm embedder auto] Ollama probe failed: ${(err as Error).message}. Falling through.`);
   }
   console.warn(
     `[ltm embedder auto] Falling back to HashEmbedder (no Copilot creds, no Ollama service). ` +
@@ -115,7 +115,7 @@ async function wrapOllama(opts: LtmEmbedderOptions): Promise<LtmEmbedderResult> 
 }
 
 export function parseLtmEmbedderMode(raw: string | undefined): LtmEmbedderMode {
-  const v = (raw ?? "auto").toLowerCase();
+  const v = (raw ?? "auto").trim().toLowerCase();
   if (v === "auto" || v === "copilot" || v === "ollama" || v === "hash") return v;
   throw new Error(`Invalid YTSEJAM_LTM_EMBEDDER=${raw}. Valid: auto, copilot, ollama, hash.`);
 }

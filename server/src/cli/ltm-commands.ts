@@ -1,6 +1,8 @@
 import path from "node:path";
 import { MemorySystem } from "ltm";
 import { LtmReconciler } from "../memory/bridge/ltm-reconciler.ts";
+import { createLtmEmbedder, parseLtmEmbedderMode } from "../memory/embedder.ts";
+import { defaultPiAuthPath, PiAuthStore } from "../pi-auth.ts";
 
 export interface LtmCliOpts {
   /** Override the data root; default: env YTSEJAM_DATA_DIR or "./data". */
@@ -42,9 +44,40 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
   const err = opts.stderr ?? ((line) => console.error(line));
   const { dataDir, ltmStoreDir } = resolveDirs(opts);
 
+  const mode = (() => {
+    try {
+      return parseLtmEmbedderMode(process.env.YTSEJAM_LTM_EMBEDDER);
+    } catch (e) {
+      err(`[ltm replay] invalid embedder config: ${(e as Error).message}`);
+      return null;
+    }
+  })();
+  if (!mode) return 1;
+
+  const authStore = new PiAuthStore(process.env.YTSEJAM_PI_AUTH ?? defaultPiAuthPath());
+  const embedderResult = await createLtmEmbedder(authStore, {
+    mode,
+    cacheDir: path.join(ltmStoreDir, "embed-cache"),
+    copilot: {
+      model: process.env.YTSEJAM_LTM_COPILOT_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_COPILOT_URL,
+    },
+    ollama: {
+      model: process.env.YTSEJAM_LTM_OLLAMA_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_OLLAMA_URL,
+    },
+  }).catch((e: Error) => {
+    err(`[ltm replay] could not create LTM embedder: ${e.message}`);
+    return null;
+  });
+  if (!embedderResult) return 1;
+
   let ltm: MemorySystem;
   try {
-    ltm = MemorySystem.open({ storeDir: ltmStoreDir });
+    // Replay intentionally skips dimension-mismatch refusal: its purpose is
+    // to rewrite the index with the selected embedder, especially after a
+    // server startup refusal.
+    ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder });
   } catch (e) {
     err(
       `[ltm replay] could not open LTM at ${ltmStoreDir}\n` +
