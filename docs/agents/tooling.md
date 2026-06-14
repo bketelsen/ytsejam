@@ -1,45 +1,21 @@
 # Tooling — Project Lessons
 
-Lessons learned from failures and fix cycles.
-Auto-appended by the lessons skill.
+Rules learned from fix cycles. Each entry is a rule a reader can apply without
+re-reading the originating commit. Cap: 30 entries — prune oldest if exceeded.
 
-## Document Wrapper Behavior Not Wrapped Internals
+## Document Wrapper Behavior After Guards Not The Wrapped Library
 
-When wrapping third-party functions like pi-ai's `isContextOverflow` (see `classifyOverflow` in compaction.ts:74-81), write JSDoc that describes what YOUR wrapper actually does after its guards, not what the underlying library does internally — copying upstream source comments verbatim produced a docstring claiming z.ai/MiMo silent-overflow coverage that the `if (msg.stopReason !== "error") return false` guard makes structurally unreachable. Verify behavior claims empirically (the reviewer caught this by running both functions against a synthetic silent-overflow message and seeing the wrapper return `false` where the claim said `true`) rather than trusting plan-doc snippets. When a guard deliberately narrows behavior, the comment must say so explicitly and flag any inert arguments (like the forward-compat-only `model.contextWindow`), because a misleading docstring is worse than none: it lures a future maintainer into "fixing" the guard or trusting a false coverage claim. State the intended scope, name what is out of scope and why, and describe the correct way to widen it later (relax the guard with a usage-based check, never just delete it).
+When wrapping a third-party function, JSDoc must describe what YOUR wrapper does after its guards — not what the upstream does internally. Copying upstream comments verbatim produces a docstring whose claims the wrapper's guards make structurally unreachable, luring a future maintainer into "fixing" the guard or trusting a false coverage claim. State the intended scope, name what's out of scope and why, and describe how to widen later (relax the guard, not delete it).
 
-_Added: 2026-06-12 | Task: Task 2: Overflow classifier + customInstructions + sur_
-
-## Hoist Imports To Top In Append Workflows
-
-When a plan instructs you to "append" to an existing file like `server/test/compaction.test.ts`, treat import statements as an exception: always fold new imports into the existing top-of-file import block rather than adding a second block near your new code. In this case the appended tests created a mid-file import at lines 115-116 that redundantly re-imported `AssistantMessage` from `@earendil-works/pi-ai` when `Model` was already imported from that package on line 2 — consolidate by merging type imports into one `import type { Model, AssistantMessage }` line and hoisting `../src/compaction.ts` symbols into the single existing import. Since the only quality gate is `tsc --noEmit` (no ESLint), nothing flags this structural drift automatically, so verify manually with `grep -n '^import' <file>` and confirm all matches fall in the top block. This matters because incremental plan-driven tasks compound the problem — each subsequent task that appends its own imports deepens the drift, so fixing it immediately keeps the file idiomatic for the next implementer.
+(seen in: server/src/compaction.ts `classifyOverflow` — guard `if (msg.stopReason !== "error") return false` made the upstream-copied silent-overflow claim unreachable)
 
 _Added: 2026-06-12 | Task: Task 2: Overflow classifier + customInstructions + sur_
-
-## Preserve Plan Defensive Details In Briefs
-
-When lifting plan-doc content into per-task implementer briefs, copy defensive
-code and explanatory "why" comments verbatim — never silently simplify them. In
-the #72 fix this recurred three times: Task 3 dropped the plan's 2-level
-`summaryTokens ?? Math.ceil(String(summary ?? "").length / 4)` fallback
-(collapsing it to `?? 0`, which would silently undercount on a surrender-path
-or future-pi `compactionEntry` and corrupt the Task 4
-`succeeded = tokensAfterEstimated < budget` gate) and dropped the 6-line
-why-comment above `let tokensAfterEstimated = 0;` in both
-`server/src/manager.ts` and `server/src/task-manager.ts`, inviting a future
-reader to "restore" the exact `?? tokensAfter` fallback that was the #72 bug.
-Avoid omitting anything the plan specifies, and avoid adding anything the plan
-omits, without explicitly recording the divergence and its rationale in the
-brief. Because these helpers live at symmetric call sites, apply identical text
-at every site for grep-discoverability (verified via
-`grep -n "tokensAfterEstimated = 0"`). If a brief must diverge from the plan,
-flag it loudly so reviewers and `git blame` readers see the reasoning instead
-of an unexplained simplification.
-
-_Added: 2026-06-12 | Task: Use estimateKeptSetTokens for tokens_after_estimated (#72)_
 
 ## Re-Grep HEAD Before Writing Implementation Plans
 
-When authoring an implementation plan (e.g. via the write-plan skill), always re-grep the actual files at HEAD for the real function signature, test framework, and all call sites before prescribing changes — never write from a stale mental model. In ytsejam, a plan for `buildCompactionEvent` in `server/src/compaction.ts` wrongly assumed `node:test`/`node:assert` when the test file uses Vitest (`describe`/`it`/`expect`), and missed that 8 existing calls in the `describe("buildCompactionEvent")` block would break typecheck, so `npm run check` exited 2 with 10 errors instead of the planned 2 and broke the gate. The plan also bolted a new required `entryPoint` arg on as the last positional without inspecting the existing signature, which still carried a dead `_devLogPath` param and a now-pointless `compactionEntry = {}` default. Before adding a required positional parameter, inspect the full signature and remove dead/defaulted params, and hoist repeated literal unions (like `"idle" | "inner_loop" | "reactive_path"`) into a named type (`CompactionEntryPoint`). Accurate expected-failure analysis depends on counting every real call site in scope, so the gate's error count matches the plan.
+When authoring a plan, always re-grep the actual files at HEAD for real function signatures, test framework, and all call sites — never write from a stale mental model. Wrong assumptions about framework (node:test vs vitest), missed call sites, and stale parameter orders break typecheck and inflate the gate's error count past the planned number. Before adding a required positional parameter, inspect the full signature and remove dead/defaulted params; hoist repeated literal unions into a named type.
+
+(seen in: docs/plans/ for `buildCompactionEvent` — plan assumed node:test, real tests use Vitest, 8 call sites broke typecheck)
 
 _Added: 2026-06-13 | Task: Add `entryPoint` to `CompactionEvent` (type-level)_
 
@@ -55,9 +31,11 @@ When adding a CLI surface to a binary that runs on a third-party harness (here p
 
 _Added: 2026-06-13 | Task: Task 8 of PR 1 of the cog-LTM bridge roadmap_
 
-## Latent Partial-Init Leaks In Try/Catch Boot Wiring
+## Close Every Opened Resource On The Throw Path
 
-Resource acquisition that happens INSIDE a constructor (e.g. `MemorySystem.open()` acquires a file lock + registers in a process-static `openDirs` set inside its ctor) means a try/catch around the boot sequence MUST close every successfully-opened resource on the throw path, or else the resource leaks and subsequent restarts collide with the dead handle. Today's leak may be unreachable (only post-open work is pure assignment) but the fix is cheap (~2 LOC: `try { ltm.close() } catch {} ` in the catch block) and one PR change away from being real. Apply this to ANY boot wiring that opens stateful resources between the open call and the success path — verify by mentally walking "what if the next line throws?" through each step.
+A try/catch around boot wiring MUST close every successfully-opened resource on the throw path, or the resource leaks and subsequent restarts collide with the dead handle. Walk "what if the next line throws?" through each step of boot; any acquisition that happens inside a constructor (file lock, process-static registration, db handle) counts. The fix is usually ~2 LOC: `try { resource.close() } catch {}` in the catch block.
+
+(seen in: MemorySystem.open() acquires a file lock + registers in a process-static `openDirs` set inside its ctor)
 
 _Added: 2026-06-13 | Task: Task 7 of PR 1 of the cog-LTM bridge roadmap_
 
@@ -67,9 +45,11 @@ A worktree at `/tmp/cog-ltm-bridge-1` was wiped mid-development on 2026-06-13 �
 
 _Added: 2026-06-13 | Task: Task 8 worktree wipe recovery_
 
-## npm install --ignore-scripts Skips Load-Bearing Patches
+## Never `--ignore-scripts` To Bypass A Load-Bearing Postinstall
 
-This repo's `postinstall` runs `patch-package`, which APPLIES a load-bearing patch to `@earendil-works/pi-ai@0.79.1` (adds `rawStopReason` propagation). On a fresh worktree, `npm install` fails at postinstall because `patch-package` isn't yet on PATH. The instinct is to add `--ignore-scripts` to bypass it — but that ships node_modules WITHOUT the patch, and one specific test (`pi-ai-stop-reason`) fails empirically while the unrelated symptom (`vitest types not found` etc.) misleads. Correct workflow: `npm install` first; on `patch-package: not found` failure, `npm install --include=dev --ignore-scripts` THEN `./node_modules/.bin/patch-package` (now resolvable). Verify: `grep -E "rawStopReason" node_modules/@earendil-works/pi-ai/dist/*.js` should match. Add a comment to docs/agents/deployment.md if this hits a friend.
+If `npm install` fails at postinstall because `patch-package` isn't yet on PATH, the instinct to add `--ignore-scripts` ships node_modules without the load-bearing patch and the failure surfaces later as an unrelated-looking test break. Correct workflow: `npm install --include=dev --ignore-scripts` THEN run `./node_modules/.bin/patch-package` directly (now resolvable). Verify the patch landed by greping the patched file in node_modules.
+
+(seen in: this repo's postinstall applies a `rawStopReason` patch to @earendil-works/pi-ai; `pi-ai-stop-reason` test fails silently if skipped)
 
 _Added: 2026-06-13 | Task: Bridge 1 ship gate recovery after fresh install_
 
