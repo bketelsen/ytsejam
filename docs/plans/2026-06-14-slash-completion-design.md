@@ -119,24 +119,20 @@ selection).
 
 ## Testing strategy
 
+`web/` uses `node:test` with `.mjs` files registered explicitly in `web/test/run.mjs`. No vitest, no `@testing-library/react`. Tests are either source-grep contract tests (read the source file, regex-assert structural facts) or pure-logic behavior tests (direct `.ts` import via Node 22+'s type-stripping, exercise the function). The slash-completion overlay test plan respects this:
+
 Server:
-1. `test/skills-api.test.ts` — boot an app with a temp `SkillsStore` seeded
-   with two skills, assert `GET /api/skills` returns them with the right shape.
+1. `test/skills-api.test.ts` — boot an app with `setupFaux()` + `makeManager()` (canonical harness) seeded with two skill files, assert `GET /api/skills` returns them with the right shape.
 2. Same file: 401 when no auth token.
 3. Same file: empty array when `AppDeps.skills` is undefined.
 
-Client (vitest happy-dom, matches existing pattern):
-1. `test/useSlashMenu.test.ts` — pure-function unit tests for the hook:
-   - empty draft → closed
-   - `/` → open, all skills
-   - `/ref` → `reflect` first via name-prefix
-   - `/memory` → trigger matches surfaced with `reason: "trigger"`
-   - `/foo ` (with space) → closed
-   - case-insensitive matching
-2. `test/SlashOverlay.test.tsx` — render with fixture skills, assert
-   active-row class, click handler fires `onSelect(name)`.
-3. `test/Chat.slash.test.tsx` — composer integration: type `/`, see overlay;
-   ↓ then Enter inserts `/<name> ` and prevents send.
+Client (all `.mjs`, `node:test`):
+1. `test/api-skills.test.mjs` — source-grep `lib/types.ts` and `lib/api.ts` for the `SkillSummary` interface and `client.listSkills` shape.
+2. `test/slash-menu.test.mjs` — direct `.ts` import of `components/slashMenu.ts`, behaviorally exercise the pure `slashMenuState(draft, skills)` derivation across all the open/closed/rank/case-sensitivity cases. Source-grep `useSlashMenu.ts` for the wrapper structure.
+3. `test/slash-overlay.test.mjs` — source-grep `components/SlashOverlay.tsx` for the props shape, role attributes, mouseDown/mouseEnter wiring, and the trigger-match cue.
+4. `test/chat-slash.test.mjs` — source-grep `components/Chat.tsx` for the imports, the skills fetch, the `useSlashMenu(draft, skills)` invocation, the guarded `<SlashOverlay/>` render, and the keystroke interception keys.
+
+End-to-end behavior (real keystrokes through React) is covered by Task 6's manual smoke checklist. This combination is necessary-not-sufficient by itself; the manual pass is what makes the feature "shipped." This matches Brian's prevailing pattern in this repo (cf. health-icon.test.mjs, message-error-boundary.test.mjs).
 
 ## Risks
 
