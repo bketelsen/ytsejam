@@ -890,19 +890,28 @@ Expected: FAIL — assertions about useSlashMenu/SlashOverlay imports failing.
 
 Three edits inside the existing component:
 
-**(a) Imports.** Add (or extend existing react/hook imports):
+**(a) Imports.** `Chat.tsx` already imports `useEffect, useState` from react (line 2), `client` from `@/lib/api` (line 14), and types from `@/lib/types` (line 15). Make exactly these edits:
+
+Change line 15 from:
 
 ```ts
-import { useEffect, useState } from "react"; // extend existing react import
-import { client } from "@/lib/api"; // likely already present — check before adding
-import type { SkillSummary } from "@/lib/types";
+import type { ChatMessage, TaskRow } from "@/lib/types";
+```
+
+to:
+
+```ts
+import type { ChatMessage, SkillSummary, TaskRow } from "@/lib/types";
+```
+
+After the existing `import { TaskTranscriptDialog } from "./TaskCard";` (currently line 19), add two new imports in alphabetical order:
+
+```ts
 import { SlashOverlay } from "./SlashOverlay";
 import { useSlashMenu } from "./useSlashMenu";
 ```
 
-(Match the path-alias convention already in use in `Chat.tsx`. If the file uses relative paths instead of `@/`, mirror that.)
-
-**(b) Skills load + slash menu state.** Add inside the component body, near the other `useState` calls:
+**(b) Skills load + slash menu state.** The existing `useState` block is at lines 45–48. Insert this block immediately after line 48 (`const [cwdEditorOpen, setCwdEditorOpen] = useState(false);`):
 
 ```ts
   const [skills, setSkills] = useState<SkillSummary[]>([]);
@@ -924,7 +933,25 @@ import { useSlashMenu } from "./useSlashMenu";
   const slash = useSlashMenu(draft, skills);
 ```
 
-**(c) Textarea wrapper + keyboard interception.** Find the existing `<Textarea>` block (around line 127) and wrap it in a `relative` div so the overlay can position over it; extend `onKeyDown` to handle slash keys when `slash.open`:
+**(c) Textarea wrapper + keyboard interception.** The current Textarea block (lines 125–137) is:
+
+```tsx
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder={running ? "Assistant is working — messages will steer it" : "Message…"}
+            rows={2}
+            className="w-full resize-none"
+          />
+```
+
+Replace it with this exact block (wraps only the Textarea — the send-button row remains a sibling outside the relative wrapper so the overlay positions to the textarea's bounds, not the wider composer container):
 
 ```tsx
           <div className="relative">
