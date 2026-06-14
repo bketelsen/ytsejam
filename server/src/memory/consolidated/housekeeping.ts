@@ -11,7 +11,13 @@ const caps = {
   improvements_done: 10,
   hot_memory_lines: 50,
   patterns_lines: 70,
-  patterns_bytes: 5500,
+  // TODO(tiered-patterns): temporarily raised 5500→8000 (2026-06-14) to
+  // accommodate calibrated multi-failure-mode rules accumulated since the
+  // ytsejam supernova. Structural fix is the tiered-patterns split (global
+  // <4KB + per-domain <2KB each loaded on activation) tracked as the top
+  // wishlist item in cog-meta/improvements.md. Restore to 5500 (or a new
+  // global-tier cap) when tiered patterns ships.
+  patterns_bytes: 8000,
   dormant_domain_days: 28,
   stale_action_item_days: 14,
   changed_recently_fallback_days: 7,
