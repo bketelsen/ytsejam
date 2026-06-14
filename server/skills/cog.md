@@ -159,6 +159,7 @@ Use this skill when the conversation involves: {triggers and label, expanded int
 
 Always read on activation:
 - cog_read("{path}/hot-memory.md")
+- cog_read("{path}/patterns.md") — domain-specific patterns (loads silently if missing; created by /reflect Gate 3 when a project-specific rule is promoted)
 
 Then load per the retrieval protocol based on the query:
 - Status query → cog_read("{path}/action-items.md"){, or calendar.md if the domain has one}
