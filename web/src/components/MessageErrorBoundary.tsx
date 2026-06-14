@@ -34,7 +34,6 @@ export class MessageErrorBoundary extends Component<Props, State> {
     // Surface to devtools so the stack is recoverable; the fallback UI only
     // shows the message. Console-logging in a class component is the
     // documented React pattern.
-    // eslint-disable-next-line no-console
     console.error("MessageErrorBoundary caught:", error, info);
   }
 
