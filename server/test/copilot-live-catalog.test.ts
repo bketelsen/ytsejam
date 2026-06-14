@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import type { Model } from "@earendil-works/pi-ai";
 import { inferModelTemplate } from "../src/copilot-live-catalog.ts";
+import { mergeCatalogs } from "../src/copilot-live-catalog.ts";
 
 /**
  * Minimal Model<any> shape fixtures matching what pi-ai's catalog produces
@@ -83,5 +84,56 @@ describe("inferModelTemplate", () => {
     assert.equal(out.api, "anthropic-messages");
     // Sibling's contextWindow would be 200000; fallback template should NOT inherit that.
     assert.notEqual(out.contextWindow, 200000);
+  });
+});
+
+
+describe("mergeCatalogs", () => {
+  it("live-only id added to overlay with sibling-inherited metadata", () => {
+    const result = mergeCatalogs(
+      [makeClaudeOpus47()],
+      ["claude-opus-4.7", "claude-opus-4.7-1m-internal"],
+    );
+    assert.equal(result.overlay.length, 1);
+    assert.equal(result.overlay[0].id, "claude-opus-4.7-1m-internal");
+    assert.equal(result.overlay[0].api, "anthropic-messages");
+    assert.equal(result.prunedIds.size, 0);
+  });
+
+  it("overlap id is skipped — static metadata wins, not duplicated in overlay", () => {
+    const result = mergeCatalogs([makeClaudeOpus47()], ["claude-opus-4.7"]);
+    assert.equal(result.overlay.length, 0);
+    assert.equal(result.prunedIds.size, 0);
+  });
+
+  it("static-only id is in prunedIds", () => {
+    const result = mergeCatalogs([makeClaudeOpus47(), makeClaudeOpus46()], ["claude-opus-4.7"]);
+    assert.equal(result.overlay.length, 0);
+    assert.equal(result.prunedIds.size, 1);
+    assert.ok(result.prunedIds.has("claude-opus-4.6"));
+  });
+
+  it("empty live list — empty overlay, prunedIds = all static github-copilot ids", () => {
+    const result = mergeCatalogs([makeClaudeOpus47(), makeClaudeOpus46()], []);
+    assert.equal(result.overlay.length, 0);
+    assert.equal(result.prunedIds.size, 2);
+  });
+
+  it("empty static list — overlay = all live (each via no-sibling fallback)", () => {
+    const result = mergeCatalogs([], ["claude-opus-4.7-1m-internal", "mai-code-1-flash-internal"]);
+    assert.equal(result.overlay.length, 2);
+    assert.equal(result.prunedIds.size, 0);
+  });
+
+  it("non-github-copilot static entries are not pruned or counted", () => {
+    const anthropicDirect: Model<any> = {
+      ...makeClaudeOpus47(),
+      provider: "anthropic",
+      id: "claude-opus-4.7",
+    } as Model<any>;
+    const result = mergeCatalogs([makeClaudeOpus47(), anthropicDirect], ["claude-opus-4.7"]);
+    // anthropic provider is unaffected; pruning only applies to github-copilot
+    assert.equal(result.prunedIds.size, 0);
+    assert.equal(result.overlay.length, 0);
   });
 });

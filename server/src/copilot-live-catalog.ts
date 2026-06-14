@@ -73,3 +73,32 @@ export function inferModelTemplate(liveId: string, staticModels: Model<any>[]): 
   cloned.name = `${niceName} (${humanizeSuffix(liveId, sibling.id)})`;
   return cloned;
 }
+
+export interface MergeResult {
+  /** Live-only ids synthesized into Model<any> records. */
+  overlay: Model<any>[];
+  /** Pi-ai catalog ids the user's Copilot account doesn't return. */
+  prunedIds: Set<string>;
+}
+
+export function mergeCatalogs(
+  staticModels: Model<any>[],
+  liveIds: string[],
+): MergeResult {
+  const copilotStatic = staticModels.filter((m) => m.provider === "github-copilot");
+  const staticIds = new Set(copilotStatic.map((m) => m.id));
+  const liveSet = new Set(liveIds);
+
+  const overlay: Model<any>[] = [];
+  for (const id of liveIds) {
+    if (staticIds.has(id)) continue;
+    overlay.push(inferModelTemplate(id, copilotStatic));
+  }
+
+  const prunedIds = new Set<string>();
+  for (const m of copilotStatic) {
+    if (!liveSet.has(m.id)) prunedIds.add(m.id);
+  }
+
+  return { overlay, prunedIds };
+}
