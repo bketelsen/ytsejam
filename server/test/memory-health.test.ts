@@ -66,13 +66,23 @@ describe("GET /api/memory/health", () => {
   test("returns LTM health when a reconciler is attached", async () => {
     memory.attachReconciler({
       health: () => ({ reachable: true, consecutiveFailures: 0 }),
-      reconcile: async () => ({ scannedFiles: 0, scannedLines: 0, replayed: 0, skipped: 0, errors: 0 }),
+      reconcile: async () => ({
+        scannedFiles: 0,
+        scannedLines: 0,
+        replayed: 0,
+        rebuilt: 0,
+        pruned: 0,
+        skipped: 0,
+        errors: 0,
+      }),
     });
 
     const res = await app.request("/api/memory/health", { headers: auth });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ltm: { reachable: true, consecutiveFailures: 0 } });
+    expect(await res.json()).toEqual({
+      ltm: { reachable: true, consecutiveFailures: 0 },
+    });
   });
 
   test("returns null LTM health when no reconciler is attached", async () => {

@@ -13,19 +13,22 @@ export interface LtmCliOpts {
   force?: boolean;
   /** For replay: re-scan and re-embed already-mirrored observations. */
   rebuild?: boolean;
+  /** For replay: with rebuild, tombstone orphan cog-origin observations. */
+  prune?: boolean;
   /** Output sink (defaults to console). Test injection point. */
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
 }
 
-function resolveDirs(opts: LtmCliOpts): { dataDir: string; ltmStoreDir: string } {
+function resolveDirs(opts: LtmCliOpts): {
+  dataDir: string;
+  ltmStoreDir: string;
+} {
   const dataDir = path.resolve(
     opts.dataDir ?? process.env.YTSEJAM_DATA_DIR ?? "./data",
   );
   const ltmStoreDir =
-    opts.ltmStoreDir ||
-    process.env.LTM_STORE_DIR ||
-    path.join(dataDir, "ltm");
+    opts.ltmStoreDir || process.env.LTM_STORE_DIR || path.join(dataDir, "ltm");
   return { dataDir, ltmStoreDir };
 }
 
@@ -44,6 +47,12 @@ function resolveDirs(opts: LtmCliOpts): { dataDir: string; ltmStoreDir: string }
 export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
   const out = opts.stdout ?? ((line) => console.log(line));
   const err = opts.stderr ?? ((line) => console.error(line));
+  const rebuild = opts.rebuild ?? false;
+  let prune = opts.prune ?? false;
+  if (prune && !rebuild) {
+    err("[ltm replay] --prune requires --rebuild; ignoring prune");
+    prune = false;
+  }
   const { dataDir, ltmStoreDir } = resolveDirs(opts);
 
   const mode = (() => {
@@ -56,7 +65,9 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
   })();
   if (!mode) return 1;
 
-  const authStore = new PiAuthStore(process.env.YTSEJAM_PI_AUTH ?? defaultPiAuthPath());
+  const authStore = new PiAuthStore(
+    process.env.YTSEJAM_PI_AUTH ?? defaultPiAuthPath(),
+  );
   const embedderResult = await createLtmEmbedder(authStore, {
     mode,
     cacheDir: path.join(ltmStoreDir, "embed-cache"),
@@ -79,7 +90,10 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
     // Replay intentionally skips dimension-mismatch refusal: its purpose is
     // to rewrite the index with the selected embedder, especially after a
     // server startup refusal.
-    ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder });
+    ltm = MemorySystem.open({
+      storeDir: ltmStoreDir,
+      embedder: embedderResult.embedder,
+    });
   } catch (e) {
     err(
       `[ltm replay] could not open LTM at ${ltmStoreDir}\n` +
@@ -106,7 +120,8 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
     });
     const stats = await reconciler.reconcile({
       force: opts.force ?? false,
-      rebuild: opts.rebuild ?? false,
+      rebuild,
+      prune,
     });
     out(JSON.stringify(stats, null, 2));
     return stats.errors > 0 ? 1 : 0;

@@ -8,7 +8,11 @@ import {
 } from "./ltm-observer.ts";
 import { skipMarkdownNoise } from "../consolidated/open-actions.ts";
 
-type Logger = (level: "warn" | "info" | "error", msg: string, meta?: object) => void;
+type Logger = (
+  level: "warn" | "info" | "error",
+  msg: string,
+  meta?: object,
+) => void;
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -30,6 +34,7 @@ export type ReconcileStats = {
   scannedLines: number;
   replayed: number;
   rebuilt: number;
+  pruned: number;
   skipped: number;
   errors: number;
 };
@@ -122,8 +127,7 @@ export class LtmReconciler {
       reachable: h.reachable,
       consecutiveFailures: h.consecutiveFailures,
     };
-    if (h.lastError !== undefined)
-      snap.lastError = { ...h.lastError };
+    if (h.lastError !== undefined) snap.lastError = { ...h.lastError };
     if (h.lastTickAt !== undefined) snap.lastTickAt = h.lastTickAt;
     if (h.lastTickStats !== undefined)
       snap.lastTickStats = { ...h.lastTickStats };
@@ -136,7 +140,10 @@ export class LtmReconciler {
       .then(() => undefined)
       .catch((err) => {
         // reconcile() catches its own; this branch is belt-and-suspenders.
-        this.logger("warn", `tick threw out-of-band: ${(err as Error).message}`);
+        this.logger(
+          "warn",
+          `tick threw out-of-band: ${(err as Error).message}`,
+        );
       })
       .finally(() => {
         this.inFlight = null;
@@ -144,14 +151,25 @@ export class LtmReconciler {
     await this.inFlight;
   }
 
-  async reconcile(opts?: { force?: boolean; rebuild?: boolean }): Promise<ReconcileStats> {
-    const force = opts?.force || opts?.rebuild || false;
+  async reconcile(opts?: {
+    force?: boolean;
+    rebuild?: boolean;
+    prune?: boolean;
+  }): Promise<ReconcileStats> {
     const rebuild = opts?.rebuild ?? false;
+    let prune = opts?.prune ?? false;
+    if (prune && !rebuild) {
+      this.logger("warn", "--prune requires --rebuild; ignoring prune");
+      prune = false;
+    }
+    const force = opts?.force || rebuild || false;
+    const mirroredOrigins = new Set<string>();
     const stats: ReconcileStats = {
       scannedFiles: 0,
       scannedLines: 0,
       replayed: 0,
       rebuilt: 0,
+      pruned: 0,
       skipped: 0,
       errors: 0,
     };
@@ -194,11 +212,31 @@ export class LtmReconciler {
           if (skipMarkdownNoise(trimmed, state)) continue;
           if (!trimmed.startsWith("- ")) continue;
           stats.scannedLines++;
-          await this.processLine(file, trimmed, i, stats, rebuild);
+          await this.processLine(
+            file,
+            trimmed,
+            i,
+            stats,
+            rebuild,
+            mirroredOrigins,
+          );
         }
         this.mtimeCache.set(file, st.mtimeMs);
       } catch (err) {
         this.bumpTickError(err as Error, stats);
+      }
+    }
+
+    if (rebuild && prune) {
+      const orphanIds: string[] = [];
+      for (const [origin, id] of this.ltm.allObservationsByOrigin()) {
+        if (!mirroredOrigins.has(origin)) orphanIds.push(id);
+      }
+      stats.pruned = this.ltm.episodicRedactMany(orphanIds);
+      if (stats.pruned > 0) {
+        this.logger("info", "pruned orphan observation records", {
+          pruned: stats.pruned,
+        });
       }
     }
 
@@ -208,6 +246,7 @@ export class LtmReconciler {
       scannedLines: stats.scannedLines,
       replayed: stats.replayed,
       rebuilt: stats.rebuilt,
+      pruned: stats.pruned,
       skipped: stats.skipped,
       errors: stats.errors,
     });
@@ -220,6 +259,7 @@ export class LtmReconciler {
     lineNum: number,
     stats: ReconcileStats,
     rebuild: boolean,
+    mirroredOrigins: Set<string>,
   ): Promise<void> {
     const split = this.splitFilePath(file);
     if (!split) {
@@ -247,6 +287,7 @@ export class LtmReconciler {
     }
     const result = await mirrorToLtm(this.ltm, parsed, origin);
     if (result.ok) {
+      mirroredOrigins.add(origin);
       if (rebuild && wasAlreadyMirrored) stats.rebuilt++;
       else stats.replayed++;
     } else {

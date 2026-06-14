@@ -78,7 +78,10 @@ describe("LtmReconciler", () => {
     );
 
     ltm.close();
-    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: new HashEmbedder(3) });
+    ltm = MemorySystem.open({
+      storeDir: ltmDir,
+      embedder: new HashEmbedder(3),
+    });
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
     const initial = await reconciler.reconcile({ force: true });
     expect(initial.replayed).toBe(2);
@@ -87,7 +90,10 @@ describe("LtmReconciler", () => {
     await reconciler.stop();
     reconciler = null;
     ltm.close();
-    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: markerEmbedder(5, 42) });
+    ltm = MemorySystem.open({
+      storeDir: ltmDir,
+      embedder: markerEmbedder(5, 42),
+    });
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
 
     const rebuilt = await reconciler.reconcile({ rebuild: true });
@@ -101,6 +107,66 @@ describe("LtmReconciler", () => {
     ]);
   });
 
+  it("rebuild prune tombstones orphan cog-origin observations", async () => {
+    const lines = [
+      "- 2026-06-10 [a]: prune line one",
+      "- 2026-06-11 [b]: prune line two",
+      "- 2026-06-12 [c]: prune line three",
+    ];
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      `${lines.join("\n")}\n`,
+    );
+
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    const initial = await reconciler.reconcile({ force: true });
+    expect(initial.replayed).toBe(3);
+
+    const orphan1 = await ltm.recordObservation({
+      text: "orphan observation one",
+      timestamp: "2026-06-13T00:00:00.000Z",
+      origin: "cog:personal/observations.md#orphan001",
+    });
+    const orphan2 = await ltm.recordObservation({
+      text: "orphan observation two",
+      timestamp: "2026-06-13T00:00:01.000Z",
+      origin: "cog:personal/observations.md#orphan002",
+    });
+
+    const stats = await reconciler.reconcile({ rebuild: true, prune: true });
+    expect(stats.rebuilt).toBe(3);
+    expect(stats.pruned).toBe(2);
+    expect(stats.errors).toBe(0);
+    expect(ltm.getRecord(orphan1.id)?.state).toBe("redacted");
+    expect(ltm.getRecord(orphan1.id)?.text).toBe("");
+    expect(ltm.getRecord(orphan2.id)?.state).toBe("redacted");
+    expect(ltm.getRecord(orphan2.id)?.text).toBe("");
+  });
+
+  it("ignores prune without rebuild", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: prune guard line\n",
+    );
+    const orphan = await ltm.recordObservation({
+      text: "orphan remains without rebuild",
+      timestamp: "2026-06-13T00:00:00.000Z",
+      origin: "cog:personal/observations.md#guard-orphan",
+    });
+    const logger = vi.fn();
+    reconciler = new LtmReconciler({ ltm, dataDir, logger });
+
+    const stats = await reconciler.reconcile({ prune: true });
+    expect(stats.pruned).toBe(0);
+    expect(ltm.getRecord(orphan.id)?.state).toBe("active");
+    expect(logger).toHaveBeenCalledWith(
+      "warn",
+      "--prune requires --rebuild; ignoring prune",
+    );
+  });
+
   it("force preserves already-mirrored observations without re-embedding", async () => {
     await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
     await writeFile(
@@ -109,14 +175,20 @@ describe("LtmReconciler", () => {
     );
 
     ltm.close();
-    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: new HashEmbedder(3) });
+    ltm = MemorySystem.open({
+      storeDir: ltmDir,
+      embedder: new HashEmbedder(3),
+    });
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
     await reconciler.reconcile({ force: true });
 
     await reconciler.stop();
     reconciler = null;
     ltm.close();
-    ltm = MemorySystem.open({ storeDir: ltmDir, embedder: markerEmbedder(5, 42) });
+    ltm = MemorySystem.open({
+      storeDir: ltmDir,
+      embedder: markerEmbedder(5, 42),
+    });
     reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
 
     const forced = await reconciler.reconcile({ force: true });
@@ -166,7 +238,9 @@ describe("LtmReconciler", () => {
   });
 
   it("walks nested domain paths (e.g. projects/ytsejam/observations.md)", async () => {
-    await mkdir(join(dataDir, "memory", "projects", "ytsejam"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "projects", "ytsejam"), {
+      recursive: true,
+    });
     await writeFile(
       join(dataDir, "memory", "projects", "ytsejam", "observations.md"),
       "- 2026-06-13 [shipped]: bridge 1\n",
@@ -194,7 +268,9 @@ describe("LtmReconciler", () => {
     expect(stats.errors).toBe(0);
     expect(ltm.hasObservation(expectedOrigin)).toBe(true);
     expect(ltm.hasObservation(badOrigin)).toBe(false);
-    expect(expectedOrigin).toMatch(/^cog:cog-meta\/observations\.md#[0-9a-f]{12}$/);
+    expect(expectedOrigin).toMatch(
+      /^cog:cog-meta\/observations\.md#[0-9a-f]{12}$/,
+    );
   });
 
   it("start()/stop() timer lifecycle is idempotent and safe", async () => {
@@ -202,7 +278,12 @@ describe("LtmReconciler", () => {
     // root so that first tick succeeds and reachable stays true; without
     // this, the immediate tick would fail readdir and flip reachable=false.
     await mkdir(join(dataDir, "memory"), { recursive: true });
-    reconciler = new LtmReconciler({ ltm, dataDir, intervalMs: 1000, logger: noopLogger });
+    reconciler = new LtmReconciler({
+      ltm,
+      dataDir,
+      intervalMs: 1000,
+      logger: noopLogger,
+    });
     await reconciler.stop(); // before start
     reconciler.start();
     reconciler.start(); // second call must not stack
@@ -268,14 +349,22 @@ describe("LtmReconciler", () => {
         .mockRejectedValueOnce(new Error("boom"))
         .mockResolvedValue(undefined),
     } as unknown as MemorySystem;
-    reconciler = new LtmReconciler({ ltm: fakeLtm, dataDir, logger: noopLogger });
+    reconciler = new LtmReconciler({
+      ltm: fakeLtm,
+      dataDir,
+      logger: noopLogger,
+    });
     const r1 = await reconciler.reconcile();
     expect(r1.errors).toBe(1);
     expect(reconciler.health().consecutiveFailures).toBe(0); // per-LINE error, not per-TICK
   });
 
   it("health: tick-level throw (bad dataDir) increments consecutiveFailures", async () => {
-    reconciler = new LtmReconciler({ ltm, dataDir: "/nonexistent-path-xyz-12345", logger: noopLogger });
+    reconciler = new LtmReconciler({
+      ltm,
+      dataDir: "/nonexistent-path-xyz-12345",
+      logger: noopLogger,
+    });
     const r1 = await reconciler.reconcile();
     expect(r1.errors).toBeGreaterThanOrEqual(1);
     expect(reconciler.health().consecutiveFailures).toBe(1);
@@ -285,7 +374,11 @@ describe("LtmReconciler", () => {
 
   it("health: a successful tick clears consecutiveFailures", async () => {
     // First tick: bad dataDir → consecutiveFailures = 1.
-    reconciler = new LtmReconciler({ ltm, dataDir: "/nonexistent-path-xyz-67890", logger: noopLogger });
+    reconciler = new LtmReconciler({
+      ltm,
+      dataDir: "/nonexistent-path-xyz-67890",
+      logger: noopLogger,
+    });
     await reconciler.reconcile();
     expect(reconciler.health().consecutiveFailures).toBe(1);
     // Now: stop, swap to good dataDir, tick — failures should clear.
@@ -330,14 +423,18 @@ describe("LtmReconciler", () => {
     // Bad: glacier archives are out of scope. A file under glacier/ named
     // observations.md must be IGNORED. We use a malformed body so that if
     // the walker mistakenly descends, the test fails loudly with errors>0.
-    await mkdir(join(dataDir, "memory", "glacier", "personal"), { recursive: true });
+    await mkdir(join(dataDir, "memory", "glacier", "personal"), {
+      recursive: true,
+    });
     await writeFile(
       join(dataDir, "memory", "glacier", "personal", "observations.md"),
       "---\ntype: glacier_archive\n---\n# Cold storage\n",
     );
     // Bad: dot-directories (.git, .obsidian) hold no observations and must
     // be skipped. Same loud-fail pattern: malformed content under .git.
-    await mkdir(join(dataDir, "memory", ".git", "objects"), { recursive: true });
+    await mkdir(join(dataDir, "memory", ".git", "objects"), {
+      recursive: true,
+    });
     await writeFile(
       join(dataDir, "memory", ".git", "objects", "observations.md"),
       "binary-pack-like garbage\n",
@@ -367,7 +464,7 @@ describe("LtmReconciler", () => {
     expect(fresh.lastError?.message).not.toBe("tampered");
   });
 
-  it("emits exactly one INFO 'tick complete' summary per reconcile() with all six numeric fields", async () => {
+  it("emits exactly one INFO 'tick complete' summary per reconcile() with all seven numeric fields", async () => {
     // Mix a good line and a malformed line so we can also assert that the
     // per-line WARN path (separate issue #100) is still emitted alongside
     // the new INFO rollup -- the summary line is additive, not a replacement.
@@ -392,6 +489,7 @@ describe("LtmReconciler", () => {
     expect(typeof meta.scannedLines).toBe("number");
     expect(typeof meta.replayed).toBe("number");
     expect(typeof meta.rebuilt).toBe("number");
+    expect(typeof meta.pruned).toBe("number");
     expect(typeof meta.skipped).toBe("number");
     expect(typeof meta.errors).toBe("number");
 

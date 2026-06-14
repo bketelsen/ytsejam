@@ -25,7 +25,6 @@ export interface DomainFileRef {
   file: string;
 }
 
-
 /** Result of mapping a memory-root-relative path back to a declared domain file. */
 export interface DomainForPathResult {
   domain: string;
@@ -126,6 +125,8 @@ export interface HealthResult {
       scannedFiles: number;
       scannedLines: number;
       replayed: number;
+      rebuilt: number;
+      pruned: number;
       skipped: number;
       errors: number;
     };

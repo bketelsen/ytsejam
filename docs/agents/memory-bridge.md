@@ -95,7 +95,7 @@ atomicity the prior `memory.append(path, multi_line_text)` had.
   process alive on its own) and kicks an immediate first tick so cold
   starts don't wait `intervalMs` for back-fill.
 - **`stop()`** clears the interval and awaits the in-flight tick.
-- **`reconcile({force?, rebuild?})`** is the per-tick workhorse and is also reachable
+- **`reconcile({force?, rebuild?, prune?})`** is the per-tick workhorse and is also reachable
   directly (the CLI calls it for a one-shot replay).
 - **`health()`** returns a deep-cloned `Health` snapshot; mutating the
   returned object cannot corrupt internal state.
@@ -156,7 +156,7 @@ are always degraded to cog-only memory, not process exit. Full design rationale:
    node server/src/index.ts ltm replay --rebuild
    ```
 
-   This re-embeds existing memories under the new model; nothing is deleted.
+   This re-embeds current observations under the new model. Add `--prune` to also tombstone orphan records (observations whose source line is no longer in cog memory). `--prune` is only safe in steady state — **NOT** during archival or restoration, because temporarily missing source lines will be tombstoned.
    Restart the server after replay to resume LTM. The server does **not**
    `process.exit` for a mismatch.
 5. Construct `LtmReconciler({ltm, dataDir, intervalMs?})`, then
@@ -225,7 +225,7 @@ HTTP boot. The arg-layer interception pattern (`runCli(argv)` returning
 patched dependency, no separate binary that duplicates boot.
 
 ```
-node server/src/index.ts ltm replay [--force] [--rebuild]   # one reconcile tick, JSON stats
+node server/src/index.ts ltm replay [--force] [--rebuild] [--prune]   # one reconcile tick, JSON stats
 node server/src/index.ts ltm health             # one-off CLI snapshot
 npm run ltm -- replay                           # ergonomic wrapper from repo root
 ```
@@ -235,8 +235,7 @@ invalidates the mtime cache and re-scans every observation file, but skips
 lines whose content hash already exists in LTM (idempotent). Use `--rebuild`
 to additionally re-embed already-mirrored observations under the current
 embedder — required after switching embedder providers or model dimensions.
-Both flags preserve all existing records; `--rebuild` replaces them in place
-via id-based upsert. The CLI opens
+`--rebuild` re-embeds current observations only. Add `--prune` with `--rebuild` to tombstone orphan records whose `cog:` origin is no longer present in the current cog file scan. `--prune` requires cog memory to be in its normal steady state — running while files are mid-archive or mid-restore will tombstone embeddings whose source is temporarily missing. The CLI opens
 LTM directly, so **the server must be stopped** (single-writer lock). The
 CLI's `ltm health` is intentionally not a live-server health surface — for
 live state, hit the server's `/api/memory/health` endpoint or watch the
