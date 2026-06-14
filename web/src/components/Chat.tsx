@@ -152,6 +152,15 @@ export function Chat({
             )}
             <Textarea
               value={draft}
+              role="combobox"
+              aria-haspopup="listbox"
+              aria-expanded={slash.open}
+              aria-controls={slash.open ? "slash-overlay" : undefined}
+              aria-activedescendant={
+                slash.open && slash.items.length > 0
+                  ? `slash-option-${slash.activeIndex}`
+                  : undefined
+              }
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (slash.open) {

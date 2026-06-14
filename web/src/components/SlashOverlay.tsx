@@ -12,6 +12,11 @@ export interface SlashOverlayProps {
  * slash command. Stateless and presentational — useSlashMenu owns the
  * filtering/ranking, Chat owns the open state and keyboard wiring.
  *
+ * Stable `id`s are emitted on the listbox container and each option so the
+ * controlling <Textarea> can reference them via aria-controls and
+ * aria-activedescendant (see Chat.tsx). The IDs are singletons-per-Chat;
+ * since only one composer slash menu is ever on screen, fixed IDs are safe.
+ *
  * mouseDown (not click) is used for selection so the textarea doesn't lose
  * focus between mousedown and click — the textarea blur path would close
  * the menu before click fires.
@@ -25,6 +30,7 @@ export function SlashOverlay({
   if (items.length === 0) return null;
   return (
     <div
+      id="slash-overlay"
       role="listbox"
       aria-label="Slash commands"
       className="pointer-events-auto absolute bottom-full left-0 right-0 z-20 mb-2 max-h-48 overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-md"
@@ -34,6 +40,7 @@ export function SlashOverlay({
         return (
           <div
             key={item.skill.name}
+            id={`slash-option-${i}`}
             role="option"
             aria-selected={active}
             data-active={active}

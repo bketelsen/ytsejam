@@ -62,3 +62,13 @@ test("Chat Enter while overlay open accepts the active item and prevents send", 
 test("Chat respects e.nativeEvent.isComposing so IME input doesn't accept early", () => {
   assert.match(src, /isComposing/);
 });
+
+test("Chat composer declares aria-haspopup/expanded/controls/activedescendant for screen readers", () => {
+  // ARIA Authoring Practices for editable combobox-with-listbox pattern: the
+  // input owns the relationship to the popup. Keeps screen readers in sync
+  // with the visible selection.
+  assert.match(src, /aria-haspopup=["']listbox["']/);
+  assert.match(src, /aria-expanded=\{slash\.open\}/);
+  assert.match(src, /aria-controls=\{[^}]*slash\.open[^}]*slash-overlay[^}]*\}/);
+  assert.match(src, /aria-activedescendant=\{[^}]*slash-option-/);
+});

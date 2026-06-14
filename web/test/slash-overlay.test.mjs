@@ -65,3 +65,10 @@ test("SlashOverlay renders the matched trigger label for trigger-reason rows", (
   assert.match(src, /matchedTrigger/);
   assert.match(src, /match:/);
 });
+
+test("SlashOverlay listbox and options expose stable ids for aria-activedescendant wiring", () => {
+  // Singleton-per-Chat IDs let the composer textarea reference the active
+  // option via aria-activedescendant. The IDs are coordinated with Chat.tsx.
+  assert.match(src, /id=["']slash-overlay["']/);
+  assert.match(src, /id=\{`slash-option-\$\{i\}`\}/);
+});
