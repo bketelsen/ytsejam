@@ -180,7 +180,7 @@ async function scanGlobalPatterns(path: string, result: HousekeepingScan): Promi
 
 async function scanDomainPatterns(
   result: HousekeepingScan,
-  all: { per_file: { path: string; size: number }[] },
+  all: { per_file: { path: string; lines: number; size: number }[] },
 ): Promise<void> {
   // Per-domain patterns: any {path}/patterns.md anywhere under the memory
   // root EXCEPT cog-meta/ (the global tier, scanned separately) and
@@ -194,10 +194,16 @@ async function scanDomainPatterns(
     return true;
   });
   for (const f of candidates) {
-    const content = await readOptional(f.path);
-    if (content == null) continue;
-    const lines = countLines(content);
-    const size = Buffer.byteLength(content);
+    // store.stats() already computed per-file size/line counts; use those
+    // instead of re-reading every domain patterns file during housekeeping.
+    let lines = f.lines;
+    let size = f.size;
+    if (!Number.isFinite(lines) || !Number.isFinite(size) || (size > 0 && lines === 0)) {
+      const content = await readOptional(f.path);
+      if (content == null) continue;
+      lines = countLines(content);
+      size = Buffer.byteLength(content);
+    }
     if (lines > caps.domain_patterns_lines || size > caps.domain_patterns_bytes) {
       result.thresholds.domain_patterns_over_cap.push({
         path: f.path,

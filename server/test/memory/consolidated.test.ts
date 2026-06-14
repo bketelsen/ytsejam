@@ -322,6 +322,15 @@ describe("memory consolidated PR-2a", () => {
     expect(r.thresholds.domain_patterns_over_cap[0].lines).toBeGreaterThan(40);
   });
 
+  test("housekeepingScan sorts multiple per-domain patterns.md over-cap findings by path", async () => {
+    await seed("cog-meta/patterns.md", "ok\n");
+    await seed("projects/zeta/patterns.md", "z".repeat(5000));
+    await seed("projects/alpha/patterns.md", "a".repeat(5000));
+    const r = await housekeepingScan();
+    expect(r.thresholds.domain_patterns_over_cap).toHaveLength(2);
+    expect(r.thresholds.domain_patterns_over_cap[0].path).toBe("projects/alpha/patterns.md");
+  });
+
   test("housekeepingScan does NOT flag cog-meta/patterns.md or glacier/**/patterns.md as domain patterns", async () => {
     await seed("cog-meta/patterns.md", "x".repeat(100));
     await seed("glacier/projects/foo/patterns.md", "y".repeat(10000));  // over any cap, but should be skipped
@@ -333,6 +342,14 @@ describe("memory consolidated PR-2a", () => {
     await seed("cog-meta/patterns.md", "ok\n");
     const r = await housekeepingScan();
     expect(r.thresholds.domain_patterns_over_cap).toEqual([]);
+  });
+
+  test("housekeepingScan reports global and per-domain patterns over caps in the same run", async () => {
+    await seed("cog-meta/patterns.md", "x".repeat(7000));
+    await seed("projects/foo/patterns.md", "y".repeat(5000));
+    const r = await housekeepingScan();
+    expect(r.thresholds.patterns_over_cap).toHaveLength(1);
+    expect(r.thresholds.domain_patterns_over_cap).toHaveLength(1);
   });
 
   test("housekeepingScan action completed cap, stale items, hot-memory, patterns, and improvements", async () => {
