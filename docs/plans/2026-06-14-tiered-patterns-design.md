@@ -14,7 +14,7 @@
 Split patterns into two tiers:
 
 - **Global tier** — `cog-meta/patterns.md`, cross-project rules, always loaded into session-brief, **6000-byte cap / 70-line cap**.
-- **Per-domain tier** — `{domain-path}/patterns.md`, domain-specific rules, loaded **only when the domain skill activates**, **3000-byte cap / 40-line cap each**.
+- **Per-domain tier** — `{domain-path}/patterns.md`, domain-specific rules, loaded **only when the domain skill activates**, **3500-byte cap / 40-line cap each**.
 
 Bound CONCURRENT context (global + active domain), not a combined sum across all domains.
 
@@ -54,7 +54,7 @@ domain activation (skill triggers)
 |---|---|---|
 | `cog-meta/patterns.md` | Drop Harness Discipline + Subagent Execution → ~5KB | content |
 | `projects/ytsejam/patterns.md` (NEW) | Receives the 2 dropped sections → ~2.5KB | content |
-| `server/src/memory/consolidated/housekeeping.ts` | `patterns_bytes: 8000` split into `global_patterns_bytes: 6000` + `domain_patterns_bytes: 3000`; scan finds all `{domain-path}/patterns.md` recursively | server (~30 LOC) |
+| `server/src/memory/consolidated/housekeeping.ts` | `patterns_bytes: 8000` split into `global_patterns_bytes: 6000` + `domain_patterns_bytes: 3500`; scan finds all `{domain-path}/patterns.md` recursively | server (~30 LOC) |
 | `server/src/memory/types.ts` | Type declaration follow-up for new threshold key(s) | server (small) |
 | `server/test/memory/consolidated.test.ts` | Fixtures + assertions for both caps; remove the 9000-byte band-aid fixture | tests |
 | `server/skills/cog.md` Phase 3d template | Add `cog_read("{path}/patterns.md")` to "Always read on activation" block | skill markdown |
@@ -68,7 +68,7 @@ domain activation (skill triggers)
 - `global_patterns_lines: 70` (unchanged from today's line cap)
 
 **Per-domain** (`{domain-path}/patterns.md`):
-- `domain_patterns_bytes: 3000`
+- `domain_patterns_bytes: 3500`
 - `domain_patterns_lines: 40` (proportional to byte cap)
 
 ## Per-domain scan logic
@@ -130,7 +130,7 @@ Two commits structured for review legibility:
 - Verify: `wc -c` before = `wc -c` after-global + `wc -c` after-ytsejam ± section-header overhead
 
 **Commit 2 — code:**
-- Split `patterns_bytes` into `global_patterns_bytes: 6000` + `domain_patterns_bytes: 3000` in `housekeeping.ts`
+- Split `patterns_bytes` into `global_patterns_bytes: 6000` + `domain_patterns_bytes: 3500` in `housekeeping.ts`
 - Remove the band-aid `TODO(tiered-patterns)` comment
 - Widen scan to find recursive `{path}/patterns.md`
 - Update test fixtures + assertions
@@ -168,7 +168,7 @@ This crosses `server/src/` — `housekeeping.ts` (~30 LOC) and `types.ts` (type 
 
 1. Gate green: `scripts/gate.sh` passes
 2. `cog-meta/patterns.md` ≤ 6000 bytes after split
-3. `projects/ytsejam/patterns.md` ≤ 3000 bytes after split
+3. `projects/ytsejam/patterns.md` ≤ 3500 bytes after split
 4. `/housekeeping` post-merge run reports 0 patterns violations (or expected new shape)
 5. After post-restart `/cog` regeneration, generated `projects/ytsejam.md` skill includes `cog_read("projects/ytsejam/patterns.md")` in activation block
 6. /reflect Gate 3 prompts include the classifier step (verifiable by reading the updated skill markdown)
