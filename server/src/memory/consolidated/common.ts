@@ -22,10 +22,6 @@ export function countLines(content: string): number {
   return content.endsWith("\n") ? n : n + 1;
 }
 
-export async function fileExists(path: string): Promise<boolean> {
-  return (await import("../store/index.ts")).stats(path).then((s) => s.per_file.some((f) => f.path === path));
-}
-
 export async function fileModifiedDate(path: string): Promise<Date | null> {
   const s = await (await import("../store/index.ts")).stats(path);
   const row = s.per_file.find((f) => f.path === path);
