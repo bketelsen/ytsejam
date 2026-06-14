@@ -28,6 +28,7 @@ import type {
 } from "../types.ts";
 import { mergeConfig, type LtmConfigPatch } from "../types.ts";
 import { HashEmbedder, type Embedder } from "../embedding/embedder.ts";
+import { VectorIndex } from "../embedding/vector-index.ts";
 import { EpisodicStore } from "../episodic/store.ts";
 import { consolidate, extractiveSummary, summaryId, type Summarizer } from "../episodic/consolidate.ts";
 import { retention } from "../episodic/decay.ts";
@@ -268,6 +269,15 @@ export class MemorySystem {
   hasObservation(origin: string): boolean {
     if (!origin) return false;
     return this.episodic.all().some((r) => r.origin === origin);
+  }
+
+  /** Return the dimension of currently stored episodic vectors, or null when the index is empty. */
+  indexDimension(): number | null {
+    const vectors = new VectorIndex();
+    for (const record of this.episodic.all()) {
+      if (record.embedding) vectors.set(record.id, record.embedding);
+    }
+    return vectors.sampleDimension();
   }
 
   async retrieve(query: string, opts: RetrieveOptions = {}): Promise<RetrievalResult> {

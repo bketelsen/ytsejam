@@ -29,6 +29,12 @@ export class VectorIndex {
     return this.vectors.size;
   }
 
+  /** Return the dimensionality of any stored vector, or null when empty. */
+  sampleDimension(): number | null {
+    const first = this.vectors.values().next();
+    return first.done ? null : first.value.length;
+  }
+
   search(query: number[], k: number): VectorHit[] {
     const hits: VectorHit[] = [];
     for (const [id, vector] of this.vectors) {
