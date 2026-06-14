@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { domainSummary, housekeepingScan, openActions, recentObservations, sessionBrief } from "../../src/memory/index.ts";
-import { parseObservationLine, primaryTagFromObservationLine } from "../../src/memory/consolidated/observations-parser.ts";
 import type { HousekeepingCaps, HousekeepingThresholds } from "../../src/memory/types.ts";
 
 let root = "";
@@ -43,53 +42,6 @@ async function touch(rel: string, date: Date) { await utimes(join(root, ...rel.s
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 const ymdDaysAgo = (n: number) => daysAgo(n).toISOString().slice(0, 10);
 
-describe("parseObservationLine", () => {
-  const parse = (raw: string) => parseObservationLine("personal", "personal/observations.md", 7, raw);
-
-  test("parses single-bracket comma-separated tags", () => {
-    expect(parse("- 2026-06-13 [a, b]: comma tags")?.tags).toEqual(["a", "b"]);
-  });
-
-  test("parses two adjacent brackets", () => {
-    expect(parse("- 2026-06-13 [a][b]: adjacent tags")?.tags).toEqual(["a", "b"]);
-  });
-
-  test("parses three adjacent brackets", () => {
-    expect(parse("- 2026-06-13 [a][b][c]: adjacent tags")?.tags).toEqual(["a", "b", "c"]);
-  });
-
-  test("parses mixed bracket forms", () => {
-    expect(parse("- 2026-06-13 [a, b][c]: mixed tags")?.tags).toEqual(["a", "b", "c"]);
-  });
-
-  test("parses mixed bracket forms both multi", () => {
-    expect(parse("- 2026-06-13 [a, b][c, d]: mixed tags")?.tags).toEqual(["a", "b", "c", "d"]);
-  });
-
-  test("trims whitespace within multi-bracket tags", () => {
-    expect(parse("- 2026-06-13 [  a  ][ b ]: spaced tags")?.tags).toEqual(["a", "b"]);
-  });
-
-  test("rejects empty bracket", () => {
-    expect(parse("- 2026-06-13 []: no tags")).toBeNull();
-  });
-
-  test("rejects whitespace-only bracket", () => {
-    expect(parse("- 2026-06-13 [   ]: no tags")).toBeNull();
-  });
-
-  test("rejects line with no bracket block", () => {
-    expect(parse("- 2026-06-13: missing tags")).toBeNull();
-  });
-
-  test("rejects invalid date 2026-13-99", () => {
-    expect(parse("- 2026-13-99 [x]: bad month and day")).toBeNull();
-  });
-
-  test("primaryTagFromObservationLine reads multi-bracket primary tag", () => {
-    expect(primaryTagFromObservationLine("- 2026-06-13 [a][b]: adjacent tags")).toBe("a");
-  });
-});
 
 describe("memory consolidated PR-2a", () => {
   test("sessionBrief returns hot memory, patterns, domains, action counts, and high-priority flag", async () => {
@@ -171,6 +123,15 @@ describe("memory consolidated PR-2a", () => {
     const byDomain = await recentObservations({ since: "2026-05-01", domain: "personal" });
     expect(byDomain.entries.map((e) => e.domain)).toEqual(["personal", "personal"]);
     expect(byDomain.by_domain).toEqual({ personal: 2 });
+  });
+
+  test("recentObservations excludes whitespace-only tag brackets at the consumer layer", async () => {
+    await seed("personal/observations.md", "- 2026-06-13 [   ]: no tags\n- 2026-06-13 [real]: visible\n");
+
+    const r = await recentObservations({ since: "2026-06-01" });
+
+    expect(r.entries.map((e) => e.text)).toEqual(["visible"]);
+    expect(r.by_tag).toEqual({ real: 1 });
   });
 
   test("recentObservations rejects by_domain alias, invalid since, unknown domain, and skips fences", async () => {

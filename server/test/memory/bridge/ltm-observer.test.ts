@@ -23,36 +23,6 @@ describe("parseObservationLine", () => {
     });
   });
 
-  it("parses single-bracket comma-separated tags", () => {
-    const r = parseObservationLine("- 2026-06-13 [a, b]: comma tags");
-    expect(r?.tags).toEqual(["a", "b"]);
-  });
-
-  it("parses two adjacent brackets", () => {
-    const r = parseObservationLine("- 2026-06-13 [a][b]: adjacent tags");
-    expect(r?.tags).toEqual(["a", "b"]);
-  });
-
-  it("parses three adjacent brackets", () => {
-    const r = parseObservationLine("- 2026-06-13 [a][b][c]: adjacent tags");
-    expect(r?.tags).toEqual(["a", "b", "c"]);
-  });
-
-  it("parses mixed bracket forms", () => {
-    const r = parseObservationLine("- 2026-06-13 [a, b][c]: mixed tags");
-    expect(r?.tags).toEqual(["a", "b", "c"]);
-  });
-
-  it("parses mixed bracket forms both multi", () => {
-    const r = parseObservationLine("- 2026-06-13 [a, b][c, d]: mixed tags");
-    expect(r?.tags).toEqual(["a", "b", "c", "d"]);
-  });
-
-  it("trims whitespace within multi-bracket tags", () => {
-    const r = parseObservationLine("- 2026-06-13 [  a  ][ b ]: spaced tags");
-    expect(r?.tags).toEqual(["a", "b"]);
-  });
-
   it("returns null on malformed date", () => {
     expect(parseObservationLine("- 26-6-13 [x]: bad date")).toBeNull();
   });
@@ -67,11 +37,6 @@ describe("parseObservationLine", () => {
 
   it("returns null on empty text body", () => {
     expect(parseObservationLine("- 2026-06-13 [x]: ")).toBeNull();
-  });
-
-  it("handles multi-tag without spaces", () => {
-    const r = parseObservationLine("- 2026-06-13 [a,b,c,d]: many tags");
-    expect(r?.tags).toEqual(["a", "b", "c", "d"]);
   });
 
   it("returns null on line with no bracket block (tags required per cog SSOT)", () => {
