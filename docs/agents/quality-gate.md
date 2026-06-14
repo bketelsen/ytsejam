@@ -11,11 +11,16 @@ precondition for landing or deploying anything.
 From the repo root (the script `cd`s there itself), each step under `env -u NODE_ENV` so an inherited
 `NODE_ENV=production` can't make npm skip the devDependencies (`vitest`/`vite`/`tsc`) the checks need:
 
-1. **Server typecheck** — `npm run check` → `tsc --noEmit` in `server/`.
+1. **Typecheck (server + ltm)** — `npm run check` → `npm run check --workspace server && npm run
+   check --workspace ltm` → `tsc --noEmit` in each. LTM is the `packages/ltm/` workspace; the cog→LTM
+   bridge surface in `server/` references its public types, so they're typechecked together.
 2. **Server tests** — `npm test --workspace server` → `vitest --run` (faux LLM provider, no network).
-3. **Web build + typecheck** — `npm run build --workspace web` → `tsc -b && vite build`. The web
+3. **LTM tests** — `npm test --workspace ltm` → `vitest --run` (the LTM engine's own suite —
+   episodic/semantic store, decay, consolidation, the `MemorySystem` open/close + lock semantics
+   the bridge depends on).
+4. **Web build + typecheck** — `npm run build --workspace web` → `tsc -b && vite build`. The web
    typecheck is part of the build (`tsc -b`), so a type error here fails the build step.
-4. **Web tests** — `npm test --workspace web` → `node test/run.mjs` (custom runner: theme/contrast,
+5. **Web tests** — `npm test --workspace web` → `node test/run.mjs` (custom runner: theme/contrast,
    message-flow, transcript, time). The theme test (`web/test/theme.test.mjs`) fails the build on any
    raw Tailwind palette class in `src/**/*.tsx` and checks WCAG AA contrast — see `web/CLAUDE.md`.
 
