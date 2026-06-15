@@ -741,6 +741,25 @@ export class AgentManager {
     if (opened) await opened.harness.abort();
   }
 
+  /**
+   * Abort every open session's in-flight pi-ai turn. Used by the SIGTERM
+   * drain in index.ts. Uses Promise.allSettled so one harness's failure
+   * does not block the others; per-call errors are logged but not thrown.
+   * Idempotent — calling on an empty/already-drained set is a no-op.
+   */
+  async abortAll(): Promise<void> {
+    const aborts = Array.from(this.open.values()).map(async (opened) => {
+      try {
+        await opened.harness.abort();
+      } catch (err) {
+        console.warn(
+          `[manager.abortAll] abort failed for session ${opened.id}: ${(err as Error).message}`,
+        );
+      }
+    });
+    await Promise.allSettled(aborts);
+  }
+
   async waitForIdle(id: string): Promise<void> {
     const opened = this.open.get(id);
     if (!opened) return;
