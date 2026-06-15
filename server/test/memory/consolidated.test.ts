@@ -20,7 +20,7 @@ domains:
     path: personal
     label: Personal
     triggers: [personal]
-    files: [hot-memory, action-items, observations, entities]
+    files: [hot-memory, action-items, observations, entities, decisions]
   - id: work
     path: work/acme
     label: Work
@@ -217,7 +217,7 @@ describe("memory consolidated PR-2a", () => {
     expect(r.changed_recently).toEqual(["domains.yml"]);
     expect(r.dormant_domains).toEqual([]);
     expect(r.stale_action_items).toEqual([]);
-    expect(r.thresholds).toMatchObject({ observations_over_cap: [], completed_actions_over_cap: [], improvements_implemented_over_cap: [], hot_memory_over_cap: [], patterns_over_cap: [] });
+    expect(r.thresholds).toMatchObject({ observations_over_cap: [], completed_actions_over_cap: [], improvements_implemented_over_cap: [], hot_memory_over_cap: [], patterns_over_cap: [], domain_patterns_over_cap: [], decisions_over_cap: [] });
   });
 
 
@@ -311,6 +311,52 @@ describe("memory consolidated PR-2a", () => {
     const r = await housekeepingScan();
     expect(r.thresholds.patterns_over_cap).toHaveLength(1);
     expect(r.thresholds.domain_patterns_over_cap).toHaveLength(1);
+  });
+
+
+  test("housekeepingScan flags decisions.md over the 100-entry count cap", async () => {
+    // Build a decisions file with 101 recent entries
+    const lines = Array.from({ length: 101 }, (_, i) =>
+      `- ${ymdDaysAgo(10)} [d-decision-${i}]: example decision body.`
+    ).join("\n") + "\n";
+    await seed("personal/decisions.md", lines);
+
+    const r = await housekeepingScan();
+    expect(r.thresholds.decisions_over_cap).toHaveLength(1);
+    expect(r.thresholds.decisions_over_cap[0]).toMatchObject({
+      path: "personal/decisions.md",
+      entries: 101,
+      cap: 100,
+      reason: "count",
+    });
+  });
+
+  test("housekeepingScan flags decisions.md when head entry is older than 6 months", async () => {
+    // Build a decisions file with a few entries, oldest >6 months ago.
+    // 6 months ≈ 180 days; use 200 days to be safely past the cutoff regardless of leap-year math.
+    const lines = [
+      `- ${ymdDaysAgo(200)} [d-ancient]: an old decision body.`,
+      `- ${ymdDaysAgo(30)} [d-recent]: a recent decision body.`,
+    ].join("\n") + "\n";
+    await seed("personal/decisions.md", lines);
+
+    const r = await housekeepingScan();
+    expect(r.thresholds.decisions_over_cap).toHaveLength(1);
+    expect(r.thresholds.decisions_over_cap[0]).toMatchObject({
+      path: "personal/decisions.md",
+      reason: "age",
+    });
+  });
+
+  test("housekeepingScan does NOT flag decisions.md when under both caps", async () => {
+    // 50 recent entries — under both the 100-entry count cap and the 6-month age cap
+    const lines = Array.from({ length: 50 }, (_, i) =>
+      `- ${ymdDaysAgo(10)} [d-decision-${i}]: example decision body.`
+    ).join("\n") + "\n";
+    await seed("personal/decisions.md", lines);
+
+    const r = await housekeepingScan();
+    expect(r.thresholds.decisions_over_cap).toEqual([]);
   });
 
   test("housekeepingScan action completed cap, stale items, hot-memory, patterns, and improvements", async () => {
