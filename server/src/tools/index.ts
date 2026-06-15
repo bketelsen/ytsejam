@@ -29,11 +29,3 @@ export function createSessionCwdTools(cwd: string): AgentTool<any>[] {
   ];
 }
 
-/**
- * Back-compat helper for callers that want the full toolset bound to one
- * cwd (e.g. the subagent path in task-manager wires this against the
- * parent's resolved workdir per task).
- */
-export function createTools(dataDir: string): AgentTool<any>[] {
-  return [...createGlobalTools(), ...createSessionCwdTools(dataDir)];
-}
