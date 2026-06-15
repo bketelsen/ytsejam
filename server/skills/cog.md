@@ -9,21 +9,27 @@ triggers: [setup memory, configure domains, add domain, reconfigure memory]
 
 # Cog Setup
 
-Bootstrap the memory system through conversation. Discover the user's domains, then generate `domains.yml`, the directory structure, and a routing skill for each domain. The memory root is owned by the cog daemon — all memory writes go through the cog_* tools with paths relative to that root.
+Bootstrap the memory system through conversation. Discover the user's domains, then generate `domains.yml`, the canonical memory files for each domain, and a routing skill per domain. The memory root is owned by the cog daemon — all memory writes go through `cog_*` tools and `cog_rpc` methods.
 
 ## Phase 0: Orientation
 
 Call `cog_rpc("session_brief")`.
 
-- **`domains` is empty** → first-time setup; continue to Phase 1.
+- **`domains` is empty** → first-time setup; continue to Phase 0.5.
 - **`domains` is non-empty** → this is a re-run. Show the current domain table (id, path, label) and ask: "Want to add more domains or reconfigure an existing one?" Only touch what the user asks for. Fetch the full current manifest with `cog_rpc("domains.list")` before writing anything — re-renders must preserve every existing entry verbatim.
+
+## Phase 0.5: Dedupe Legacy Duplicates (silent)
+
+On any non-empty manifest, walk `domains.list` and detect ids that appear BOTH as a top-level entry AND as a subdomain (typically under `projects`). When such a duplicate is found, drop the **top-level** entry from the working manifest — the subdomain wins (it has the structured parent context and the correct path). The user is not asked; the dedupe is reported in Phase 4 ("cleaned up N legacy duplicate entries: <ids>"). When no duplicates exist, this phase is silent and adds nothing to the Phase 4 summary.
+
+This dedupe applies only to the in-memory working manifest the skill is about to write in Phase 3a. The on-disk manifest still has the duplicates until Phase 3a re-renders.
 
 ## Phase 1: Discovery (Conversational)
 
 Have a natural conversation to understand the user's domains. Ask about:
 
 1. **Work** — "What do you do for work? Company name, role?" → becomes a `work` domain
-2. **Side projects** — "Any side projects or ventures?" → each becomes a `side-project` domain
+2. **Side projects** — "Any side projects or ventures?" → each becomes a `side-project` subdomain under `projects`
 3. **Personal** — The `personal` domain is always created. Ask: "Anything specific you want to track? Health, hobbies, habits, kids?"
 4. **Anything else** — "Any other areas you want persistent memory for?"
 
@@ -35,10 +41,10 @@ Keep it natural. 3-4 questions max. Use their answers to build the manifest.
 |------|---------|-------|
 | `personal` | Personal life (always one) | hot-memory, action-items, entities, observations, habits, health, calendar |
 | `work` | Day job | hot-memory, action-items, entities, projects, observations |
-| `side-project` | Ventures, hobbies | hot-memory, action-items, projects, observations |
+| `side-project` | Ventures, hobbies (subdomain under `projects`) | hot-memory, action-items, dev-log, observations |
 | `system` | Cog internals (auto-created) | self-observations, patterns, improvements |
 
-Side projects conventionally nest under a `projects` parent domain as subdomains (`id: myapp`, `path: projects/myapp`).
+Side projects nest under a `projects` parent domain as subdomains (`id: myapp`, `path: projects/myapp`). Never declare a side project as a top-level domain — that's the duplicate shape Phase 0.5 cleans up.
 
 ## Phase 2: Confirm
 
@@ -50,13 +56,15 @@ Here's what I'll set up:
 Domains:
 - personal — Family, health, day-to-day
 - acme — Work at Acme Corp (Designer)
-- myapp — Side project
+- myapp — Side project (under projects/)
 
 This will create:
 - domains.yml (domain manifest)
-- Memory directories + starter files for each domain
+- Canonical memory files for each domain
 - A skill per domain so future sessions route to its memory
 ```
+
+If Phase 0.5 found duplicates, include in the summary: "Also cleaning up N legacy duplicate top-level entries: <ids>."
 
 Wait for confirmation.
 
@@ -64,7 +72,7 @@ Wait for confirmation.
 
 ### 3a. Write `domains.yml`
 
-Render the complete manifest — existing entries (from `domains.list`) preserved verbatim plus the new ones — and write it with `cog_write("domains.yml", ...)`. Always include `cog-meta` as a system domain automatically. The daemon hot-reloads the manifest immediately; the new domains are live for the very next call.
+Render the complete manifest — existing entries (from `domains.list`, with the Phase 0.5 dedupe applied) preserved verbatim plus the new ones — and write it with `cog_write("domains.yml", ...)`. Always include `cog-meta` as a system domain automatically. The daemon validates the manifest before writing (rejects duplicate ids, empty paths, absolute paths) and hot-reloads on success; the new domains are live for the very next call.
 
 ```yaml
 # Cog Domain Manifest — generated by /cog
@@ -87,68 +95,55 @@ domains:
     files: [self-observations, patterns, improvements]
 ```
 
-### 3b. Create Starter Files
+If `cog_write` rejects the manifest (PR-2 validate-on-write), surface the error to the user verbatim and abort. The user can correct the prior state and re-run `/cog`.
 
-For each domain, check what already exists with `cog_rpc("domain_summary", {domain: "<id>"})` — skip every file in `files_present`. Create the missing ones with `cog_write` at the domain's **path** (e.g. `projects/myapp/hot-memory.md`), never its id:
+### 3b. Create Canonical Memory Files
 
-**hot-memory.md:**
-```markdown
-<!-- L0: Current state and top-of-mind for {label} -->
-# {Label} — Hot Memory
+For each domain you created or are reconfiguring, walk its `files` list. For each file, call `cog_rpc("init_canonical_file", ...)` with the matching `file_type`:
 
-<!-- Rewrite freely. Keep under 50 lines. -->
+| `files` entry | `file_type` |
+|---|---|
+| `hot-memory` | `"hot-memory"` |
+| `observations` | `"observations"` |
+| `action-items` | `"action-items"` |
+| `dev-log` | `"dev-log"` |
+| anything else (entities, habits, health, calendar, projects, patterns, etc.) | `"generic"` |
+
+```
+cog_rpc("init_canonical_file", {
+  path: "{domain.path}/{file}.md",
+  file_type: "{file_type from table}",
+  label: "{domain.label}"
+})
 ```
 
-**observations.md:**
-```markdown
-<!-- L0: Timestamped observations and events -->
-# {Label} — Observations
+The daemon owns the template (L0 header + section structure). If the file already exists, the RPC returns `{created: false, path, bytes: 0}` — not an error; existing files are never clobbered. If `created: false` and the user mentioned wanting fresh content for a file, warn the user that the existing file was preserved and proceed.
 
-<!-- Append-only. Format: - YYYY-MM-DD [tags]: observation -->
-```
-
-**action-items.md:**
-```markdown
-<!-- L0: Open and completed tasks -->
-# {Label} — Action Items
-
-## Open
-
-## Completed
-```
-
-**entities.md:**
-```markdown
-<!-- L0: People, places, and things -->
-# {Label} — Entities
-
-<!-- 3-line max per entry. Format: ### Name (relationship) / facts / status|last -->
-```
-
-**Other files** (calendar, health, habits, projects, etc.):
-```markdown
-<!-- L0: {file name} for {label} -->
-# {Label} — {File Name}
-```
-
-### 3c. Create Cross-Domain Files
+### 3c. Cross-Domain Files
 
 Check with `cog_list()`; create via `cog_write` only if missing:
-- `hot-memory.md` — cross-domain strategic context
-- `link-index.md` — backlink index (rebuilt by housekeeping)
-- `glacier/index.md` — glacier catalog (rebuilt by housekeeping)
+- `hot-memory.md` — cross-domain strategic context (use the same template as a domain hot-memory but with cross-domain framing)
+- `link-index.md` — backlink index (single line stub; rebuilt by housekeeping)
+- `glacier/index.md` — glacier catalog (single line stub; rebuilt by housekeeping)
+
+These are not canonical-file shape — they're cross-cutting indexes — so they use `cog_write` (which is in the allowlist for these specific paths) rather than `init_canonical_file`.
 
 ### 3d. Generate Domain Skills
 
-For each non-system domain you created or reconfigured (skip `cog-meta`), write a skill file with the **local `write` tool** to `skills/{id}.md` (this path is relative to the assistant's data directory, NOT cog memory). Overwrite on re-run — this template is the source of truth. Fill in from the domain's manifest entry:
+For each non-system domain you created or reconfigured (skip `cog-meta`), call `cog_rpc("skill_write", ...)` to write its routing skill. The daemon owns the path resolution (`<dataDir>/skills/<id>.md`) and the YAML frontmatter shape; the skill provides the `id`, `description`, `triggers` array, and `body` markdown.
+
+```
+cog_rpc("skill_write", {
+  id: "{domain.id}",
+  description: "{domain.label} — domain memory routing",
+  triggers: [{domain.triggers}],
+  body: "<the markdown body — see template below>"
+})
+```
+
+**Body template** (assemble the string and pass as `body`):
 
 ```markdown
----
-name: {id}
-description: {label} — domain memory routing
-triggers: [{triggers from the manifest, comma-separated}]
----
-
 Use this skill when the conversation involves: {triggers and label, expanded into natural topic phrases}.
 
 ## Domain
@@ -186,21 +181,24 @@ Historical data: cog_read("glacier/index.md"), filter by this domain.
 Read hot-memory, classify the query, load the minimum files needed, and respond.
 ```
 
-Tailor the trigger paragraph and behavior bullets to the domain's actual `files` list — don't reference files the domain doesn't declare. The new skill appears in the Skills routing table from the next session on.
+Tailor the trigger paragraph, retrieval bullets, and behavior bullets to the domain's actual `files` list — don't reference files the domain doesn't declare. `skill_write` overwrites on re-run: the template is the source of truth. If the user has hand-edited a routing skill, the next `/cog` run will regenerate it; mention this in Phase 4 if any `skill_write` replaced existing content.
 
 ## Phase 4: Summary
 
 Output:
-- Domains created/updated
-- Files generated
-- Skills generated
+- Domains created/updated (list)
+- Files generated (count, or per-domain breakdown if user is new)
+- Skills generated (list)
+- If Phase 0.5 deduped: "Cleaned up N legacy duplicate top-level entries: <ids>."
+- If any `skill_write` overwrote a hand-edited skill: warn with the affected skill ids.
 - Next steps: "Just talk naturally. Your memory system is ready."
 
 ## Rules
 
 1. **Never delete** — setup only creates and updates
-2. **Idempotent** — running again is safe, skips existing memory files (domain skills are the exception: regenerate them)
+2. **Idempotent** — running again is safe; `init_canonical_file` skips existing files; domain skills regenerate
 3. **cog-meta is automatic** — always included, never ask about it
 4. **Conversational first** — no one edits YAML manually
 5. **Re-runs are additive** — "Want to add more domains or reconfigure?"
-6. **Paths, never ids** — every cog_write targets the domain's `path`; the daemon rejects id-as-path writes
+6. **Paths, never ids** — every cog tool call targets the domain's `path`; the daemon rejects id-as-path writes
+7. **Side projects are subdomains** — nest under `projects`, never declare top-level; Phase 0.5 dedupes legacy violations
