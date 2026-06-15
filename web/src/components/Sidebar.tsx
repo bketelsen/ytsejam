@@ -100,7 +100,10 @@ export function Sidebar({
               ) : s.unread ? (
                 <span className="size-2 shrink-0 rounded-full bg-primary" />
               ) : null}
-              <span className="flex-1 truncate text-sm">{s.title ?? "New session"}</span>
+              <span className="flex-1 truncate text-sm">
+                {s.title ?? "New session"}
+                {s.approvalMode === "yolo" ? <span className="sr-only"> (approvals off)</span> : null}
+              </span>
               <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>
               <button
                 data-slot="button"

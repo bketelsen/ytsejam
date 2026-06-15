@@ -23,3 +23,11 @@ test("Sidebar YOLO warning tint is scoped to the active session list", () => {
   assert.ok(archivedSessionRender, "expected to find archivedRows.map render block");
   assert.doesNotMatch(archivedSessionRender, /approvalMode\s*===\s*["']yolo["']|\bborder-warning\b/);
 });
+
+test("YOLO row exposes state to assistive tech via sr-only", () => {
+  assert.ok(activeSessionRender, "expected to find sessions.map render block");
+  assert.ok(
+    /s\.approvalMode\s*===\s*["']yolo["'][\s\S]*?sr-only[\s\S]*?\(approvals off\)/.test(activeSessionRender),
+    "expected sr-only '(approvals off)' under YOLO condition",
+  );
+});
