@@ -10,7 +10,7 @@
 
 **Tech Stack:** TypeScript, Node, the existing cog memory in-process module (`server/src/memory/`), Vitest for tests.
 
-**Worktree:** /tmp/cog-decision-kind
+**Worktree:** /home/bjk/projects/.worktrees/cog-decision-kind
 
 **Branch:** feature/cog-decision-kind
 
