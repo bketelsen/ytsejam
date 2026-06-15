@@ -195,6 +195,19 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true });
   });
 
+  app.post("/api/sessions/:id/regenerate-title", async (c) => {
+    const id = c.req.param("id");
+    if (!indexer.getSession(id)) return c.json({ error: "not found" }, 404);
+    // No-op if already titled / no user messages — manager.regenerateTitle
+    // delegates to the same path as the post-first-turn auto trigger.
+    await manager.regenerateTitle(id);
+    // Caller polls indexer/session list to see the result; the title may
+    // arrive milliseconds later (model latency) or never (provider error,
+    // logged server-side). Returning 202 makes that fire-and-forget shape
+    // explicit.
+    return c.json({ ok: true }, 202);
+  });
+
   app.patch("/api/sessions/:id", async (c) => {
     const id = c.req.param("id");
     if (!indexer.getSession(id)) return c.json({ error: "not found" }, 404);
