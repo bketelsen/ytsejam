@@ -24,6 +24,31 @@ export interface LtmCliOpts {
   stderr?: (line: string) => void;
 }
 
+export interface LtmBackfillOpts {
+  /** Source directory of pi v3 session JSONLs (required). */
+  dir: string;
+  /** Per-turn ingest rate (turns/sec). Default 2. */
+  rate?: number;
+  /** Files per batch before pausing. Default 10. */
+  batch?: number;
+  /** Pause ms between batches. Default 2000. */
+  pauseMs?: number;
+  /** Polling interval ms. Default 5000. */
+  pollMs?: number;
+  /** Server base URL. Default $YTSEJAM_API_URL or http://127.0.0.1:9873. */
+  baseUrl?: string;
+  /** Auth token. Default $YTSEJAM_API_TOKEN. */
+  token?: string;
+  /** Output sink (test injection). Default console.log. */
+  stdout?: (line: string) => void;
+  /** Error sink (test injection). Default console.error. */
+  stderr?: (line: string) => void;
+  /** Fetch override (test injection). Default globalThis.fetch. */
+  fetch?: typeof globalThis.fetch;
+  /** Optional AbortSignal — when fired, simulates SIGINT (sends DELETE). */
+  abortSignal?: AbortSignal;
+}
+
 type Logger = (
   level: "warn" | "info" | "error",
   msg: string,
@@ -182,4 +207,99 @@ export async function ltmHealth(opts: LtmCliOpts = {}): Promise<number> {
       `  (the server must be running; this CLI command requires it stopped).`,
   );
   return ltmReplay({ ...opts, force: false });
+}
+
+export async function ltmBackfill(opts: LtmBackfillOpts): Promise<number> {
+  const out = opts.stdout ?? ((line) => console.log(line));
+  const err = opts.stderr ?? ((line) => console.error(line));
+  const fetchFn = opts.fetch ?? globalThis.fetch;
+  const dir = opts.dir;
+  if (!dir) {
+    err("backfill: <dir> is required");
+    return 2;
+  }
+  const token = opts.token ?? process.env.YTSEJAM_API_TOKEN;
+  if (!token) {
+    err("backfill: YTSEJAM_API_TOKEN not set");
+    return 2;
+  }
+  const baseUrl =
+    opts.baseUrl ?? process.env.YTSEJAM_API_URL ?? "http://127.0.0.1:9873";
+  const rate = opts.rate ?? 2;
+  const batch = opts.batch ?? 10;
+  const pauseMs = opts.pauseMs ?? 2000;
+  const pollMs = opts.pollMs ?? 5000;
+
+  const postRes = await fetchFn(`${baseUrl}/api/admin/ltm-backfill`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ dir, ratePerSec: rate, batchSize: batch, pauseMs }),
+  });
+  if (!postRes.ok) {
+    err(`backfill: POST failed ${postRes.status}: ${await postRes.text()}`);
+    return 1;
+  }
+  const { jobId } = (await postRes.json()) as { jobId: string };
+  out(
+    `backfill: started ${jobId} (dir=${dir} rate=${rate}/s batch=${batch} pause=${pauseMs}ms)`,
+  );
+
+  let cancelRequested = false;
+  const onAbort = () => {
+    if (cancelRequested) return;
+    cancelRequested = true;
+    void fetchFn(`${baseUrl}/api/admin/ltm-backfill/${jobId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    }).catch(() => {
+      // best-effort cancel
+    });
+    out("");
+    out("backfill: cancel requested, waiting for terminal status...");
+  };
+  opts.abortSignal?.addEventListener("abort", onAbort);
+
+  try {
+    while (true) {
+      await sleep(pollMs);
+      const getRes = await fetchFn(
+        `${baseUrl}/api/admin/ltm-backfill/${jobId}`,
+        {
+          headers: { authorization: `Bearer ${token}` },
+        },
+      );
+      if (!getRes.ok) {
+        err(`backfill: GET failed ${getRes.status}`);
+        return 1;
+      }
+      const s = (await getRes.json()) as {
+        processed: number;
+        total: number;
+        lastSessionId?: string;
+        status: string;
+        warnings: string[];
+      };
+      out(
+        `[${s.processed}/${s.total}] last: ${s.lastSessionId ?? "-"} (${s.warnings.length} warnings) status=${s.status}`,
+      );
+      if (
+        s.status === "done" ||
+        s.status === "cancelled" ||
+        s.status === "failed"
+      ) {
+        out(`backfill: ${s.status}. ${s.warnings.length} warnings.`);
+        for (const w of s.warnings.slice(0, 10)) out(`  ${w}`);
+        return s.status === "done" ? 0 : 1;
+      }
+    }
+  } finally {
+    opts.abortSignal?.removeEventListener("abort", onAbort);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

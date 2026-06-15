@@ -1,4 +1,4 @@
-import { ltmHealth, ltmReplay } from "./ltm-commands.ts";
+import { ltmBackfill, ltmHealth, ltmReplay } from "./ltm-commands.ts";
 
 const USAGE = `\
 ytsejam CLI
@@ -7,9 +7,13 @@ Usage:
   ytsejam ltm replay [--force] [--rebuild] [--prune] [--verbose|--quiet]
                                   Open LTM, run one reconcile pass, print JSON stats.
   ytsejam ltm health              Print LTM bridge health (one-off tick).
+  ytsejam ltm backfill <dir> [--rate=N] [--batch=N] [--pause-ms=N] [--poll-ms=N]
+                                  Stream JSONLs in <dir> through LTM ingest via the
+                                  running server. Polls progress; Ctrl-C cancels.
+                                  Server MUST be running. Auth via YTSEJAM_API_TOKEN.
 
 Notes:
-  All ltm subcommands require the server to be STOPPED (LTM single-writer lock).
+  ltm replay and ltm health require the server to be STOPPED (LTM single-writer lock).
   Environment:
     YTSEJAM_DATA_DIR              Cog data root (default: ./data).
     LTM_STORE_DIR                 LTM store dir (default: <dataDir>/ltm).
@@ -68,6 +72,29 @@ export async function runCli(argv: string[]): Promise<number | null> {
     return ltmHealth({});
   }
 
+  if (sub === "backfill") {
+    const dir = rest.find((a) => !a.startsWith("--"));
+    if (!dir) {
+      process.stderr.write(`ytsejam ltm backfill: missing <dir>\n\n${USAGE}`);
+      return 2;
+    }
+    const rate = parseFlag(rest, "--rate", 2);
+    const batch = parseFlag(rest, "--batch", 10);
+    const pauseMs = parseFlag(rest, "--pause-ms", 2000);
+    const pollMs = parseFlag(rest, "--poll-ms", 5000);
+    const abortController = new AbortController();
+    process.on("SIGINT", () => abortController.abort());
+    const exit = await ltmBackfill({
+      dir,
+      rate,
+      batch,
+      pauseMs,
+      pollMs,
+      abortSignal: abortController.signal,
+    });
+    return exit;
+  }
+
   if (sub === "--help" || sub === "-h") {
     process.stdout.write(USAGE);
     return 0;
@@ -75,4 +102,11 @@ export async function runCli(argv: string[]): Promise<number | null> {
 
   process.stderr.write(`ytsejam ltm: unknown subcommand "${sub}"\n\n${USAGE}`);
   return 2;
+}
+
+function parseFlag(args: string[], name: string, defaultValue: number): number {
+  const arg = args.find((a) => a.startsWith(`${name}=`));
+  if (!arg) return defaultValue;
+  const val = Number(arg.slice(name.length + 1));
+  return Number.isFinite(val) && val > 0 ? val : defaultValue;
 }
