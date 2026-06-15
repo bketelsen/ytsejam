@@ -12,14 +12,14 @@ test("ApprovalCard exports a named React component", () => {
   assert.match(src, /export\s+function\s+ApprovalCard\s*\(/);
 });
 
-test("ApprovalCard accepts request/onRespond/disabled/ttlSeconds props", () => {
+test("ApprovalCard accepts request/onRespond/disabled props and derives countdown from createdAt", () => {
   const propsDecl = src.match(/interface\s+ApprovalCardProps\s*\{([\s\S]*?)\n\}/);
   assert.ok(propsDecl, "expected an ApprovalCardProps interface");
   assert.match(propsDecl[1], /\brequest:\s*ApprovalRequest/);
   assert.match(propsDecl[1], /\bonRespond:\s*\(decision:\s*["']approve["']\s*\|\s*["']deny["']\)\s*=>\s*void/);
   assert.match(propsDecl[1], /\bdisabled\??:\s*boolean/);
-  assert.match(propsDecl[1], /\bttlSeconds\??:\s*number/);
-  assert.match(src, /ttlSeconds\s*=\s*300/);
+  assert.doesNotMatch(propsDecl[1], /\bttlSeconds\??:/);
+  assert.match(src, /request\.createdAt/);
 });
 
 test("ApprovalCard imports ApprovalRequest type from ../lib/types", () => {
@@ -46,9 +46,13 @@ test("ApprovalCard approve and deny buttons call the response handler with expli
   assert.match(src, /onRespond\(decision\)/);
 });
 
-test("ApprovalCard countdown uses setInterval, decrements, and cleans up", () => {
-  assert.match(src, /useState\(ttlSeconds\)/);
-  assert.match(src, /setInterval\(\(\)\s*=>\s*setRemaining\(\(r\)\s*=>\s*Math\.max\(0,\s*r\s*-\s*1\)\)/);
+test("ApprovalCard countdown recomputes remaining time from createdAt and Date.now", () => {
+  assert.match(src, /const\s+TTL_MS\s*=\s*5\s*\*\s*60\s*\*\s*1000/);
+  assert.match(src, /function\s+computeRemaining\(createdAt:\s*number\):\s*number/);
+  assert.match(src, /Date\.now\(\)/);
+  assert.match(src, /request\.createdAt/);
+  assert.match(src, /useState\(\(\)\s*=>\s*computeRemaining\(request\.createdAt\)\)/);
+  assert.match(src, /setInterval\(\(\)\s*=>\s*setRemaining\(computeRemaining\(request\.createdAt\)\),\s*1000\)/);
   assert.match(src, /clearInterval\(t\)/);
   assert.match(src, /data-testid=["']approval-countdown["']/);
 });

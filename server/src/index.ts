@@ -52,6 +52,7 @@ const approvalCoordinator = new ApprovalCoordinator({
     bus.emit({
       type: "approval_request",
       approvalId: req.approvalId,
+      createdAt: req.createdAt,
       sessionId: req.sessionId,
       toolName: req.toolName,
       toolLabel: req.toolLabel,

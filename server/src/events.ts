@@ -15,6 +15,7 @@ export type ServerEvent =
   | {
       type: "approval_request";
       approvalId: string;
+      createdAt: number;
       sessionId: string;
       toolName: string;
       toolLabel: string;

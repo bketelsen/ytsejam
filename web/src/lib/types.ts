@@ -7,7 +7,7 @@ export interface ApprovalRequest {
   toolName: string;
   toolLabel: string;
   params: unknown;
-  createdAt?: string;
+  createdAt: number;
 }
 
 export interface PendingApprovalsSnapshot {
@@ -124,6 +124,6 @@ export type ServerEvent =
   | { type: "schedule"; schedule: ScheduleRow }
   | { type: "compaction_start"; sessionId: string; trigger: "proactive" | "reactive" }
   | { type: "compaction_end"; sessionId: string; status: "succeeded" | "surrendered" | "failed" }
-  | { type: "approval_request"; approvalId: string; sessionId: string; toolName: string; toolLabel: string; params: unknown }
+  | { type: "approval_request"; approvalId: string; createdAt: number; sessionId: string; toolName: string; toolLabel: string; params: unknown }
   | { type: "approval_resolved"; approvalId: string; decision: ApprovalDecision }
   | { type: "approval_mode_changed"; sessionId: string; mode: ApprovalMode };

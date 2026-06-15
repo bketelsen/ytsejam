@@ -63,7 +63,7 @@ describe("ApprovalCoordinator", () => {
   });
 
   test("cancelSession denies all pending for that session", async () => {
-    const reqs: Array<{ approvalId: string; sessionId: string }> = [];
+    const reqs: Array<{ approvalId: string; createdAt: number; sessionId: string }> = [];
     const coord = new ApprovalCoordinator({
       timeoutMs: 60_000,
       onRequest: (r) => { reqs.push(r); },
@@ -76,6 +76,7 @@ describe("ApprovalCoordinator", () => {
     // p2 should still be pending with the full request payload for reconnect snapshots
     expect(coord.list()).toEqual([{
       approvalId: reqs[1]!.approvalId,
+      createdAt: reqs[1]!.createdAt,
       sessionId: "s2",
       toolName: "bash",
       toolLabel: "Bash",
@@ -146,7 +147,7 @@ describe("ApprovalCoordinator", () => {
   });
 
   test("list() reflects pending entries and shrinks on resolve", async () => {
-    const requests: Array<{ approvalId: string }> = [];
+    const requests: Array<{ approvalId: string; createdAt: number }> = [];
     const coord = new ApprovalCoordinator({
       timeoutMs: 60_000,
       onRequest: (r) => { requests.push(r); },
@@ -156,6 +157,7 @@ describe("ApprovalCoordinator", () => {
     const p1 = coord.request({ sessionId: "s1", toolName: "bash", toolLabel: "Bash", params: {} });
     expect(coord.list()).toEqual([{
       approvalId: requests[0]!.approvalId,
+      createdAt: requests[0]!.createdAt,
       sessionId: "s1",
       toolName: "bash",
       toolLabel: "Bash",
@@ -167,6 +169,7 @@ describe("ApprovalCoordinator", () => {
     await p1;
     expect(coord.list()).toEqual([{
       approvalId: requests[1]!.approvalId,
+      createdAt: requests[1]!.createdAt,
       sessionId: "s2",
       toolName: "write",
       toolLabel: "Write",
@@ -177,13 +180,14 @@ describe("ApprovalCoordinator", () => {
     expect(coord.list()).toEqual([]);
   });
 
-  test("onRequest receives full ApprovalRequest shape with UUID approvalId", () => {
+  test("onRequest receives full ApprovalRequest shape with UUID approvalId and numeric createdAt", () => {
     let req!: import("../src/approval/coordinator.ts").ApprovalRequest;
     const coord = new ApprovalCoordinator({
       timeoutMs: 60_000,
       onRequest: (r) => { req = r; },
       onResolved: noop,
     });
+    const testStartTime = Date.now();
     coord.request({
       sessionId: "session-xyz",
       toolName: "bash",
@@ -192,11 +196,14 @@ describe("ApprovalCoordinator", () => {
     });
     expect(req).toEqual({
       approvalId: expect.any(String),
+      createdAt: expect.any(Number),
       sessionId: "session-xyz",
       toolName: "bash",
       toolLabel: "Bash",
       params: { command: "echo hi" },
     });
+    expect(req.createdAt).toBeGreaterThanOrEqual(testStartTime);
+    expect(req.createdAt).toBeLessThanOrEqual(Date.now());
     // UUID v4 shape
     expect(req.approvalId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });

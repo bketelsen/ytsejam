@@ -83,6 +83,7 @@ export function useApp() {
     if (event.type === "approval_request") {
       const request: ApprovalRequest = {
         approvalId: event.approvalId,
+        createdAt: event.createdAt,
         sessionId: event.sessionId,
         toolName: event.toolName,
         toolLabel: event.toolLabel,
