@@ -2,7 +2,9 @@
   "name": "@ytsejam/server",
   "private": true,
   "license": "MIT",
-  "engines": { "node": ">=22.0.0" },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.ts",
@@ -23,6 +25,7 @@
   "devDependencies": {
     "@types/html-to-text": "^9.0.4",
     "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   }
