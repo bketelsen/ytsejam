@@ -24,7 +24,7 @@ import { wrapToolWithApproval, type ApprovalContext } from "./approval/wrap-tool
 import type { EventBus } from "./events.ts";
 import type { Indexer, SessionRow } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
-import { makeApiKeyResolver } from "./pi-auth.ts";
+import { makeApiKeyResolver, resolveApiKey } from "./pi-auth.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
@@ -903,21 +903,41 @@ export class AgentManager {
       const firstUser = messages.find((m: any) => m.role === "user");
       if (!firstUser) return;
       const model = this.opts.resolveModel(this.opts.defaultModel);
-      const result = await completeSimple(model, {
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Write a title (max 6 words, no quotes, no trailing punctuation) for a conversation that starts with:\n\n${previewOf(firstUser)}`,
-              },
-            ],
-            timestamp: Date.now(),
-          },
-        ],
-      });
+      // Same auth path the harness uses (commit 1850785 introduced OAuth via
+      // PiAuthStore for the harness but missed this call site). Without an
+      // apiKey, completeSimple silently returns content:[] + stopReason:"error"
+      // for OAuth-only providers (e.g. github-copilot) and titles never get
+      // written.
+      const apiKey = await resolveApiKey(model.provider, this.opts.authStore);
+      const result = await completeSimple(
+        model,
+        {
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Write a title (max 6 words, no quotes, no trailing punctuation) for a conversation that starts with:\n\n${previewOf(firstUser)}`,
+                },
+              ],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        apiKey ? { apiKey } : undefined,
+      );
       if (this.open.get(opened.id) !== opened) return; // deleted/closed while completing
+      // Defensive: provider errors (auth, rate limit, network) come back as
+      // stopReason:"error" with empty content rather than a thrown exception.
+      // Don't write garbage titles and don't fail silently — log instead so the
+      // failure mode is visible in logs.
+      if (result.stopReason !== "stop") {
+        console.error(
+          `title generation failed for ${opened.id}: stopReason=${result.stopReason}${result.errorMessage ? ` ${result.errorMessage}` : ""}`,
+        );
+        return;
+      }
       const title = previewOf(result).split("\n")[0]?.trim().slice(0, 80);
       if (title && !opened.running) {
         await opened.session.appendSessionName(title);
