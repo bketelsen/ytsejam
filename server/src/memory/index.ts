@@ -10,6 +10,8 @@ import type {
   EntityAuditResult,
   GitParams,
   GitResult,
+  InitCanonicalFileParams,
+  InitCanonicalFileResult,
   GlacierIndexResult,
   HealthResult,
   HousekeepingScan,
@@ -30,6 +32,8 @@ import type {
   ScenarioCheckResult,
   SearchResults,
   SessionBrief,
+  SkillWriteParams,
+  SkillWriteResult,
   StatsResult,
   WikiIndexResult,
   WriteResult,
@@ -361,4 +365,18 @@ export async function l0index(
   params: L0IndexParams = {},
 ): Promise<L0IndexResult> {
   return computeL0Index(params);
+}
+
+/** Create a typed canonical memory file with the standard L0 template. */
+export async function initCanonicalFile(
+  params: InitCanonicalFileParams,
+): Promise<InitCanonicalFileResult> {
+  return consolidated.initCanonicalFile(params);
+}
+
+/** Write a routing-skill markdown file with canonical frontmatter. */
+export async function skillWrite(
+  params: SkillWriteParams,
+): Promise<SkillWriteResult> {
+  return consolidated.skillWrite(params);
 }

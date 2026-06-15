@@ -1,7 +1,12 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import * as memory from "../memory/index.ts";
-import type { DomainSummaryParams, GitParams } from "../memory/index.ts";
+import type {
+  DomainSummaryParams,
+  GitParams,
+  InitCanonicalFileParams,
+  SkillWriteParams,
+} from "../memory/index.ts";
 import { parseObservationLine } from "../memory/bridge/ltm-observer.ts";
 import { recall } from "../memory/recall.ts";
 import { truncate } from "./shell.ts";
@@ -36,6 +41,8 @@ const RPC_METHODS = [
   "stats",
   "git",
   "health",
+  "init_canonical_file",
+  "skill_write",
   "reconcile_now",
 ] as const;
 
@@ -77,6 +84,10 @@ const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = 
     rejectParams("health", params, []);
     return memory.health();
   },
+  "init_canonical_file": (params) =>
+    memory.initCanonicalFile(params as unknown as InitCanonicalFileParams),
+  "skill_write": (params) =>
+    memory.skillWrite(params as unknown as SkillWriteParams),
   "reconcile_now": (params) => {
     rejectParams("reconcile_now", params, ["force"]);
     const force = params.force;
