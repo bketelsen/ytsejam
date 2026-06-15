@@ -46,15 +46,40 @@ every brief:
 After each report: verify the branch advanced (`git -C /tmp/<branch> log main..HEAD --oneline`)
 before trusting it.
 
-## Phase 3 — Merge
+## Phase 2.5 — Rebase gate (iron law: every stale-base PR is re-gated locally before merge)
 
-As fixes complete, watch CI and merge:
+The instant ANY weed PR merges, every other open weed PR has a stale base. **Before merging the
+next one, you must:**
+
+```bash
+# In the PR's worktree (NOT the repo root — keeps the merge sequence local-clean)
+cd /tmp/<branch>
+git fetch origin main
+git rebase origin/main             # resolve any conflicts; if non-trivial, the issue may have crossed scope
+bash scripts/gate.sh               # FULL re-gate locally — DO NOT skip
+git push --force-with-lease        # only after the local gate is green
+```
+
+Then wait for CI to rerun on the force-push before merging.
+
+**Why local re-gate, not `gh pr update-branch <N>`:** `update-branch` does a server-side rebase
+but the CI that follows can pass on stale caches, and a rebase can silently introduce conflicts
+that compile but fail tests. The local gate is the trusted signal — match what you trusted at
+PR time. Only use `gh pr update-branch` for purely textual rebases on doc-only PRs.
+
+**This gate fires after EVERY merge**, not just the first. A 5-PR burst means 4 rebase-gate
+passes (each remaining PR is re-gated against the new main).
+
+## Phase 3 — Merge sequentially
+
 ```bash
 gh pr view <N> --json statusCheckRollup,mergeable -q '{mergeable, checks:[.statusCheckRollup[]|{name,conclusion}]}'
 ```
-1. First green PR: `gh pr merge <N> --squash` (the `weed` issue closes via `Closes #NNN`).
-2. That advances main → remaining PRs may need `gh pr update-branch <N>` before merging; wait for CI to rerun, merge sequentially.
-3. After a merge, dispatch the next serialized dependency if one was waiting (from fresh main).
+
+1. First green PR: `gh pr merge <N> --squash --delete-branch` (the `weed` issue closes via `Closes #NNN`).
+2. **Run Phase 2.5 on every remaining PR before merging the next** — the merge above invalidated their bases.
+3. After each subsequent merge, re-apply Phase 2.5 to whatever's still open.
+4. After a serialized dependency merges, dispatch the next one from fresh main (Phase 2 again).
 
 ## Phase 4 — Wrap up
 
@@ -68,6 +93,8 @@ No release cut — weeds are hygiene, not a shipped feature; the merged PRs are 
 
 **Never:**
 - Open a PR on a failed gate (the gate is the iron law).
+- Merge a stale-base PR without running the Phase 2.5 rebase + local re-gate (every merge invalidates every other open PR's base).
+- Trust `gh pr update-branch <N>` as a substitute for the local re-gate on a code change — it rebases server-side but the CI run that follows can pass on stale caches and silent rebase conflicts. Local gate is the trusted signal.
 - Trust a subagent's report without verifying the branch advanced.
 - Let a weed PR make a structural/behavioral change — if the issue needs that, it's not a weed;
   unlabel it and route to `brainstorm`.
