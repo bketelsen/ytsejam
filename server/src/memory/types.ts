@@ -184,6 +184,8 @@ export interface HousekeepingCaps {
   global_patterns_bytes: number;
   domain_patterns_lines: number;
   domain_patterns_bytes: number;
+  decisions_entries: number;
+  decisions_age_months: number;
   dormant_domain_days: number;
   stale_action_item_days: number;
   changed_recently_fallback_days: number;
@@ -230,6 +232,14 @@ export interface DomainPatternsOverCap {
   size_cap: number;
 }
 
+export interface DecisionsOverCap {
+  path: string;
+  entries: number;
+  cap: number;
+  /** "count" if entries > cap, "age" if head entry older than the age cap */
+  reason: "count" | "age";
+}
+
 /** Threshold-cap violation groups returned by housekeeping_scan. */
 export interface HousekeepingThresholds {
   observations_over_cap: ObservationsOverCap[];
@@ -238,6 +248,7 @@ export interface HousekeepingThresholds {
   hot_memory_over_cap: HotMemoryOverCap[];
   patterns_over_cap: PatternsOverCap[];
   domain_patterns_over_cap: DomainPatternsOverCap[];
+  decisions_over_cap: DecisionsOverCap[];
 }
 
 /** Dormant domain reported by housekeeping_scan. */
@@ -498,7 +509,7 @@ export interface L0IndexResult {
 /** Parameters for the `init_canonical_file` RPC. */
 export interface InitCanonicalFileParams {
   path: string;
-  file_type: "hot-memory" | "observations" | "action-items" | "dev-log" | "generic";
+  file_type: "hot-memory" | "observations" | "action-items" | "dev-log" | "decisions" | "generic";
   label: string;
 }
 

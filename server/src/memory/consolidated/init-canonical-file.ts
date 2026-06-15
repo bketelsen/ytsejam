@@ -8,7 +8,7 @@ import { validateParams } from "./params.ts";
 
 const BASENAME_RULE = /^[a-z][a-z0-9-]*$/;
 
-type FileType = "hot-memory" | "observations" | "action-items" | "dev-log" | "generic";
+type FileType = "hot-memory" | "observations" | "action-items" | "dev-log" | "decisions" | "generic";
 
 const TEMPLATES: Record<Exclude<FileType, "generic">, (label: string) => string> = {
   "hot-memory": (label) =>
@@ -36,6 +36,20 @@ const TEMPLATES: Record<Exclude<FileType, "generic">, (label: string) => string>
 # ${label} — Dev Log
 
 <!-- Append entries with date headers. Use for ADR-style decisions, design notes, and post-mortems. -->
+`,
+  "decisions": (label) =>
+    `<!-- L0: Decisions for ${label} -->
+# ${label} — Decisions
+
+Append-only log of architectural decisions for this domain.
+
+**Entry format:**
+
+\`\`\`
+- YYYY-MM-DD [d-<slug>]: One-line decision body. <!-- origin: PR-N or commit-SHA, supersedes: d-prior-id (omit if none) -->
+\`\`\`
+
+When a decision supersedes a prior one, also stamp the cited entry with \`<!-- superseded-by: d-<new-id> -->\` so the chain is followable both directions.
 `,
 };
 

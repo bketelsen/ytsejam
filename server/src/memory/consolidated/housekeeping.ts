@@ -19,6 +19,8 @@ const caps = {
   // (loaded only when the domain skill activates).
   domain_patterns_lines: 40,
   domain_patterns_bytes: 3500,
+  decisions_entries: 100,
+  decisions_age_months: 6,
   dormant_domain_days: 28,
   stale_action_item_days: 14,
   changed_recently_fallback_days: 7,
@@ -39,6 +41,7 @@ function emptyThresholds(): HousekeepingThresholds {
     hot_memory_over_cap: [],
     patterns_over_cap: [],
     domain_patterns_over_cap: [],
+    decisions_over_cap: [],
   };
 }
 
@@ -72,6 +75,11 @@ export async function housekeepingScan(params: object = {}): Promise<Housekeepin
     if (content == null) continue;
     scanActionItems(t.path, content, result, now);
   }
+  for (const t of c.decisions()) {
+    const content = await readOptional(t.path);
+    if (content == null) continue;
+    scanDecisions(t.path, content, result, now);
+  }
   for (const d of c.list()) {
     if (!d.files?.includes("hot-memory")) continue;
     let rel: string;
@@ -87,6 +95,7 @@ export async function housekeepingScan(params: object = {}): Promise<Housekeepin
   result.thresholds.observations_over_cap.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   result.thresholds.completed_actions_over_cap.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   result.thresholds.hot_memory_over_cap.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  result.thresholds.decisions_over_cap.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   result.dormant_domains.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   result.stale_action_items.sort((a, b) => a.path !== b.path ? (a.path < b.path ? -1 : 1) : a.line - b.line);
   return result;
@@ -147,6 +156,42 @@ async function scanHotMemory(path: string, result: HousekeepingScan): Promise<vo
   if (content == null) return;
   const lines = countLines(content);
   if (lines > caps.hot_memory_lines) result.thresholds.hot_memory_over_cap.push({ path, lines, cap: caps.hot_memory_lines });
+}
+
+function scanDecisions(path: string, content: string, result: HousekeepingScan, now: Date): void {
+  let entries = 0;
+  let headDate = ""; // earliest YYYY-MM-DD seen — head of the file
+  // Match the entry shape from Task 1's template / Task 3's rule #9:
+  // "- YYYY-MM-DD [d-<slug>]: <body>"
+  const entryRE = /^-\s+(\d{4}-\d{2}-\d{2})\s+\[d-[a-z0-9-]+\]:/;
+  for (const line of splitLines(content)) {
+    const m = line.trim().match(entryRE);
+    if (!m) continue;
+    entries++;
+    if (headDate === "" || m[1] < headDate) headDate = m[1];
+  }
+  if (entries > caps.decisions_entries) {
+    result.thresholds.decisions_over_cap.push({
+      path,
+      entries,
+      cap: caps.decisions_entries,
+      reason: "count",
+    });
+    return; // count-cap wins; don't double-flag
+  }
+  if (headDate) {
+    const headTime = new Date(`${headDate}T00:00:00Z`);
+    const cutoffMs = caps.decisions_age_months * 30 * 24 * 60 * 60 * 1000;
+    const cutoff = new Date(now.getTime() - cutoffMs);
+    if (headTime < cutoff) {
+      result.thresholds.decisions_over_cap.push({
+        path,
+        entries,
+        cap: caps.decisions_entries,
+        reason: "age",
+      });
+    }
+  }
 }
 
 async function scanImprovements(path: string, result: HousekeepingScan): Promise<void> {

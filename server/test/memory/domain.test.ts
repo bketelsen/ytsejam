@@ -10,7 +10,7 @@ domains:
     path: personal
     label: Personal
     triggers: [personal, home]
-    files: [hot-memory, action-items, observations, entities]
+    files: [hot-memory, action-items, observations, entities, decisions]
   - id: work
     path: work/acme
     label: Acme
@@ -97,6 +97,11 @@ describe("memory domain controller", () => {
     expect(c.actionItems("work")).toEqual([{ domain: "work", path: "work/acme/action-items.md", file: "action-items" }]);
     expect(c.observations("personal")).toEqual([{ domain: "personal", path: "personal/observations.md", file: "observations" }]);
     expect(c.entities("personal")).toEqual([{ domain: "personal", path: "personal/entities.md", file: "entities" }]);
+  });
+
+  test("ControllerDecisions domain filter", () => {
+    const c = new Controller(tempRoot(goodManifest));
+    expect(c.decisions("personal")).toEqual([{ domain: "personal", path: "personal/decisions.md", file: "decisions" }]);
   });
 
   test("ControllerResolveFile", () => {
@@ -186,6 +191,11 @@ describe("memory domain controller", () => {
   test("ControllerEntitiesResolves", () => {
     const c = new Controller(tempRoot(goodManifest));
     expect(c.entities()).toEqual([{ domain: "personal", path: "personal/entities.md", file: "entities" }]);
+  });
+
+  test("ControllerDecisionsResolves", () => {
+    const c = new Controller(tempRoot(goodManifest));
+    expect(c.decisions()).toEqual([{ domain: "personal", path: "personal/decisions.md", file: "decisions" }]);
   });
 
   test("ControllerValidateWriteFlagsIDAsPath", () => {

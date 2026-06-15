@@ -82,6 +82,10 @@ export class Controller {
     return this.enumerate("entities", domain);
   }
 
+  decisions(domain?: string): DomainFileRef[] {
+    return this.enumerate("decisions", domain);
+  }
+
   resolveFile(id: string, file: string): string {
     const domain = this.get(id);
     if (!declaresFile(domain, file)) throw new Error(`domain ${JSON.stringify(id)} does not declare file ${JSON.stringify(file)}`);

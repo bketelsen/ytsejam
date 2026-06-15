@@ -13,7 +13,7 @@ domains:
   - id: intuneme
     path: projects/intuneme
     label: "intuneme — test"
-    files: [hot-memory, observations, action-items, dev-log]
+    files: [hot-memory, observations, action-items, dev-log, decisions]
 `, "utf8");
 });
 afterEach(async () => {
@@ -74,6 +74,43 @@ describe("init_canonical_file", () => {
     const content = await readFile(join(root, "projects/intuneme/dev-log.md"), "utf8");
     expect(content).toContain("<!-- L0: Development log and architectural decisions for intuneme -->");
     expect(content).toContain("# intuneme — Dev Log");
+  });
+
+  test("creates decisions.md with the decisions template", async () => {
+    const result = await initCanonicalFile({
+      path: "projects/intuneme/decisions.md",
+      file_type: "decisions",
+      label: "intuneme",
+    });
+    expect(result.created).toBe(true);
+    const content = await readFile(join(root, "projects/intuneme/decisions.md"), "utf8");
+    expect(content.split("\n")[0]).toBe("<!-- L0: Decisions for intuneme -->");
+    expect(content).toContain("# intuneme — Decisions");
+    expect(content).toContain("Append-only log of architectural decisions");
+    expect(content).toContain("[d-<slug>]");
+    expect(content).toContain("superseded-by");
+    expect(content).toMatch(/```[\s\S]*?- YYYY-MM-DD \[d-<slug>\]:[\s\S]*?```/);
+  });
+
+  test("decisions template body has no nested HTML comments that would leak on render", async () => {
+    const result = await initCanonicalFile({
+      path: "projects/intuneme/decisions.md",
+      file_type: "decisions",
+      label: "intuneme",
+    });
+    expect(result.created).toBe(true);
+    const content = await readFile(join(root, "projects/intuneme/decisions.md"), "utf8");
+
+    let residue = content;
+    while (true) {
+      const start = residue.indexOf("<!--");
+      if (start === -1) break;
+      const end = residue.indexOf("-->", start);
+      if (end === -1) break;
+      residue = residue.slice(0, start) + residue.slice(end + 3);
+    }
+
+    expect(residue).not.toContain("-->");
   });
 
   test("creates generic file with basename-title-cased header", async () => {

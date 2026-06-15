@@ -61,8 +61,7 @@ Complete this before presenting ship options.
 ### Route each section (per the storage model)
 
 **Decisions:**
-- `scope: project` → durable project narrative: `cog_append`/`cog_write` to the cog wiki at
-  `wiki/projects/<slug>/decisions.md` (a `- YYYY-MM-DD: <decision>` line).
+- `scope: project` → durable project decision: `cog_append("projects/<slug>/decisions.md", entry)` where `entry` is the canonical decisions-kind shape — `- YYYY-MM-DD [d-<short-slug>]: <one-line body>. <!-- origin: PR-<n> -->`. Generate `<short-slug>` from the decision title (kebab-case, ≤20 chars, lowercase a-z 0-9 -). If the tail names a prior decision being replaced, also include `supersedes: d-<prior-id>` in the comment AND `cog_patch` the prior entry to stamp `<!-- superseded-by: d-<new-id> -->` after its body. The `projects/<slug>/decisions.md` file must exist — if missing, prompt the user to run `/cog` to scaffold the domain's decisions file first.
 - `scope: global` → confirmed entries → `cog_patch("cog-meta/patterns.md", ...)` (in-place; keep
   the 70-line / 5.5KB cap in mind — patterns.md is injected every turn).
 - `scope: session` or absent → `cog_append("projects/<slug>/observations.md", "- YYYY-MM-DD [insight]: ...")`.
@@ -86,7 +85,7 @@ Complete this before presenting ship options.
 
 ```text
 - YYYY-MM-DD [work, milestone]: Shipped branch <branch>. Tasks: <N>.
-  Key decisions: <scope:project decision titles>. Blockers: <unresolved, or "none">.
+  Key decisions: <scope:project d-ids, comma-separated>. Blockers: <unresolved, or "none">.
 ```
 
 (If the project isn't yet a registered cog domain, tell the user to run `/cog` to add it first,
