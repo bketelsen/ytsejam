@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { MemorySystem } from "ltm";
 import type { EventBus } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -118,6 +119,8 @@ export interface TaskManagerOptions {
   timeoutMs: number;
   /** inject a completion/failure message into the parent session */
   notifyParent: (parentSessionId: string, text: string) => Promise<void>;
+  /** Optional LTM ingest hook for completed subagent tasks. */
+  ltm?: Pick<MemorySystem, "ingestSessionFile">;
 }
 
 /**
@@ -626,6 +629,16 @@ export class TaskManager {
         }
       } finally {
         clearTimeout(timer);
+        setTimeout(() => {
+          void this.opts.ltm
+            ?.ingestSessionFile(active.metadata.path)
+            .catch((err) =>
+              console.error(
+                `failed to ingest subagent session ${active.metadata.id} for task ${taskId} into LTM`,
+                err,
+              ),
+            );
+        }, 0);
         this.active.delete(taskId);
       }
 

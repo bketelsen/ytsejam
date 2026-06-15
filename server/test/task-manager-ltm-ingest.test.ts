@@ -44,7 +44,7 @@ describe("TaskManager LTM ingest", () => {
       concurrency: 2,
       timeoutMs: 10_000,
       notifyParent: async () => {},
-      ...({ ltm } as any),
+      ltm,
     });
     faux.setResponses([
       fauxAssistantMessage("first attempt", {
