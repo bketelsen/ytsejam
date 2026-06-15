@@ -11,6 +11,7 @@ interface ApprovalCardProps {
 
 const TTL_MS = 5 * 60 * 1000;
 function computeRemaining(createdAt: number): number {
+  if (!Number.isFinite(createdAt)) return 0;
   return Math.max(0, Math.floor((createdAt + TTL_MS - Date.now()) / 1000));
 }
 

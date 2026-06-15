@@ -49,6 +49,7 @@ test("ApprovalCard approve and deny buttons call the response handler with expli
 test("ApprovalCard countdown recomputes remaining time from createdAt and Date.now", () => {
   assert.match(src, /const\s+TTL_MS\s*=\s*5\s*\*\s*60\s*\*\s*1000/);
   assert.match(src, /function\s+computeRemaining\(createdAt:\s*number\):\s*number/);
+  assert.match(src, /if \(!Number\.isFinite\(createdAt\)\) return 0/);
   assert.match(src, /Date\.now\(\)/);
   assert.match(src, /request\.createdAt/);
   assert.match(src, /useState\(\(\)\s*=>\s*computeRemaining\(request\.createdAt\)\)/);

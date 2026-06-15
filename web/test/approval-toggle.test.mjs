@@ -29,6 +29,13 @@ test("ApprovalToggle uses switch semantics with ask as checked state", () => {
   assert.match(src, /const\s+isAsk\s*=\s*mode\s*===\s*["']ask["']/);
 });
 
+test("ApprovalToggle exposes a stable accessible name and hides visible mode text from AT", () => {
+  assert.match(src, /const\s+STABLE_LABEL\s*=\s*["']Require approvals for risky tools["']/);
+  assert.match(src, /aria-label=\{STABLE_LABEL\}/);
+  assert.match(src, /title=\{STABLE_LABEL\}/);
+  assert.match(src, /<span\s+aria-hidden=["']true["']>\{label\}<\/span>/);
+});
+
 test("ApprovalToggle click sends the opposite mode via onChange(next)", () => {
   assert.match(src, /const\s+next:\s*ApprovalMode\s*=\s*isAsk\s*\?\s*["']yolo["']\s*:\s*["']ask["']/);
   assert.match(src, /onClick=\{\(\)\s*=>\s*onChange\(next\)\}/);
@@ -48,6 +55,13 @@ test("ApprovalToggle wires disabled prop through to the button", () => {
   assert.match(src, /disabled=\{disabled\}/);
   assert.match(src, /disabled:opacity-50/);
   assert.match(src, /disabled:pointer-events-none/);
+});
+
+test("ApprovalToggle uses the house focus-visible ring classes", () => {
+  assert.match(src, /outline-none/);
+  assert.match(src, /focus-visible:border-ring/);
+  assert.match(src, /focus-visible:ring-3/);
+  assert.match(src, /focus-visible:ring-ring\/50/);
 });
 
 test("App renders ApprovalToggle in headerRight and persists changes with setApprovalMode", () => {
