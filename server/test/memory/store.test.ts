@@ -100,7 +100,14 @@ describe("memory primitive store", () => {
   test("write allow-list, overwrite, subdir, id-as-path rejection", async () => {
     await seedManifest();
     await expect(write("dakota/INDEX.md", "# stray\n")).rejects.toThrow(/projects\/dakota/);
-    for (const p of allowedWrites) await expect(write(p, "new content\n")).resolves.toEqual({ bytes: 12 });
+    // domains.yml is now content-validated on write (closes #202); use a valid
+    // manifest body for it and the generic "new content\n" payload for everything else.
+    const validManifest = `version: 1\ndomains:\n  - id: x\n    path: x\n    files: [hot-memory]\n`;
+    for (const p of allowedWrites) {
+      const body = p === "domains.yml" ? validManifest : "new content\n";
+      const expectedBytes = Buffer.byteLength(body);
+      await expect(write(p, body)).resolves.toEqual({ bytes: expectedBytes });
+    }
     expect(await slurp("projects/dakota/INDEX.md")).toBe("new content\n");
     await expect(write("notes.md", "nope\n")).rejects.toThrow(/not allowed/);
     await expect(write("projects/dakota/hot-memory.md", "canonical\n")).rejects.toThrow(/use append or patch/);
