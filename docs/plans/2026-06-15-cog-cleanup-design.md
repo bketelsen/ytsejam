@@ -305,7 +305,7 @@ Three PRs:
    - Closes #202, #203.
 
 3. **PR-3 (skill): `/cog` rewrite.**
-   - Files: `~/.ytsejam/data/skills/cog.md` (rewrite). Runtime-only — verified no canonical source under `contrib/skills/cog/`. The cog skill is in the SYSTEM-skill set (along with `infra`, `personal`, `work`, etc.) which lives only in the runtime data dir.
+   - Files: `server/skills/cog.md` (canonical seed in the repo) — this is the source-of-truth edit. The seed is copied to `~/.ytsejam/data/skills/cog.md` at first boot via `SkillsStore.seed()` (COPYFILE_EXCL, copy-if-missing only). `deploy/deploy.sh` runs `scripts/check-skills-drift.sh` between build and symlink-swap to catch seed-vs-live drift; activating a seed edit on a running instance requires `bash deploy/sync-skills.sh --yes`. The earlier claim that `cog.md` was runtime-only was wrong — verified `server/skills/cog.md` exists and is the SSOT.
    - Closes #200, #201, #206.
 
 PR-1 and PR-2 are independent and can be drafted in parallel. PR-3 depends on both being deployed.
