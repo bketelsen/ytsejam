@@ -75,6 +75,15 @@ if [[ -d "$SRC/skills" ]]; then
     fi
   done < <(find "$SRC/skills" -maxdepth 1 -type f -name '*.md' -print0)
   log "  • skills/ (+$copied missing, existing left untouched)"
+
+  copied_bundles=0
+  while IFS= read -r -d '' d; do
+    base="$(basename "$d")"
+    if [[ -f "$d/SKILL.md" && ! -e "$DST/skills/$base" ]]; then
+      cp -a "$d" "$DST/skills/$base"; copied_bundles=$((copied_bundles+1))
+    fi
+  done < <(find "$SRC/skills" -mindepth 1 -maxdepth 1 -type d -print0)
+  log "  • skills/ (+$copied_bundles dir-bundles missing, existing left untouched)"
 fi
 
 # ── Optional: non-core working dirs the agent created in SRC ──
