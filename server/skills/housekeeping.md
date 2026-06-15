@@ -37,6 +37,8 @@ The envelope returns:
 - `thresholds.hot_memory_over_cap[]` — hot-memory files over the 50-line cap
 - `thresholds.patterns_over_cap[]` — pattern files over the dual cap
   (lines and size)
+- `thresholds.decisions_over_cap[]` — decisions files over the dual cap
+  (>100 entries OR head entry >6 months old; `reason` field is `"count"` or `"age"`)
 - `dormant_domains[]` — domains with 0 observations in >4 weeks
 - `stale_action_items[]` — open items with `age_days`
 
@@ -70,6 +72,15 @@ decision off `thresholds.*`:
   `glacier/{domain-path}/action-items-done.md`
 - Each file in `thresholds.improvements_implemented_over_cap[]` →
   `glacier/{domain-path}/improvements-done-{YYYY}.md`
+- Each file in `thresholds.decisions_over_cap[]` (>100 entries OR head >6
+  months) splits into two slabs:
+  1. **Superseded entries** (those carrying `<!-- superseded-by: ... -->`) →
+     `glacier/{domain-path}/decisions-superseded.md`, regardless of age — they're
+     already historical. **Sweep these out first** so the count/age check below
+     sees only live entries.
+  2. **Remaining (live, non-superseded) entries** → `glacier/{domain-path}/decisions-{YYYY}.md`,
+     oldest-first, until the file is back under the 100-entry cap / no head entry
+     exceeds 6 months.
 - Entities inactive 6+ months (see §7's `entity_audit` glacier candidates) →
   `glacier/{domain-path}/entities-inactive.md`
 
