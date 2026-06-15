@@ -138,10 +138,17 @@ describe("compaction events", () => {
       });
 
       // The retry-exhaust surrender path is observable via the assistant
-      // diagnostic message, NOT via a compaction_end{surrendered}. This pins
-      // the documented design gap: surrender after the prior compaction already
-      // cleared the flag makes markCompactionEnd's idempotence guard a no-op.
-      // See docs/plans/2026-06-13-compaction-pill-design.md, Open Questions.
+      // diagnostic message, NOT via a compaction_end{surrendered}. The
+      // documented gap: the standalone surrender site in
+      // handleCompactionTurnEnd's retry-exhaust branch calls
+      // emitCompactionSurrender directly and never invokes markCompactionEnd
+      // at all (it runs outside a wrapping runCompactionIfPending, so there
+      // is no compaction_start to pair with — see plan §Step 3 and design
+      // §Open Question #1). The earlier successful compaction emitted its
+      // own paired compaction_end{succeeded}; the second overflow's
+      // surrender produces only the diagnostic message.
+      // See docs/plans/2026-06-13-compaction-pill.md §Step 3
+      // and docs/plans/2026-06-13-compaction-pill-design.md §Open Questions.
       const surrenderMsgs = events.filter(
         (e) =>
           e.type === "agent" &&
