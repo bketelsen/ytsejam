@@ -212,6 +212,7 @@ export class Indexer {
   }
 
   setTitle(id: string, title: string): void {
+    if (!this.db.isOpen) return;
     this.db.prepare("UPDATE sessions SET title=? WHERE id=?").run(title, id);
   }
 
