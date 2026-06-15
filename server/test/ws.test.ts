@@ -113,15 +113,14 @@ describe("websocket", () => {
     ws.close();
   });
 
-  test("sends pending approval snapshot on open", async () => {
-    let approvalId = "";
+  test("sends empty pending approval snapshot on open", async () => {
     const pending = approvalCoordinator.request({
       sessionId: "s-pending",
       toolName: "bash",
       toolLabel: "Bash",
       params: {},
     });
-    approvalId = approvalCoordinator.list()[0]!.approvalId;
+    const approvalId = approvalCoordinator.list()[0]!.approvalId;
 
     const ws = new WebSocket(`ws://localhost:${port}/api/ws?token=test-token`);
     const events = collect(ws);
@@ -130,14 +129,118 @@ describe("websocket", () => {
 
     expect(events).toContainEqual({
       type: "pending_approvals",
-      approvals: [{
-        approvalId,
-        sessionId: "s-pending",
-        toolName: "bash",
-        toolLabel: "Bash",
-        params: {},
-      }],
+      approvals: [],
     });
+    expect(events.some((e) => e.type === "pending_approvals" && e.approvals.some((a: any) => a.approvalId === approvalId))).toBe(false);
+    approvalCoordinator.resolve(approvalId, "deny");
+    await pending;
+    ws.close();
+  });
+
+  test("subscribe sends pending approval snapshot scoped to subscribed session", async () => {
+    const pendingA = approvalCoordinator.request({
+      sessionId: "s-a",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: { cmd: "a" },
+    });
+    const pendingB = approvalCoordinator.request({
+      sessionId: "s-b",
+      toolName: "write",
+      toolLabel: "Write",
+      params: { path: "b" },
+    });
+    const approvalA = approvalCoordinator.list().find((entry) => entry.sessionId === "s-a")!;
+    const approvalB = approvalCoordinator.list().find((entry) => entry.sessionId === "s-b")!;
+
+    const ws = new WebSocket(`ws://localhost:${port}/api/ws?token=test-token`);
+    const events = collect(ws);
+    await new Promise((r) => ws.addEventListener("open", r));
+    await new Promise((r) => setTimeout(r, 50));
+    events.length = 0;
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s-a" }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const snapshots = events.filter((e) => e.type === "pending_approvals");
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toEqual({ type: "pending_approvals", approvals: [approvalA] });
+    expect(snapshots[0].approvals.some((approval: any) => approval.approvalId === approvalB.approvalId)).toBe(false);
+
+    approvalCoordinator.resolve(approvalA.approvalId, "deny");
+    approvalCoordinator.resolve(approvalB.approvalId, "deny");
+    await pendingA;
+    await pendingB;
+    ws.close();
+  });
+
+  test("second subscribe sends fresh pending approval snapshot for new session", async () => {
+    const pendingA = approvalCoordinator.request({
+      sessionId: "s-a",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: { cmd: "a" },
+    });
+    const pendingB = approvalCoordinator.request({
+      sessionId: "s-b",
+      toolName: "write",
+      toolLabel: "Write",
+      params: { path: "b" },
+    });
+    const approvalA = approvalCoordinator.list().find((entry) => entry.sessionId === "s-a")!;
+    const approvalB = approvalCoordinator.list().find((entry) => entry.sessionId === "s-b")!;
+
+    const ws = new WebSocket(`ws://localhost:${port}/api/ws?token=test-token`);
+    const events = collect(ws);
+    await new Promise((r) => ws.addEventListener("open", r));
+    await new Promise((r) => setTimeout(r, 50));
+    events.length = 0;
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s-a" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(events.filter((e) => e.type === "pending_approvals").at(-1)).toEqual({
+      type: "pending_approvals",
+      approvals: [approvalA],
+    });
+    events.length = 0;
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s-b" }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const snapshots = events.filter((e) => e.type === "pending_approvals");
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toEqual({ type: "pending_approvals", approvals: [approvalB] });
+    expect(snapshots[0].approvals.some((approval: any) => approval.approvalId === approvalA.approvalId)).toBe(false);
+
+    approvalCoordinator.resolve(approvalA.approvalId, "deny");
+    approvalCoordinator.resolve(approvalB.approvalId, "deny");
+    await pendingA;
+    await pendingB;
+    ws.close();
+  });
+
+  test("unsubscribe does not send pending approval snapshot", async () => {
+    const pending = approvalCoordinator.request({
+      sessionId: "s-unsubscribe",
+      toolName: "bash",
+      toolLabel: "Bash",
+      params: {},
+    });
+    const approvalId = approvalCoordinator.list()[0]!.approvalId;
+
+    const ws = new WebSocket(`ws://localhost:${port}/api/ws?token=test-token`);
+    const events = collect(ws);
+    await new Promise((r) => ws.addEventListener("open", r));
+    await new Promise((r) => setTimeout(r, 50));
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s-unsubscribe" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(events.some((e) => e.type === "pending_approvals" && e.approvals.some((a: any) => a.approvalId === approvalId))).toBe(true);
+    events.length = 0;
+
+    ws.send(JSON.stringify({ type: "unsubscribe" }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(events.filter((e) => e.type === "pending_approvals")).toHaveLength(0);
     approvalCoordinator.resolve(approvalId, "deny");
     await pending;
     ws.close();

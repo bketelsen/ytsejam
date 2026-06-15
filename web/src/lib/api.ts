@@ -1,4 +1,4 @@
-import type { ChatMessage, LtmHealth, ModelInfo, ScheduleRow, SessionRow, SkillSummary, TaskRow } from "./types";
+import type { ApprovalMode, ChatMessage, LtmHealth, ModelInfo, ScheduleRow, SessionRow, SkillSummary, TaskRow } from "./types";
 
 const TOKEN_KEY = "ytsejam-token";
 
@@ -46,8 +46,13 @@ export const client = {
   sendMessage: (id: string, text: string) =>
     api<{ ok: true }>(`/api/sessions/${id}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   abort: (id: string) => api<{ ok: true }>(`/api/sessions/${id}/abort`, { method: "POST" }),
-  patchSession: (id: string, patch: { title?: string; unread?: false; model?: string }) =>
+  patchSession: (id: string, patch: { title?: string; unread?: false; model?: string; approvalMode?: ApprovalMode }) =>
     api<{ ok: true }>(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  setSessionApprovalMode: (id: string, approvalMode: ApprovalMode) =>
+    api<{ ok: true }>(`/api/sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ approvalMode }),
+    }),
   setSessionCwd: (id: string, cwd: string) =>
     api<{ ok: true; cwd: string }>(`/api/sessions/${id}/cwd`, {
       method: "POST",

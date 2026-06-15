@@ -89,19 +89,31 @@ export function createApp(deps: AppDeps) {
               ws.send(JSON.stringify(event));
             }
           });
-          // Direct reconnect-only snapshot. This is a WS control message, not a
-          // ServerEvent, because it targets only the newly-opened client.
+          // Seed the client map on every reconnect. The real per-session
+          // catch-up snapshot is sent after subscribe, when the server knows
+          // which session this socket is viewing.
           if (deps.approvalCoordinator && ws.readyState === 1 /* OPEN */) {
             ws.send(JSON.stringify({
               type: "pending_approvals",
-              approvals: deps.approvalCoordinator.list(),
+              approvals: [],
             }));
           }
         },
-        onMessage: (evt) => {
+        onMessage: (evt, ws) => {
           try {
             const msg = JSON.parse(String(evt.data));
-            if (msg.type === "subscribe" && typeof msg.sessionId === "string") subscribed = msg.sessionId;
+            if (msg.type === "subscribe" && typeof msg.sessionId === "string") {
+              subscribed = msg.sessionId;
+              if (deps.approvalCoordinator && ws.readyState === 1 /* OPEN */) {
+                const approvals = deps.approvalCoordinator
+                  .list()
+                  .filter((approval) => approval.sessionId === subscribed);
+                ws.send(JSON.stringify({
+                  type: "pending_approvals",
+                  approvals,
+                }));
+              }
+            }
             if (msg.type === "unsubscribe") subscribed = null;
             if (isApprovalResponse(msg) && deps.approvalCoordinator) {
               deps.approvalCoordinator.resolve(msg.approvalId, msg.decision);
