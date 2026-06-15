@@ -81,12 +81,18 @@ describe("GET /api/skills", () => {
   it("returns the list from the injected SkillsStore", async () => {
     const { status, body } = await getJson("/api/skills", "test-token");
     expect(status).toBe(200);
-    expect(body?.skills).toHaveLength(2);
+    expect(body?.skills).toHaveLength(4);
     const names = body?.skills.map((s) => s.name).sort();
-    expect(names).toEqual(["alpha", "beta"]);
+    expect(names).toEqual(["alpha", "beta", "careful", "yolo"]);
     const alpha = body?.skills.find((s) => s.name === "alpha");
     expect(alpha?.description).toBe("First skill");
     expect(alpha?.triggers).toEqual(["a", "alpha", "first"]);
+    const yolo = body?.skills.find((s) => s.name === "yolo");
+    expect(yolo?.description).toBe("Force this turn to skip approval gates");
+    expect(yolo?.triggers).toContain("yolo");
+    const careful = body?.skills.find((s) => s.name === "careful");
+    expect(careful?.description).toBe("Force this turn to require approval for every mutating tool");
+    expect(careful?.triggers).toContain("careful");
   });
 
   it("returns 401 without a bearer token", async () => {
@@ -94,10 +100,11 @@ describe("GET /api/skills", () => {
     expect(status).toBe(401);
   });
 
-  it("returns an empty array when no SkillsStore was injected", async () => {
+  it("returns the synthetic approval prefix entries when no SkillsStore was injected", async () => {
     app = buildApp();
     const { status, body } = await getJson("/api/skills", "test-token");
     expect(status).toBe(200);
-    expect(body?.skills).toEqual([]);
+    const names = body?.skills.map((s) => s.name).sort();
+    expect(names).toEqual(["careful", "yolo"]);
   });
 });
