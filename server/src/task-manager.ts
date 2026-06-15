@@ -185,6 +185,26 @@ export class TaskManager {
     return true;
   }
 
+  /**
+   * Cancel every active task. Used by the SIGTERM drain in index.ts.
+   * Wraps the existing cancel(id) which already records "cancelled" in
+   * JSONL and fires harness.abort() fire-and-forget. Uses allSettled so
+   * one task's failure does not block the others. Idempotent.
+   */
+  async cancelAll(): Promise<void> {
+    const ids = Array.from(this.active.keys());
+    const cancels = ids.map(async (id) => {
+      try {
+        await this.cancel(id);
+      } catch (err) {
+        console.warn(
+          `[task-manager.cancelAll] cancel failed for task ${id}: ${(err as Error).message}`,
+        );
+      }
+    });
+    await Promise.allSettled(cancels);
+  }
+
   async getTranscript(taskId: string): Promise<AgentMessage[]> {
     const row = this.opts.store.fold(taskId);
     if (!row?.subagentSessionId) return [];

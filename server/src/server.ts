@@ -50,7 +50,9 @@ export interface AppDeps {
 export function createApp(deps: AppDeps) {
   const { manager, indexer, persona, config } = deps;
   const app = new Hono();
-  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+  // wss exported for the SIGTERM drain in index.ts (Task 4, #210):
+  // the drain iterates wss.clients and sends 1001 close frames.
+  const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app });
 
   /** events every client gets regardless of subscription (sidebar liveness) */
   const LIGHTWEIGHT = new Set(["agent_start", "agent_end"]);
@@ -351,5 +353,5 @@ export function createApp(deps: AppDeps) {
   app.use("/*", serveStatic({ root: relativeWebDist }));
   app.use("/*", serveStatic({ root: relativeWebDist, path: "index.html" }));
 
-  return { app, injectWebSocket };
+  return { app, injectWebSocket, wss };
 }

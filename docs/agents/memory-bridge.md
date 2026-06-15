@@ -167,7 +167,15 @@ are always degraded to cog-only memory, not process exit. Full design rationale:
 Shutdown drains in the opposite order: `SIGTERM`/`SIGINT` (registered with
 `process.once`) await `reconciler.stop()`, then `attachReconciler(null)` /
 `attachLtm(null)`, then `ltm.close()`. The handler does NOT call
-`process.exit` — pi's server / WebSocket handles drain on their own.
+`process.exit`. As of issue #210 this LTM drain is **step 6 of 7** in the
+unified `drainAndExit` orchestrator (`server/src/index.ts`); the previous
+behavior — LTM drained but HTTP/WS/manager/tasks/scheduler/indexer did
+not — caused systemd to SIGKILL the process at `TimeoutStopSec=45`.
+The orchestrator drains in this order: scheduler.stop → wss.clients close
+(1001) → HTTP server.close → manager.abortAll → taskManager.cancelAll →
+`shutdownLtm` (this function) → indexer.close. See
+`docs/plans/2026-06-15-graceful-shutdown-design.md` for the rationale and
+`deploy/README.md` for verification recipes.
 
 The CLI `ltm replay` and `ltm health` commands use the same embedder factory
 as server boot. `ltm replay` intentionally skips the dimension-mismatch refusal

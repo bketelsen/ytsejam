@@ -112,7 +112,116 @@ reverts to no-compaction behavior: sessions will 400 with "prompt is too long"
 on overflow, the pre-compaction behavior. This is known-bad-but-survivable
 while a fix ships.
 
-## Migrating from an older install
+## Verifying graceful shutdown
+
+On SIGTERM/SIGINT, ytsejam runs an ordered 7-step drain (see `drainAndExit`
+in `server/src/index.ts`): stop scheduler → close WebSocket clients → close
+HTTP server → abort subagent sessions → cancel tasks → drain LTM bridge →
+close indexer. A healthy shutdown completes in **under a second** with no
+data loss; a regression looks like systemd's `Killing` log line appearing
+~45s after `Stopping` (TimeoutStopSec=45 → SIGKILL).
+
+The verification recipes below use port `3099` so they don't collide with
+either the prod (9873) or dev (3000) instance. Run them from the repo root
+with the test data dir wiped between runs.
+
+### Recipe A — drain with a live authenticated WebSocket (load-bearing)
+
+This is the recipe that catches WebSocket-related shutdown regressions.
+Node's `http.Server.close()` waits for upgraded WebSocket sockets to close
+before its callback fires, so a drain that closes HTTP *before* the WS
+clients deadlocks for the full systemd timeout. Always verify with a live
+WS attached.
+
+    pkill -9 -f "YTSEJAM_PORT=3099" 2>/dev/null; sleep 1
+    rm -rf /tmp/ytsejam-smoke && mkdir -p /tmp/ytsejam-smoke
+    setsid -f bash -c 'YTSEJAM_PORT=3099 YTSEJAM_DATA_DIR=/tmp/ytsejam-smoke \
+      YTSEJAM_AUTH_TOKEN=smoke exec node server/src/index.ts \
+      > /tmp/ytsejam-smoke.log 2>&1' </dev/null
+    sleep 4
+    NODE_PID=$(ss -ltnp 'sport = :3099' | grep -oP 'pid=\K[0-9]+' | head -1)
+    echo "node pid: $NODE_PID"
+
+    # Open an authenticated WebSocket and keep it alive in the background.
+    # The /api/ws endpoint uses query-string auth (?token=), NOT a Bearer header.
+    node -e '
+      const WebSocket = require("ws");
+      const ws = new WebSocket("ws://127.0.0.1:3099/api/ws?token=smoke");
+      ws.on("open",  () => console.log("WS OPEN"));
+      ws.on("close", (code, reason) => {
+        console.log("WS CLOSE", code, JSON.stringify(reason.toString()));
+        process.exit(0);
+      });
+      ws.on("error", (e) => console.error("WS ERROR", e.message));
+      setInterval(() => {}, 1000);
+    ' > /tmp/ytsejam-ws.log 2>&1 &
+    WS_PID=$!
+    sleep 3
+    cat /tmp/ytsejam-ws.log   # expect: "WS OPEN"
+
+    # Time the drain.
+    START=$(date +%s.%N)
+    kill -SIGTERM $NODE_PID
+    while kill -0 $NODE_PID 2>/dev/null; do sleep 0.1; done
+    END=$(date +%s.%N)
+    awk -v s="$START" -v e="$END" 'BEGIN { printf "drain: %.0f ms\n", (e-s)*1000 }'
+
+    grep -E "shutdown|memory" /tmp/ytsejam-smoke.log
+    cat /tmp/ytsejam-ws.log    # expect: WS CLOSE 1001 "server shutting down"
+    kill -9 $WS_PID 2>/dev/null || true
+
+**Pass criteria:**
+- Drain time **< 1000 ms** (typically ~100 ms).
+- Logs contain `[shutdown] SIGTERM received, draining` AND `[shutdown] drain complete, awaiting handle release` in order.
+- WS client received `code=1001 reason="server shutting down"`.
+- No `Killed` / `SIGKILL` in journal output if this were a systemd unit.
+
+**Fail signature (the #210 bug):** drain runs > 45000 ms, only the first
+`[shutdown]` line appears, and the WS client log shows `WS OPEN` only
+(never CLOSE) before the test harness kills the process.
+
+### Recipe B — drain with no client attached (sanity check)
+
+The "easy" path. If this fails, something more fundamental is broken than
+the WebSocket ordering issue. Same setup as Recipe A but skip the
+`node -e` WebSocket block — just SIGTERM right after the health probe.
+
+    setsid -f bash -c 'YTSEJAM_PORT=3099 YTSEJAM_DATA_DIR=/tmp/ytsejam-smoke \
+      YTSEJAM_AUTH_TOKEN=smoke exec node server/src/index.ts \
+      > /tmp/ytsejam-smoke.log 2>&1' </dev/null
+    sleep 4
+    NODE_PID=$(ss -ltnp 'sport = :3099' | grep -oP 'pid=\K[0-9]+' | head -1)
+    curl -sS -H "Authorization: Bearer smoke" \
+      http://127.0.0.1:3099/api/health -o /dev/null -w "HTTP %{http_code}\n"
+    kill -SIGTERM $NODE_PID
+    while kill -0 $NODE_PID 2>/dev/null; do sleep 0.1; done
+    echo "exited"
+    grep -E "shutdown|memory" /tmp/ytsejam-smoke.log
+
+**Pass criteria:** same as A. Drain typically completes in **~100 ms**.
+
+### Recipe C — production-equivalent SIGTERM via systemd
+
+For the prod instance, restart through systemd and watch the journal for
+the same `[shutdown]` log lines, with no `Killing` line within 45 s.
+
+    journalctl --user -u ytsejam -f &
+    JOURNAL_PID=$!
+    sleep 1
+    systemctl --user restart ytsejam   # send SIGTERM, wait for graceful exit, restart
+    sleep 5
+    kill $JOURNAL_PID 2>/dev/null
+
+**Pass criteria:**
+- Journal shows `Stopping` then `[shutdown] SIGTERM received, draining` then `[shutdown] drain complete` then `Started`.
+- The gap between `Stopping` and `Stopped` is **< 1 s** (typically much less).
+- **No** `state 'stop-sigterm' timed out. Killing.` line — that's the #210 regression.
+
+If `systemctl status ytsejam` reports `inactive (dead)` for > 5 s after a
+restart, capture `journalctl --user -u ytsejam -n 50` and investigate
+which drain step hung.
+
+
 
 **First-time installers can skip this whole section.** Both `deploy/migrate-data.sh`
 and `deploy/migrate-to-folded.sh` are upgrade-only — they detect a fresh install
