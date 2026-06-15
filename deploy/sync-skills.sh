@@ -47,7 +47,36 @@ case "${1:-}" in
 esac
 
 would_copy=0
+synced=0
 trouble=0
+current_file=""
+completed_normally=0
+
+# EXIT trap: if the loop aborts mid-cp (set -e on a failed copy, ENOSPC,
+# read-only target, etc.), the summary block below never runs and the
+# operator is left with cp's stderr but no "N of M synced, aborted"
+# reconciliation. Trap fires unconditionally; we suppress its output on
+# normal completion via `completed_normally`.
+on_exit() {
+  local rc=$?
+  if [[ $completed_normally -eq 1 ]]; then
+    exit $rc
+  fi
+  # Abnormal exit: print whatever state we have so the operator knows
+  # how partial the partial sync was.
+  if [[ $APPLY -eq 1 && $would_copy -gt 0 ]]; then
+    echo "" >&2
+    warn_err "aborted mid-sync: $synced seeded skill(s) synced before failure on '${current_file:-?}'"
+    if [[ $trouble -gt 0 ]]; then
+      warn_err "(plus $trouble skipped due to compare errors — see warnings above)"
+    fi
+    warn_err "any remaining skills are unprocessed; live state is partially updated"
+    warn_err "re-run --dry-run to see remaining drift, then --yes to retry"
+  fi
+  exit $rc
+}
+trap on_exit EXIT
+
 shopt -s nullglob
 for seed_file in "$SEED_DIR"/*.md; do
   # defensive: skip if a future seed glob match is a directory, not a file
@@ -75,7 +104,12 @@ for seed_file in "$SEED_DIR"/*.md; do
   would_copy=$((would_copy + 1))
   if [[ $APPLY -eq 1 ]]; then
     log "syncing $name"
+    current_file="$name"
     cp "$seed_file" "$live_file"
+    # Only bump `synced` AFTER cp succeeds. set -e ensures we don't reach
+    # this line on cp failure, so this counter is the truth for the trap.
+    synced=$((synced + 1))
+    current_file=""
   else
     warn "would sync $name (use --yes to apply)"
   fi
@@ -89,9 +123,9 @@ if [[ $would_copy -eq 0 ]]; then
   fi
 elif [[ $APPLY -eq 1 ]]; then
   if [[ $trouble -gt 0 ]]; then
-    log "synced $would_copy seeded skill(s); $trouble skipped due to compare errors"
+    log "synced $synced seeded skill(s); $trouble skipped due to compare errors"
   else
-    log "synced $would_copy seeded skill(s)"
+    log "synced $synced seeded skill(s)"
   fi
 else
   echo ""
@@ -101,3 +135,5 @@ else
     warn "dry-run: $would_copy seeded skill(s) would be synced; re-run with --yes to apply"
   fi
 fi
+
+completed_normally=1
