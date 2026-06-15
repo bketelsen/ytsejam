@@ -10,6 +10,8 @@ import type {
   EntityAuditResult,
   GitParams,
   GitResult,
+  InitCanonicalFileParams,
+  InitCanonicalFileResult,
   GlacierIndexResult,
   HealthResult,
   HousekeepingScan,
@@ -361,4 +363,11 @@ export async function l0index(
   params: L0IndexParams = {},
 ): Promise<L0IndexResult> {
   return computeL0Index(params);
+}
+
+/** Create a typed canonical memory file with the standard L0 template. */
+export async function initCanonicalFile(
+  params: InitCanonicalFileParams,
+): Promise<InitCanonicalFileResult> {
+  return consolidated.initCanonicalFile(params);
 }
