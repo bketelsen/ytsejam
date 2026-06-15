@@ -104,6 +104,7 @@ const manager = new AgentManager({
   cogBrief,
   skills,
   approvalCoordinator,
+  ltm: () => memory.getLtm(),
 });
 
 taskManager = new TaskManager({
@@ -125,6 +126,7 @@ taskManager = new TaskManager({
   concurrency: config.taskConcurrency,
   timeoutMs: config.taskTimeoutMinutes * 60_000,
   notifyParent: (sessionId, text) => manager.injectMessage(sessionId, text),
+  ltm: () => memory.getLtm(),
 });
 
 scheduler = new SchedulerService({
