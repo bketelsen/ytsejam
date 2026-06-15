@@ -56,6 +56,7 @@ import {
 
 export type * from "./types.ts";
 export { Controller, loadManifest } from "./domain/index.ts";
+export { validateManifestContent } from "./domain/manifest.ts";
 export { memoryRoot } from "./store/index.ts";
 
 const notImplemented = (pr: string): never => {

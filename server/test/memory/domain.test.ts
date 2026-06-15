@@ -198,4 +198,45 @@ describe("memory domain controller", () => {
     const c = new Controller(tempRoot(goodManifest));
     expect(() => c.validateWrite("work/notes.md")).not.toThrow();
   });
+
+
+  test("get() includes cached load error when one is present", () => {
+    const dir = tempRoot(goodManifest);
+    const c = new Controller(dir);
+    // Confirm clean baseline: get() works for known id, plain message for unknown id.
+    expect(c.get("personal").id).toBe("personal");
+    expect(() => c.get("nope")).toThrow(/^domain: unknown id "nope"$/);
+
+    // Corrupt the manifest in-place to trigger a hot-reload failure.
+    bumpManifest(dir, `version: 1
+domains:
+  - id: dup
+    path: a
+    files: [hot-memory]
+  - id: dup
+    path: b
+    files: [hot-memory]
+`);
+
+    // Next get() call triggers maybeReload(), which fails and records lastError.
+    // Known id from prior good load is still served (stale-but-served).
+    expect(c.get("personal").id).toBe("personal");
+    expect(c.lastError).not.toBeNull();
+    expect(c.lastError!.message).toMatch(/duplicate domain id "dup"/);
+
+    // Unknown id error is enriched with the cached load error.
+    let caught: Error | null = null;
+    try { c.get("nope"); } catch (err) { caught = err as Error; }
+    expect(caught).not.toBeNull();
+    expect(caught!.message).toMatch(/unknown id "nope"/);
+    expect(caught!.message).toMatch(/last manifest load failed:/);
+    expect(caught!.message).toMatch(/duplicate domain id "dup"/);
+  });
+
+  test("get() error stays bare when no load error is cached", () => {
+    const dir = tempRoot(goodManifest);
+    const c = new Controller(dir);
+    expect(() => c.get("nope")).toThrow(/^domain: unknown id "nope"$/);
+    expect(c.lastError).toBeNull();
+  });
 });
