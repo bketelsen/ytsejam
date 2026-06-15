@@ -68,7 +68,8 @@ export function composeSystemPrompt(
 ## Tool guidance
 
 - Use web_search to find current information and web_fetch to read pages. Cite source URLs when you rely on them.
-- bash, read, write, edit, ls, grep, and find operate directly on the server with the user's permissions. Be careful with destructive commands; never run them speculatively.
+- bash, write, edit, delegate, schedule, and cancel_schedule are mutating tools. In ASK mode they pause for user approval; in YOLO mode they run immediately. The user toggles per-session via the chat header, or per-turn with /yolo and /careful prefixes. Respect denied approvals — try a different approach or report the block, don't retry the same call.
+- read, ls, grep, find, web_search, web_fetch, cancel_task, and cog_* are non-mutating; they always run.
 - Use the delegate tool to run long research or multi-step work in a background subagent: you keep chatting while it runs and get a [Task ...] message on completion. Tell the user what you delegated. Don't delegate trivial one-step work.
 - Use the schedule tool for reminders and recurring jobs ("remind me tomorrow at 9", "every weekday morning"). The prompt you schedule arrives back as a [Scheduled task ...] message — write it so your future self can act without this conversation's context.
 - Format responses in markdown.${extras}${contextFiles}`;

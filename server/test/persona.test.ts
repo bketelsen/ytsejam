@@ -35,6 +35,10 @@ describe("composeSystemPrompt", () => {
     expect(prompt.indexOf("Jeeves")).toBeLessThan(prompt.indexOf("2026-06-09"));
     expect(prompt).toContain("/data");
     expect(prompt).toContain("web_search");
+    expect(prompt).toContain("In ASK mode they pause for user approval; in YOLO mode they run immediately");
+    expect(prompt).toContain("/yolo and /careful prefixes");
+    expect(prompt).toContain("non-mutating");
+    expect(prompt).not.toContain("never run them speculatively");
   });
 
   test("appends cog and skills sections when provided, omits them otherwise", () => {
