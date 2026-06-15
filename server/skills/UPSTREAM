@@ -1,13 +1,16 @@
-Canonical skill playbooks are maintained upstream in the cogmemory repo:
+These skill playbooks were originally vendored from cogmemory's
+docs/llm/skills/, but the cogmemory standalone daemon was retired
+2026-06-12 (Phase 6 of the fold; tagged v1.0.0-archived). ytsejam is
+now the canonical home — edit these files in place; there is no
+upstream to sync back to.
 
-    https://github.com/bketelsen/cogmemory/tree/main/docs/llm/skills/
+Propagation note: SkillsStore.seed() (server/src/skills.ts) copies
+seeds into the runtime data dir with COPYFILE_EXCL — copy-if-missing
+only. Editing this seed does NOT update an already-seeded live copy
+at ~/.ytsejam/data/skills/<name>.md. To activate a seed change on a
+running instance, edit the live copy directly (SkillsStore reads
+files fresh on each invocation) or delete the live copy and restart
+to let the next boot re-seed.
 
-The *.md files here are vendored copies with ytsejam's HOST-ADAPTATION
-points applied (reflect: transcript mining via sessions/--chat--/*.jsonl;
-cog: domain skills generated into data/skills with the local write tool).
-When updating a playbook, change it upstream first, then re-vendor here
-AND sync the live copy in server/data/skills/ (seeding is copy-if-missing,
-so editing this seed alone does not update a running instance).
-
-This file has no .md extension on purpose: the skills store seeds and
-lists only *.md files.
+This file has no .md extension on purpose: the skills store seeds
+and lists only *.md files.
