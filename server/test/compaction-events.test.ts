@@ -1,39 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { registerFauxProvider } from "@earendil-works/pi-ai";
 import type { ServerEvent } from "../src/events.ts";
-import { fauxAssistantMessage, makeManager, setupFaux } from "./helpers.ts";
-
-async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
-  const start = Date.now();
-  while (!predicate()) {
-    if (Date.now() - start > ms) throw new Error("waitFor timed out");
-    await new Promise((r) => setTimeout(r, 25));
-  }
-}
-
-function makeReactiveCompactionFaux() {
-  return registerFauxProvider({
-    provider: "openai",
-    models: [{ id: "faux", contextWindow: 40_000, maxTokens: 256 }],
-  });
-}
-
-function withReactiveCompactionEnv(dataDir: string): () => void {
-  const prevDataDir = process.env.YTSEJAM_DATA_DIR;
-  const prevMemoryDir = process.env.YTSEJAM_MEMORY_DIR;
-  const prevOpenAiKey = process.env.OPENAI_API_KEY;
-  process.env.YTSEJAM_DATA_DIR = dataDir;
-  process.env.OPENAI_API_KEY = "test-key-for-faux-compaction";
-  delete process.env.YTSEJAM_MEMORY_DIR;
-  return () => {
-    if (prevDataDir === undefined) delete process.env.YTSEJAM_DATA_DIR;
-    else process.env.YTSEJAM_DATA_DIR = prevDataDir;
-    if (prevMemoryDir === undefined) delete process.env.YTSEJAM_MEMORY_DIR;
-    else process.env.YTSEJAM_MEMORY_DIR = prevMemoryDir;
-    if (prevOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = prevOpenAiKey;
-  };
-}
+import {
+  fauxAssistantMessage,
+  makeManager,
+  makeReactiveCompactionFaux,
+  setupFaux,
+  waitFor,
+  withReactiveCompactionEnv,
+} from "./helpers.ts";
 
 let faux: ReturnType<typeof setupFaux>;
 beforeEach(() => {

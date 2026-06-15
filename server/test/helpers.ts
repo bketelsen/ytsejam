@@ -69,3 +69,51 @@ export function makeManager(
 }
 
 export { fauxAssistantMessage, fauxToolCall };
+
+/**
+ * Poll `predicate` until it returns true or `ms` elapses. Used by event-bus
+ * tests to wait for async work to settle without sleeping a fixed duration.
+ */
+export async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > ms) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+/**
+ * Register a faux provider whose model has the small context window and
+ * maxTokens used by the reactive-compaction tests. The narrow window is what
+ * triggers the overflow → compaction path.
+ */
+export function makeReactiveCompactionFaux(): ReturnType<typeof registerFauxProvider> {
+  return registerFauxProvider({
+    provider: "openai",
+    models: [{ id: "faux", contextWindow: 40_000, maxTokens: 256 }],
+  });
+}
+
+/**
+ * Stash + override the process.env that the reactive-compaction path reads
+ * (data dir, memory dir, OpenAI key); returns a restore function that the
+ * test's `finally` should call. The OPENAI_API_KEY value is a sentinel —
+ * the faux provider doesn't actually call OpenAI, but the code path checks
+ * for presence.
+ */
+export function withReactiveCompactionEnv(dataDir: string): () => void {
+  const prevDataDir = process.env.YTSEJAM_DATA_DIR;
+  const prevMemoryDir = process.env.YTSEJAM_MEMORY_DIR;
+  const prevOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.YTSEJAM_DATA_DIR = dataDir;
+  process.env.OPENAI_API_KEY = "test-key-for-faux-compaction";
+  delete process.env.YTSEJAM_MEMORY_DIR;
+  return () => {
+    if (prevDataDir === undefined) delete process.env.YTSEJAM_DATA_DIR;
+    else process.env.YTSEJAM_DATA_DIR = prevDataDir;
+    if (prevMemoryDir === undefined) delete process.env.YTSEJAM_MEMORY_DIR;
+    else process.env.YTSEJAM_MEMORY_DIR = prevMemoryDir;
+    if (prevOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = prevOpenAiKey;
+  };
+}
