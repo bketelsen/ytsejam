@@ -385,10 +385,9 @@ export class AgentManager {
         // outside the run's listener settlement to avoid reentrancy
         setTimeout(() => void this.maybeGenerateTitle(opened), 0);
       }
-      const sessionJsonlPath = (await opened.session.getMetadata()).path;
       setTimeout(() => {
         void this.opts.ltm
-          ?.ingestSessionFile(sessionJsonlPath)
+          ?.ingestSessionFile(opened.metadata.path)
           .catch((err) =>
             console.error(
               `failed to ingest session ${opened.id} into LTM`,
