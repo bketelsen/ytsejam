@@ -13,9 +13,22 @@ import { listAvailableModels } from "./models.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import type { SchedulerService } from "./scheduler.ts";
-import type { SkillsStore } from "./skills.ts";
+import type { SkillSummary, SkillsStore } from "./skills.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type { WorkdirStore } from "./workdirs.ts";
+
+const APPROVAL_PREFIX_SKILLS: SkillSummary[] = [
+  {
+    name: "yolo",
+    description: "Force this turn to skip approval gates",
+    triggers: ["yolo", "skip approval", "bypass approval"],
+  },
+  {
+    name: "careful",
+    description: "Force this turn to require approval for every mutating tool",
+    triggers: ["careful", "require approval", "ask approval"],
+  },
+];
 
 export interface AppDeps {
   manager: AgentManager;
@@ -277,7 +290,12 @@ export function createApp(deps: AppDeps) {
   });
 
   app.get("/api/skills", async (c) => {
-    const skills = deps.skills ? await deps.skills.list() : [];
+    const onDisk = deps.skills ? await deps.skills.list() : [];
+    // Synthetic per-turn approval-mode prefix overrides. They are not real
+    // skills (no SKILL.md), they are commands parsed by approval/prefix.ts
+    // and stripped from the message before agent dispatch. Surfaced here so
+    // they appear in the slash overlay alongside real skills.
+    const skills = [...onDisk, ...APPROVAL_PREFIX_SKILLS];
     return c.json({ skills });
   });
 
