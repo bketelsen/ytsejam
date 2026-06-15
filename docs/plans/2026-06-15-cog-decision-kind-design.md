@@ -162,3 +162,64 @@ The deployed copies live at `~/.ytsejam/data/skills/`; the seeds here are canon.
 - Explicit `/decision` skill (deferred — option if B1 under-fires)
 - Cross-domain decision indexing (rare, defer)
 - A web UI surface for decisions (no demand)
+
+## Post-merge runbook
+
+After this PR merges and the new release deploys, the maintainer (Brian) runs these steps to land the kind in live memory:
+
+1. **Update domains.yml** — Add `decisions` to the `files:` list of each non-system domain you want decision-tracking on. Edit `~/.ytsejam/data/memory/domains.yml` directly, OR re-run `/cog` which regenerates the manifest from the updated cog skill defaults. Minimum set: `projects/ytsejam`. Recommended: all `projects/*`, `infra`, plus `personal` if you want personal decisions tracked.
+
+2. **Run migration on ytsejam:**
+   ```sh
+   cd ~/projects/ytsejam
+   npx tsx scripts/migrate-decisions.ts --root ~/.ytsejam/data/memory --domain projects/ytsejam
+   ```
+   This reads `~/.ytsejam/data/memory/wiki/projects/ytsejam/decisions.md` and writes `~/.ytsejam/data/memory/projects/ytsejam/decisions.md` with the new format. The script REFUSES to overwrite an existing destination — if `decisions.md` was scaffolded empty by `/cog` in step 1, delete it first OR pass `--force`.
+
+3. **Retire the wiki copy:**
+   ```sh
+   echo "Moved to [[projects/ytsejam/decisions]]." > ~/.ytsejam/data/memory/wiki/projects/ytsejam/decisions.md
+   ```
+   (Or delete it — the redirect form is nicer for any stale link.)
+
+4. **(Optional) Migrate the chapterhouse decisions to glacier** (chapterhouse is already archived):
+   ```sh
+   npx tsx scripts/migrate-decisions.ts --root ~/.ytsejam/data/memory --domain glacier/projects/chapterhouse
+   ```
+   Then delete `~/.ytsejam/data/memory/wiki/projects/chapterhouse/decisions.md`.
+
+5. **Create stub decisions.md files for other domains** (where step 1 added `decisions` to the manifest):
+   ```sh
+   for d in infra personal pkb work projects/truenas-mcp projects/intuneme; do
+     [ -d ~/.ytsejam/data/memory/$d ] && [ ! -f ~/.ytsejam/data/memory/$d/decisions.md ] && \
+       printf '<!-- L0: Decisions for %s -->\n# %s — Decisions\n' "$d" "$d" > ~/.ytsejam/data/memory/$d/decisions.md
+   done
+   ```
+   (Or use the cog `init_canonical_file` RPC via the agent — it routes to the new typed template added in Task 1.)
+
+6. **Append the trigger discipline to `cog-meta/patterns.md`** — the entry-format rules are already in `COG_CONVENTIONS` (rule #9, see `server/src/cog/brief.ts`) and load every session. But the operational triggers (WHEN to write a decision) are not auto-loaded; copy-paste this verbatim under a new `## Decisions` section of `~/.ytsejam/data/memory/cog-meta/patterns.md`:
+
+   ```markdown
+   ## Decisions
+
+   Decision-write triggers (OR'd, mechanical — write the decision in the SAME TURN, not "remember later"):
+   - **B1 linguistic tell** in the *recommendation* of a turn: "chose X over Y", "supersedes", "going with X" (verdict, not exploration). When B1 fires, cog_append the entry to `<active-domain>/decisions.md`.
+   - **B2 workflow tell**: ship skill processes a merge with an architectural decision in the body/commits — the ship skill itself files via `cog_append` per `contrib/skills/ship/SKILL.md`.
+
+   Entry format and edit patterns are in COG_CONVENTIONS rule #9 (auto-loaded).
+   ```
+
+7. **Verify L0 scan picks up the new files:**
+   ```
+   cog_rpc("l0index", {"domain": "ytsejam"})
+   ```
+   Should include `projects/ytsejam/decisions.md` in the list.
+
+8. **Optional: regenerate the ytsejam domain skill** by re-running `/cog`. The updated skill template (Task 5) adds the `decisions` retrieval bullet and the entry-append behavior bullet, so the next session's domain-skill activation will load decisions.md into context.
+
+### Rollback
+
+If anything goes wrong post-merge:
+- The PR change set is reversible — `git revert <merge-commit>` puts the code back to pre-decisions-kind state. The data files written in steps 2-6 are not deleted by the revert; they're just unread.
+- To also remove the data side: `rm ~/.ytsejam/data/memory/projects/ytsejam/decisions.md` and any stubs from step 5, and edit `domains.yml` to remove `decisions` from `files:` lists.
+- The old `wiki/projects/ytsejam/decisions.md` is still present (step 3 wrote a redirect, didn't delete) unless you `rm`'d it manually.
