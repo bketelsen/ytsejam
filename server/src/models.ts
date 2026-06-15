@@ -70,10 +70,10 @@ export function listAvailableModels(opts?: {
   const getKey = opts?.getKey ?? getEnvApiKey;
   const available = (provider: string) =>
     getKey(provider) !== undefined || (opts?.oauth?.hasCredentials(provider) ?? false);
-  return (getProviders() as string[])
+  return getProviders()
     .filter(available)
     .flatMap((p) =>
-      (getModels(p as any) as Model<any>[]).map((m) => ({
+      (getModels(p) as Model<any>[]).map((m) => ({
         provider: p,
         id: m.id,
         name: m.name,
