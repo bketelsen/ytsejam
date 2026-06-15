@@ -53,33 +53,46 @@ function normalizeDomain(value: unknown, seen: Set<string>): Domain {
   };
 }
 
-export function loadManifest(rootDir: string): Domain[] {
-  const manifestPath = join(rootDir, "domains.yml");
-  if (!existsSync(manifestPath)) return [];
-
+/**
+ * Validate an in-memory manifest body and return the normalized Domain list.
+ * Used at write-time (by `store/write.ts`) to catch invalid manifests before
+ * they reach disk, and as the post-parse half of `loadManifest`.
+ *
+ * `sourceLabel` is woven into the error message; pass the on-disk path when
+ * validating a file read, or omit for raw write-time validation.
+ */
+export function validateManifestContent(content: string, sourceLabel?: string): Domain[] {
   let raw: unknown;
   try {
-    // TOCTOU between stat and read: a mid-edit partial read parses to an
-    // error → caught → stale-but-served via the error path. Matches Go.
-    raw = parse(readFileSync(manifestPath, "utf8"));
+    raw = parse(content);
   } catch (err) {
-    throw new Error(`domain: parse ${JSON.stringify(manifestPath)}: ${(err as Error).message}`);
+    const where = sourceLabel ? ` ${JSON.stringify(sourceLabel)}` : "";
+    throw new Error(`domain: parse${where}: ${(err as Error).message}`);
   }
   if (raw == null) return [];
   if (!isRecord(raw)) {
-    throw new Error(`domain: validate ${JSON.stringify(manifestPath)}: manifest must be an object`);
+    const where = sourceLabel ? ` ${JSON.stringify(sourceLabel)}` : "";
+    throw new Error(`domain: validate${where}: manifest must be an object`);
   }
-  // Treat null/undefined identically — matches Go's nil-slice handling
-  // for `domains:` (key absent), `domains: null`, and `domains: ~`.
   if (raw.domains == null) return [];
   if (!Array.isArray(raw.domains)) {
-    throw new Error(`domain: validate ${JSON.stringify(manifestPath)}: domains must be an array`);
+    const where = sourceLabel ? ` ${JSON.stringify(sourceLabel)}` : "";
+    throw new Error(`domain: validate${where}: domains must be an array`);
   }
 
   try {
     const seen = new Set<string>();
     return raw.domains.map((d) => normalizeDomain(d, seen));
   } catch (err) {
-    throw new Error(`domain: validate ${JSON.stringify(manifestPath)}: ${(err as Error).message}`);
+    const where = sourceLabel ? ` ${JSON.stringify(sourceLabel)}` : "";
+    throw new Error(`domain: validate${where}: ${(err as Error).message}`);
   }
+}
+
+export function loadManifest(rootDir: string): Domain[] {
+  const manifestPath = join(rootDir, "domains.yml");
+  if (!existsSync(manifestPath)) return [];
+  // TOCTOU between stat and read: a mid-edit partial read parses to an
+  // error → caught → stale-but-served via the error path. Matches Go.
+  return validateManifestContent(readFileSync(manifestPath, "utf8"), manifestPath);
 }
