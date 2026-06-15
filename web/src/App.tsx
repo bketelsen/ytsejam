@@ -113,9 +113,12 @@ function Main() {
         running={app.sessions.find((s) => s.id === app.currentId)?.running ?? false}
         compacting={app.sessions.find((s) => s.id === app.currentId)?.compacting ?? false}
         tasks={app.tasks}
+        pendingApprovals={app.pendingApprovals}
+        wsState={app.wsState}
         cwd={app.currentCwd}
         onCwdChange={app.setCurrentCwd}
         onSend={app.send}
+        respondToApproval={app.respondToApproval}
         onMenuClick={() => setSidebarOpen(true)}
         headerRight={
           <>
