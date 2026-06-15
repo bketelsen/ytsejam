@@ -18,6 +18,15 @@ discipline. The on-disk format spec is at
 [`docs/memory/FORMAT.md`](docs/memory/FORMAT.md).
 - LTM embedder selection is via `YTSEJAM_LTM_EMBEDDER` (`auto`|`copilot`|`ollama`|`hash`). See [`docs/agents/memory-bridge.md`](docs/agents/memory-bridge.md) for the boot-time wiring, dimension-mismatch refusal, and the `ltm replay --rebuild` remediation.
 
+## Skills
+
+Skills are markdown playbooks loaded at runtime. Seeded skills live in `server/skills/`,
+but running instances load the copy in `<dataDir>/skills/` (prod:
+`~/.ytsejam/data/skills/`). Seeding is copy-if-missing, so editing a seed does **not**
+update an existing live copy. Read [`docs/agents/skills.md`](docs/agents/skills.md)
+before changing skills, and use the documented drift/sync flow instead of manually
+editing live seeded copies.
+
 ## Other doc directories
 
 - `docs/plans/` — implementation plans (one per feature, dated). Read the current plan
