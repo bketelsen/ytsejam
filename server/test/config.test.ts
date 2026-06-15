@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { loadConfig } from "../src/config.ts";
 
+// Helper: tests don't care about dataDir; pass a fixed sentinel so the
+// in-repo-default guard doesn't trip. Tests that care about dataDir
+// (e.g. "applies defaults and overrides") call loadConfig directly.
+function load(env: Record<string, string | undefined>): ReturnType<typeof loadConfig> {
+  return loadConfig({ YTSEJAM_DATA_DIR: "/tmp/test-data", ...env });
+}
+
 describe("loadConfig", () => {
   test("requires auth token", () => {
     expect(() => loadConfig({})).toThrow(/YTSEJAM_AUTH_TOKEN/);
@@ -18,32 +25,40 @@ describe("loadConfig", () => {
     expect(cfg.defaultModel).toContain("/");
   });
 
+  test("refuses to run with implicit ./data inside the ytsejam repo", () => {
+    // Spread an env without YTSEJAM_DATA_DIR — the guard should trip
+    // because the test runs from inside the repo checkout.
+    expect(() => loadConfig({ YTSEJAM_AUTH_TOKEN: "x" })).toThrow(
+      /YTSEJAM_DATA_DIR is unset and the default \.\/data would land inside the ytsejam repo/,
+    );
+  });
+
   describe("host", () => {
     test("defaults to 127.0.0.1 (loopback) when YTSEJAM_HOST is unset", () => {
-      const cfg = loadConfig({ YTSEJAM_AUTH_TOKEN: "test" });
+      const cfg = load({ YTSEJAM_AUTH_TOKEN: "test" });
       expect(cfg.host).toBe("127.0.0.1");
     });
 
     test("honors an explicit YTSEJAM_HOST override (e.g. 0.0.0.0 behind a reverse proxy)", () => {
-      const cfg = loadConfig({ YTSEJAM_AUTH_TOKEN: "test", YTSEJAM_HOST: "0.0.0.0" });
+      const cfg = load({ YTSEJAM_AUTH_TOKEN: "test", YTSEJAM_HOST: "0.0.0.0" });
       expect(cfg.host).toBe("0.0.0.0");
     });
   });
 
   test("piAuthPath defaults to the pi CLI location and accepts override", () => {
-    const def = loadConfig({ YTSEJAM_AUTH_TOKEN: "x" });
+    const def = load({ YTSEJAM_AUTH_TOKEN: "x" });
     expect(def.piAuthPath.endsWith("/.pi/agent/auth.json")).toBe(true);
-    const over = loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_PI_AUTH: "/tmp/custom-auth.json" });
+    const over = load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_PI_AUTH: "/tmp/custom-auth.json" });
     expect(over.piAuthPath).toBe("/tmp/custom-auth.json");
   });
 
 
   test("delegation settings default and override", () => {
-    const def = loadConfig({ YTSEJAM_AUTH_TOKEN: "x" });
+    const def = load({ YTSEJAM_AUTH_TOKEN: "x" });
     expect(def.subagentModel).toBe(def.defaultModel);
     expect(def.taskConcurrency).toBe(4);
     expect(def.taskTimeoutMinutes).toBe(15);
-    const over = loadConfig({
+    const over = load({
       YTSEJAM_AUTH_TOKEN: "x",
       YTSEJAM_SUBAGENT_MODEL: "faux/faux",
       YTSEJAM_TASK_CONCURRENCY: "2",
@@ -58,21 +73,21 @@ describe("loadConfig", () => {
 
 describe("context files config", () => {
   test("defaults to true", () => {
-    expect(loadConfig({ YTSEJAM_AUTH_TOKEN: "x" }).contextFiles).toBe(true);
+    expect(load({ YTSEJAM_AUTH_TOKEN: "x" }).contextFiles).toBe(true);
   });
 
   test("YTSEJAM_CONTEXT_FILES=false disables loading", () => {
     expect(
-      loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "false" }).contextFiles,
+      load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "false" }).contextFiles,
     ).toBe(false);
   });
 
   test("any other value (including empty) leaves it enabled", () => {
     expect(
-      loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "true" }).contextFiles,
+      load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "true" }).contextFiles,
     ).toBe(true);
     expect(
-      loadConfig({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "" }).contextFiles,
+      load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_CONTEXT_FILES: "" }).contextFiles,
     ).toBe(true);
   });
 });
