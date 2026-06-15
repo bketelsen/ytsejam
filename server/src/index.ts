@@ -237,8 +237,106 @@ const shutdownLtm = async (signal: string): Promise<void> => {
   reconciler = null;
   ltm = null;
 };
-process.once("SIGTERM", () => void shutdownLtm("SIGTERM"));
-process.once("SIGINT", () => void shutdownLtm("SIGINT"));
+/**
+ * Graceful shutdown orchestrator. Runs the 7-step drain when SIGTERM
+ * or SIGINT arrives. Wired via process.once so a duplicate signal
+ * (or a stuck step) does not re-enter — the second signal will fall
+ * through to systemd's SIGKILL after TimeoutStopSec (45s).
+ *
+ * Each step is wrapped in try/catch and logs failure to the [shutdown]
+ * prefix; we never bail mid-drain because one subsystem misbehaving
+ * should not strand the others. Does NOT call process.exit -- once all
+ * handles release, Node's event loop empties and the process exits
+ * naturally (same idiom as shutdownLtm).
+ *
+ * IMPORTANT: taskManager.cancelAll() resolves once cancellations are
+ * durably recorded + harness.abort() fire-and-forget calls are
+ * INITIATED, not once subagent harnesses fully quiesce. A wedged tool
+ * can hold the underlying harness.abort() for minutes. The cancel-wins
+ * JSONL guard in TaskManager + recoverInterrupted on next boot make
+ * that eventual settlement a harmless no-op. Do NOT block the drain
+ * waiting for full harness quiescence. (See Task 2 quality review Q6.)
+ */
+let draining = false;
+const drainAndExit = async (signal: string): Promise<void> => {
+  if (draining) return; // belt-and-suspenders; process.once already guards
+  draining = true;
+  console.log(`[shutdown] ${signal} received, draining`);
+
+  // Step 1: close every attached WebSocket with code 1001 (going away).
+  // wss.clients is ws.WebSocketServer's standard Set<WebSocket>.
+  //
+  // CRITICAL: this MUST run before step 2 (server.close). Node's
+  // http.Server.close(cb) waits for ALL open connections, including
+  // upgraded WebSockets, to close before firing the callback. If we
+  // awaited server.close first, the callback would never fire on a
+  // browser with a live /api/ws connection -- the drain would stall
+  // until systemd's TimeoutStopSec=45 SIGKILL, re-introducing the
+  // exact hang #210 fixes. Tell clients to go first, then await the
+  // HTTP server's natural quiesce. (See nodejs/node#53536 and the
+  // Task 4 quality review for the empirical proof.)
+  for (const ws of wss.clients) {
+    try {
+      ws.close(1001, "server shutting down");
+    } catch (err) {
+      console.warn(`[shutdown] ws.close: ${(err as Error).message}`);
+    }
+  }
+
+  // Step 2: stop accepting new HTTP connections + wait for in-flight to finish.
+  // server.close(cb) stops listening immediately and the cb fires once all
+  // currently-open connections (including the WS sockets we just told to close
+  // above) have closed. Wrap in a Promise.
+  try {
+    await new Promise<void>((resolve) => {
+      server.close((err) => {
+        if (err) console.warn(`[shutdown] server.close: ${err.message}`);
+        resolve();
+      });
+    });
+  } catch (err) {
+    console.warn(`[shutdown] server.close threw: ${(err as Error).message}`);
+  }
+
+  // Step 3: abort all in-flight subagent sessions.
+  try {
+    await manager.abortAll();
+  } catch (err) {
+    console.warn(`[shutdown] manager.abortAll: ${(err as Error).message}`);
+  }
+
+  // Step 4: cancel all in-flight tasks (durably records "cancelled" and
+  // initiates harness.abort() fire-and-forget; see header docstring).
+  try {
+    await taskManager.cancelAll();
+  } catch (err) {
+    console.warn(`[shutdown] taskManager.cancelAll: ${(err as Error).message}`);
+  }
+
+  // Step 5: stop the scheduler's polling timer.
+  try {
+    scheduler.stop();
+  } catch (err) {
+    console.warn(`[shutdown] scheduler.stop: ${(err as Error).message}`);
+  }
+
+  // Step 6: drain the LTM bridge (reconciler + memory store).
+  try {
+    await shutdownLtm(signal);
+  } catch (err) {
+    console.warn(`[shutdown] shutdownLtm: ${(err as Error).message}`);
+  }
+
+  // Step 7: close the indexer's sqlite handle + stop its checkpoint timer.
+  try {
+    indexer.close();
+  } catch (err) {
+    console.warn(`[shutdown] indexer.close: ${(err as Error).message}`);
+  }
+
+  console.log(`[shutdown] drain complete, awaiting handle release`);
+  // Intentionally no process.exit; same idiom as shutdownLtm.
+};
 
 try {
   const h = await memory.health();
@@ -247,7 +345,7 @@ try {
   console.warn(`memory health check failed: ${(err as Error).message} — memory disabled until it recovers`);
 }
 
-const { app, injectWebSocket } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills, approvalCoordinator });
+const { app, injectWebSocket, wss } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills, approvalCoordinator });
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
   const allInterfaces = info.address === "0.0.0.0" || info.address === "::";
   const displayHost = allInterfaces ? "<all interfaces>" : info.address;
@@ -258,3 +356,12 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
   }
 });
 injectWebSocket(server);
+
+// Register shutdown handlers AFTER server + wss exist. drainAndExit closes
+// over these `const` bindings; registering above would TDZ-throw if a signal
+// arrived during the await memory.health() window that sits between
+// drainAndExit's definition and server/wss initialization. Both step 1's WS
+// close and step 2's server.close would ReferenceError, leaving HTTP/WS
+// undrained even though steps 3-7 ran. Registering here closes that window.
+process.once("SIGTERM", () => void drainAndExit("SIGTERM"));
+process.once("SIGINT", () => void drainAndExit("SIGINT"));
