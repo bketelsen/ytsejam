@@ -39,9 +39,9 @@ Keep it natural. 3-4 questions max. Use their answers to build the manifest.
 
 | Type | Meaning | Files |
 |------|---------|-------|
-| `personal` | Personal life (always one) | hot-memory, action-items, entities, observations, habits, health, calendar |
-| `work` | Day job | hot-memory, action-items, entities, projects, observations |
-| `side-project` | Ventures, hobbies (subdomain under `projects`) | hot-memory, action-items, dev-log, observations |
+| `personal` | Personal life (always one) | hot-memory, action-items, entities, observations, decisions, habits, health, calendar |
+| `work` | Day job | hot-memory, action-items, entities, projects, observations, decisions |
+| `side-project` | Ventures, hobbies (subdomain under `projects`) | hot-memory, action-items, dev-log, observations, decisions |
 | `system` | Cog internals (auto-created) | self-observations, patterns, improvements |
 
 Side projects nest under a `projects` parent domain as subdomains (`id: myapp`, `path: projects/myapp`). Never declare a side project as a top-level domain — that's the duplicate shape Phase 0.5 cleans up.
@@ -107,6 +107,7 @@ For each domain you created or are reconfiguring, walk its `files` list. For eac
 | `observations` | `"observations"` |
 | `action-items` | `"action-items"` |
 | `dev-log` | `"dev-log"` |
+| `decisions` | `"decisions"` |
 | anything else (entities, habits, health, calendar, projects, patterns, etc.) | `"generic"` |
 
 ```
@@ -160,6 +161,7 @@ Then load per the retrieval protocol based on the query:
 - Status query → cog_read("{path}/action-items.md"){, or calendar.md if the domain has one}
 - Entity query → cog_read("{path}/entities.md")
 {- Health query → cog_read("{path}/health.md") — only for domains with a health file}
+{- Decisions query → cog_read("{path}/decisions.md") — for "why did we…" or "what did we decide about…" queries; surfaces recent decisions and any superseded chain referenced by them}
 - Update/observation → target file only
 - Complex query → hot-memory first, then drill into [[linked]] files
 
@@ -173,6 +175,7 @@ Historical data: cog_read("glacier/index.md"), filter by this domain.
 - Track people in entities.md (3-line registry, edit in place)
 - Append notable events to observations.md: `- YYYY-MM-DD [tags]: <observation>`
 - Add tasks to action-items.md: `- [ ] task | due:YYYY-MM-DD | pri:high/med/low | added:YYYY-MM-DD`
+{- Append decisions to decisions.md: `- YYYY-MM-DD [d-<slug>]: <one-line>. <!-- origin: <pr-or-commit>, supersedes: <d-prior or omit> -->`; on supersedes, stamp the cited entry with `<!-- superseded-by: d-<new> -->`}
 - Keep time-sensitive context in hot-memory.md (<50 lines, rewrite freely)
 {- Log schedule changes to calendar.md / health observations to health.md — per the domain's files}
 
