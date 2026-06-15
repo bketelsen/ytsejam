@@ -217,120 +217,110 @@ Refs #210"
 
 ---
 
-## Task 3: Track WebSocket clients explicitly + export the set
+## Task 3: Export `wss` from `createApp` for shutdown drain
 
 **Files:**
-- Modify: `server/src/server.ts` (add `wsClients` set, wire `onOpen`/`onClose`, export from `createApp`)
-- Test: extend the existing WS test if one exists, else add a focused unit test for the lifecycle hooks
+- Modify: `server/src/server.ts` (destructure `wss` from `createNodeWebSocket`, export from `createApp`)
+- Test: `server/test/server-wss-export.test.ts` (new — one small assertion)
 
-### Step 1: Probe `@hono/node-ws` API surface
+### Design reversal (recorded 2026-06-15)
 
-Before writing code, confirm the `WSContext` passed to `upgradeWebSocket` lifecycle hooks has a `.close(code, reason)` method. The design doc flags this as the one piece of "verify in the actual code" work.
+The original design (`docs/plans/2026-06-15-graceful-shutdown-design.md` §"New surface" #3) rejected using `wss.clients` as "fragile and tied to library internals" and proposed maintaining our own `Set<WSContext>` + wiring `onOpen`/`onClose` add/delete on every `upgradeWebSocket` handler.
 
-Run:
-```bash
-cd /home/bjk/projects/.worktrees/graceful-shutdown && node -e '
-import("@hono/node-ws").then(({createNodeWebSocket}) => {
-  console.log("createNodeWebSocket type:", typeof createNodeWebSocket);
-});
-import("hono/ws").then((m) => {
-  console.log("hono/ws exports:", Object.keys(m));
-});
-'
-```
-
-Then read `node_modules/hono/dist/types/helper/websocket/index.d.ts` (or the equivalent .d.ts for `WSContext`) and confirm `close(code?: number, reason?: string)` is in the type. If it is NOT, document the fallback (let TCP drop via `server.close()`) and SKIP step 2's `ws.close(1001, ...)` call in Task 4 — the design's Q3-option-2 fallback.
-
-**Record the finding in the commit message for Task 3.**
-
-### Step 2: Write the failing test
-
-Create `server/test/server-ws-clients.test.ts`:
+**Reading the actual `node_modules/@hono/node-ws/dist/index.d.ts` shows otherwise:**
 
 ```ts
-import { describe, it, expect } from "vitest";
-import { createApp } from "../src/server.js";
+interface NodeWebSocket {
+  upgradeWebSocket: UpgradeWebSocket<WebSocket, { onError: ... }>;
+  injectWebSocket(server: Server | Http2Server | Http2SecureServer): void;
+  wss: WebSocketServer;   // <-- first-class public export
+}
+```
 
-describe("createApp wsClients set", () => {
-  it("exports a wsClients Set alongside app and injectWebSocket", () => {
-    // Construct createApp with minimal stubs (follow the pattern in
-    // server/test/server.test.ts if it exists, otherwise stub the
-    // smallest viable opts shape — every dep can be {} or a vi.fn()).
-    const { wsClients } = createApp({ /* stubs */ } as any);
-    expect(wsClients).toBeInstanceOf(Set);
-    expect(wsClients.size).toBe(0);
+`wss` is a documented field of the public type, not internals-fishing. `ws.WebSocketServer.clients` is the standard `ws` library API (`Set<WebSocket>`), and `ws.WebSocket.close(code?, data?)` is a stable supported method on each client.
+
+This simpler shape:
+- Skips the `wsClients: Set<WSContext>` field
+- Skips the N `onOpen`/`onClose` wiring per `upgradeWebSocket` handler
+- Skips a lifecycle-hooks unit test category
+
+Task 4's drain loop simply iterates `for (const ws of wss.clients) ws.close(1001, "...")`.
+
+**One-line undo if this turns out wrong:** revert to the original design — re-introduce the `Set<WSContext>` field, wire `onOpen`/`onClose` per-handler, restore the lifecycle unit test.
+
+### Step 1: Write the failing test
+
+Create `server/test/server-wss-export.test.ts`:
+
+```ts
+import { describe, test, expect } from "vitest";
+import { WebSocketServer } from "ws";
+import { createApp } from "../src/server.ts";
+
+describe("createApp wss export", () => {
+  test("exports the underlying ws.WebSocketServer alongside app and injectWebSocket", () => {
+    // Use the minimum-viable opts pattern from server/test/server.test.ts
+    // (or task-manager.test.ts) — every dep can be a small stub.
+    const { app, injectWebSocket, wss } = createApp({ /* stubs */ } as any);
+    expect(app).toBeDefined();
+    expect(typeof injectWebSocket).toBe("function");
+    expect(wss).toBeInstanceOf(WebSocketServer);
   });
-
-  // NOTE: Testing actual onOpen/onClose adds is integration-level — requires
-  // a real WS upgrade. If server/test/ already has a WS integration test,
-  // ADD a case there asserting wsClients grows on connect and shrinks on
-  // disconnect. If not, ship the export test alone and rely on the manual
-  // recipe (Task 5) to verify the lifecycle wiring.
 });
 ```
 
-### Step 3: Run test to verify it fails
+(Read `server/test/server.test.ts` first to match its construction pattern if it exists. If it does not, copy the stubbing convention from `server/test/task-manager.test.ts` — it's the file with the closest dependency surface.)
 
-Run: `cd server && npx vitest run test/server-ws-clients.test.ts`
-Expected: FAIL with `wsClients is undefined` (the destructure misses).
+### Step 2: Run test to verify it fails
 
-### Step 4: Implement client tracking
+Run: `cd server && npx vitest run test/server-wss-export.test.ts`
+Expected: FAIL with `wss is undefined` (the destructure misses).
+
+### Step 3: Implement the export
 
 In `server/src/server.ts`:
 
-1. At module scope (near the top, after imports):
+1. Find the existing `createNodeWebSocket` call (~line 53):
    ```ts
-   import type { WSContext } from "hono/ws";
-   ```
-   (Adjust import path to match what step 1 found.)
-
-2. Inside `createApp`, near line 53 (alongside `createNodeWebSocket`):
-   ```ts
-   const wsClients = new Set<WSContext>();
+   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
    ```
 
-3. For EVERY `upgradeWebSocket(...)` handler in the file (find them with `grep -n upgradeWebSocket server/src/server.ts`), add `onOpen` / `onClose` hooks (or extend existing ones):
+2. Add `wss` to the destructure:
    ```ts
-   upgradeWebSocket((c) => ({
-     onOpen(_evt, ws) {
-       wsClients.add(ws);
-     },
-     onClose(_evt, ws) {
-       wsClients.delete(ws);
-     },
-     // ... existing handlers (onMessage, etc.)
-   }));
-   ```
-   **If a handler already has `onOpen`/`onClose`, FOLD the add/delete into the existing function — do NOT replace existing logic.**
-
-4. At the return statement on line 354, add `wsClients` to the returned object:
-   ```ts
-   return { app, injectWebSocket, wsClients };
+   const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app });
    ```
 
-### Step 5: Run test to verify it passes
+3. At the return statement (~line 354), add `wss` to the returned object:
+   ```ts
+   return { app, injectWebSocket, wss };
+   ```
 
-Run: `cd server && npx vitest run test/server-ws-clients.test.ts`
-Expected: PASS.
+That's the entire implementation — no new module-level state, no per-handler edits, no new imports.
 
-### Step 6: Run full gate
+### Step 4: Run test to verify it passes
+
+Run: `cd server && npx vitest run test/server-wss-export.test.ts`
+Expected: PASS, 1 test green.
+
+### Step 5: Run full gate
 
 Run: `bash scripts/gate.sh`
-Expected: PASS, no regressions. Pay particular attention to any existing WS test — fold-in must not break it.
+Expected: PASS, no regressions.
 
-### Step 7: Commit
+### Step 6: Commit
 
 ```bash
-git add server/src/server.ts server/test/server-ws-clients.test.ts
-git commit -m "feat(server): track WS clients explicitly + export the set
+git add server/src/server.ts server/test/server-wss-export.test.ts
+git commit -m "feat(server): export ws.WebSocketServer for shutdown drain
 
-@hono/node-ws does not expose the attached client set, so we maintain
-our own Set<WSContext> in createApp and wire it through the upgradeWebSocket
-lifecycle hooks (add on onOpen, delete on onClose). Exported alongside app
-and injectWebSocket so the SIGTERM drain in index.ts (Task 4) can iterate
-and send 1001 close frames.
+createNodeWebSocket's public return type includes wss: WebSocketServer
+(verified in node_modules/@hono/node-ws/dist/index.d.ts). Surfacing it
+from createApp lets the SIGTERM drain in index.ts (Task 4) iterate
+wss.clients and send 1001 close frames using the stable ws library API.
 
-WSContext.close(code, reason) verified present: <yes/no — fill in from step 1>.
+Reverses the design's original 'maintain our own Set<WSContext>' shape
+after reading the actual .d.ts showed wss is first-class public surface,
+not internals-fishing.
 
 Refs #210"
 ```
@@ -440,6 +430,8 @@ In `server/src/index.ts`:
    ```
 
 3. **Remove the old standalone signal handlers** (the two `process.once` lines at 240-241). The existing `shutdownLtm` function stays — it is called by step 6.
+
+Note carried forward from Task 2 quality review (Q6): `await taskManager.cancelAll()` returns once cancellations are **durably recorded + aborts initiated**, not after harnesses fully drain. Do NOT treat its resolution as "all subagents quiesced." The cancel-wins JSONL guard + `recoverInterrupted` on next boot handle any harness that's still wrapping up; the drain just needs to release sockets/timers so Node's loop empties.
 
 ### Step 3: Manual smoke test (dev mode)
 
