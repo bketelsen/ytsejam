@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { client } from "@/lib/api";
 import type { ChatMessage, TaskRow } from "@/lib/types";
 import { Message } from "./Message";
+import { MessageErrorBoundary } from "./MessageErrorBoundary";
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "text-muted-foreground",
@@ -78,7 +79,9 @@ export function TaskTranscriptDialog({
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.length === 0 && <p className="text-sm text-muted-foreground">No transcript yet…</p>}
           {messages.map((m, i) => (
-            <Message key={i} message={m} toolResults={toolResults} interrupted={!live} />
+            <MessageErrorBoundary key={i} message={m}>
+              <Message message={m} toolResults={toolResults} interrupted={!live} />
+            </MessageErrorBoundary>
           ))}
         </div>
       </DialogContent>
