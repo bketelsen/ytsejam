@@ -219,19 +219,45 @@ the test suite asserts those erosions as correct behavior. See the README
 for the current per-band numbers and PLAN.md Phase 1/4 for the calibration
 rules.
 
-## Integration sketch (ytsejam)
+## Integration sketch (ytsejam) — status
 
-- Drop `src/` under `server/src/ltm/` (or publish as a workspace package);
-  public surface stays `MemorySystem`, matching the memory module's
-  "extract to npm on day N+1" discipline.
-- Ingest on `agent_end` (the manager already observes harness events) by
-  calling `ingestSessionFile` for the session that just went idle — it's
-  incremental per entry, so per-turn cost is one turn's work.
-- Call `composeContext(latestUserText)` inside the system-prompt builder next
-  to `cogBrief.promptSection()`.
-- Run `consolidate()` on the existing housekeeping cadence.
-- Surface `explain`/`export`/`redact` through API routes for the web UI's
-  memory panel.
+Most of this sketch shipped by 2026-06-15. Annotated for current state:
+
+- ✅ **Workspace package** (shipped 2026-06-12): published as `packages/ltm`,
+  `MemorySystem` is the public surface, opened against `<dataDir>/ltm/`. The
+  ytsejam server holds the single-writer lock.
+- ✅ **Ingest on `agent_end`** (shipped 2026-06-15): the manager calls
+  `ingestSessionFile(path)` after each chat-session `agent_end`; the task
+  manager mirrors this for subagent sessions on `run()` completion. Late-bind
+  via `ltm: () => memory.getLtm()` thunk so the call is a no-op if LTM is
+  detached. Subagent transcripts are caught by the same `sessions/` walk used
+  for chat — task-event JSONL is intentionally NOT ingested (event metadata
+  isn't conversation).
+- ⏸ **`composeContext(latestUserText)` in the system prompt** — DEFERRED
+  pending Friday 2026-06-19 review of real ingested data. The plan was to
+  call it next to `cogBrief.promptSection()`, but choosing between always-on
+  vs tool-call-only vs scoped-by-task is gated on the question "what does
+  LTM actually retrieve when populated?" — answerable only after the
+  backfill below has run.
+- ✅ **`consolidate()` on housekeeping cadence** (shipped 2026-06-15):
+  `memory.consolidateLtm()` exposed as `cog_rpc("consolidate_ltm")`, called
+  from the `/housekeeping` skill. Folds episodic snapshots into thematic
+  summaries.
+- ⏸ **`explain`/`export`/`redact` API routes** — not in this PR. The
+  memory module is single-writer so a UI panel would need to go through
+  the server's existing memory API surface; deferred until there's a UI
+  consumer.
+
+### Operational surface added this PR
+
+- **Admin HTTP routes** at `POST/GET/DELETE /api/admin/ltm-backfill[/:jobId]`
+  drive a rate-limited `BackfillJob` that walks a JSONL directory and feeds
+  each file through `ingestSessionFile`. Single-job slot per server process;
+  POST returns 409 if a job is already running.
+- **`ytsejam ltm backfill <dir>`** CLI subcommand wraps those routes for
+  one-off use from a shell. Defaults: rate=2 turns/sec, batch=10 files,
+  pause=2000ms, poll=5000ms. SIGINT cancels via DELETE. Requires the server
+  to be RUNNING (opposite of `ltm replay`/`health`, which need it stopped).
 
 ## Known limits (PoC line)
 
