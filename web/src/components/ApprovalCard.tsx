@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import type { ApprovalRequest } from "../lib/types";
 
@@ -18,6 +18,8 @@ function computeRemaining(createdAt: number): number {
 export function ApprovalCard({ request, onRespond, disabled }: ApprovalCardProps) {
   const [remaining, setRemaining] = useState(() => computeRemaining(request.createdAt));
   const [responded, setResponded] = useState<"approve" | "deny" | null>(null);
+  const params = request.params;
+  const paramsJson = useMemo(() => JSON.stringify(params, null, 2), [params]);
 
   useEffect(() => {
     if (responded) return;
@@ -44,7 +46,7 @@ export function ApprovalCard({ request, onRespond, disabled }: ApprovalCardProps
         </header>
         <div className="space-y-2 border-t border-border p-2 font-mono text-xs">
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-muted-foreground">
-            {JSON.stringify(request.params, null, 2)}
+            {paramsJson}
           </pre>
         </div>
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border p-2">

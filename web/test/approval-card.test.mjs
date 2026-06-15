@@ -33,9 +33,16 @@ test("ApprovalCard renders tool name and label from the request", () => {
 });
 
 test("ApprovalCard renders request params as formatted JSON in a pre block", () => {
-  assert.match(src, /<pre\b[\s\S]*?JSON\.stringify\(request\.params,\s*null,\s*2\)[\s\S]*?<\/pre>/);
+  assert.match(src, /<pre\b[\s\S]*?\{paramsJson\}[\s\S]*?<\/pre>/);
   assert.match(src, /max-h-72/);
   assert.match(src, /overflow-auto/);
+});
+
+test("ApprovalCard memoizes JSON.stringify(params) to avoid re-stringifying every render", () => {
+  assert.match(src, /useMemo\(\(\)\s*=>\s*JSON\.stringify\(params/);
+  assert.match(src, /\[params\]/);
+  const matches = (src.match(/JSON\.stringify\(params/g) ?? []).length;
+  assert.equal(matches, 1, "expected exactly one stringify of params (the memoized one)");
 });
 
 test("ApprovalCard approve and deny buttons call the response handler with explicit decisions", () => {
