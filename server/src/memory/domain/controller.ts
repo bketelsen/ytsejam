@@ -60,7 +60,13 @@ export class Controller {
   get(id: string): Domain {
     this.maybeReload();
     const domain = this.flat.get(id);
-    if (!domain) throw new Error(`domain: unknown id ${JSON.stringify(id)}`);
+    if (!domain) {
+      const base = `domain: unknown id ${JSON.stringify(id)}`;
+      if (this.lastError) {
+        throw new Error(`${base} (last manifest load failed: ${this.lastError.message})`);
+      }
+      throw new Error(base);
+    }
     return structuredClone(domain);
   }
 
