@@ -16,6 +16,7 @@ import {
   type AssistantMessage,
   type Model,
 } from "@earendil-works/pi-ai";
+import type { MemorySystem } from "ltm";
 import type { ApprovalCoordinator } from "./approval/coordinator.ts";
 import { extractTurnOverride } from "./approval/prefix.ts";
 import { deriveApprovalMode } from "./approval/session-entry.ts";
@@ -112,6 +113,8 @@ export interface AgentManagerOptions {
   skills?: { promptSection(): Promise<string> };
   /** Approval prompt coordinator, plumbed now for gated-tool integration. */
   approvalCoordinator?: ApprovalCoordinator;
+  /** Optional LTM ingest hook for completed chat turns. */
+  ltm?: Pick<MemorySystem, "ingestSessionFile">;
 }
 
 interface OpenSession {
@@ -382,6 +385,17 @@ export class AgentManager {
         // outside the run's listener settlement to avoid reentrancy
         setTimeout(() => void this.maybeGenerateTitle(opened), 0);
       }
+      const sessionJsonlPath = (await opened.session.getMetadata()).path;
+      setTimeout(() => {
+        void this.opts.ltm
+          ?.ingestSessionFile(sessionJsonlPath)
+          .catch((err) =>
+            console.error(
+              `failed to ingest session ${opened.id} into LTM`,
+              err,
+            ),
+          );
+      }, 0);
       if (opened.compaction?.pendingCompaction?.trigger === "reactive") {
         // Reactive overflow recovery runs at agent_end, not turn_end, because:
         //   (1) harness.compact() requires phase === "idle" — the agent_end

@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   fauxAssistantMessage,
@@ -18,9 +19,14 @@ afterEach(() => {
 describe("AgentManager LTM ingest", () => {
   test("ingests the on-disk chat session JSONL after agent_end", async () => {
     const ltm = {
-      ingestSessionFile: vi.fn(async (_path: string) => undefined),
+      ingestSessionFile: vi.fn(async (_path: string) => ({
+        sessionsSeen: 1,
+        turnsIngested: 1,
+        recordsCreated: 1,
+        warnings: [],
+      })),
     };
-    const { manager } = makeManager(faux, { ltm });
+    const { manager, dataDir } = makeManager(faux, { ltm });
     faux.setResponses([fauxAssistantMessage("reply for ltm ingest")]);
 
     const row = await manager.createSession();
@@ -29,7 +35,14 @@ describe("AgentManager LTM ingest", () => {
 
     await waitFor(() => ltm.ingestSessionFile.mock.calls.length === 1);
     expect(ltm.ingestSessionFile).toHaveBeenCalledTimes(1);
-    expect(ltm.ingestSessionFile).toHaveBeenCalledWith(row.path);
-    expect(existsSync(row.path)).toBe(true);
+    const chatDir = join(dataDir, "sessions", "--chat--");
+    const [sessionFile] = readdirSync(chatDir).filter((name) =>
+      name.includes(row.id),
+    );
+    const expectedSessionPath = join(chatDir, sessionFile!);
+
+    expect(row.path).toBe(expectedSessionPath);
+    expect(ltm.ingestSessionFile).toHaveBeenCalledWith(expectedSessionPath);
+    expect(existsSync(expectedSessionPath)).toBe(true);
   });
 });
