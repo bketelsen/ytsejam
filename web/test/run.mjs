@@ -14,6 +14,7 @@ import "./api-skills.test.mjs";
 import "./approval-prefix.test.mjs";
 import "./approval-card.test.mjs";
 import "./approval-toggle.test.mjs";
+import "./sidebar-yolo-tint.test.mjs";
 
 import "./slash-menu.test.mjs";
 import "./slash-overlay.test.mjs";

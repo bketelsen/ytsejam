@@ -84,9 +84,13 @@ export function Sidebar({
           <div
             key={s.id}
             onClick={() => onSelect(s.id)}
-            className={`group cursor-pointer rounded-md p-2 ${
-              s.id === currentId ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent"
-            }`}
+            className={[
+              "group cursor-pointer rounded-md p-2",
+              s.id === currentId ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent",
+              s.approvalMode === "yolo" ? "border-l-2 border-warning" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             <div className="flex items-center gap-2">
               {s.compacting ? (
