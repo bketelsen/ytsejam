@@ -276,6 +276,73 @@ describe("AgentManager", () => {
     expect(existsSync(join(chatDir, remaining[0]))).toBe(true);
   });
 
+  test("maybeGenerateTitle writes the title when the provider returns a clean stop", async () => {
+    // Regression: commit 1850785 (Copilot OAuth) updated the harness call path
+    // but left maybeGenerateTitle calling completeSimple without an apiKey; for
+    // OAuth-only providers (github-copilot) that returns content:[] +
+    // stopReason:"error" and the title was silently dropped. Faux doesn't gate
+    // on apiKey but DOES honor stopReason, so this test pins the happy path
+    // (no prior test covered the success branch).
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage("A Crisp Six Word Title"),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi there");
+    await manager.waitForIdle(row.id);
+    await waitFor(() => indexer.getSession(row.id)?.title === "A Crisp Six Word Title");
+    expect(indexer.getSession(row.id)!.title).toBe("A Crisp Six Word Title");
+  });
+
+  test("maybeGenerateTitle does not write a title when the provider returns stopReason:error", async () => {
+    // Defense-in-depth: the original silent failure was an "error" stopReason
+    // with empty content. Provider failures (auth, rate limit, network) all
+    // surface this way rather than throwing. Verify the title is skipped, not
+    // overwritten with garbage.
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const { manager, indexer } = makeManager(faux, { generateTitles: true });
+      faux.setResponses([
+        fauxAssistantMessage("normal reply"),
+        fauxAssistantMessage([], { stopReason: "error", errorMessage: "no apiKey" }),
+      ]);
+
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "hi");
+      await manager.waitForIdle(row.id);
+      // Give the deferred setTimeout(..., 0) title-gen call a chance to run.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(indexer.getSession(row.id)!.title).toBeNull();
+      expect(
+        errors.some((args) =>
+          args.some((a) => typeof a === "string" && a.includes("title generation failed for")),
+        ),
+      ).toBe(true);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test("maybeGenerateTitle does not write an empty title when the provider returns clean-stop empty content", async () => {
+    // Edge case: a well-behaved provider can return zero content blocks with
+    // stopReason:"stop" (rare, but possible). Don't write "" as a title.
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage([], { stopReason: "stop" }),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(indexer.getSession(row.id)!.title).toBeNull();
+  });
+
   test("rename and archive update index and emit events; JSONL file stays on disk", async () => {
     const { mkdtempSync, readdirSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
