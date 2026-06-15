@@ -498,7 +498,7 @@ export interface L0IndexResult {
 /** Parameters for the `init_canonical_file` RPC. */
 export interface InitCanonicalFileParams {
   path: string;
-  file_type: "hot-memory" | "observations" | "action-items" | "dev-log" | "generic";
+  file_type: "hot-memory" | "observations" | "action-items" | "dev-log" | "decisions" | "generic";
   label: string;
 }
 
