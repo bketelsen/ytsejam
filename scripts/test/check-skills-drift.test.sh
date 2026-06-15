@@ -92,11 +92,11 @@ set +e; bash "$CHECK_SCRIPT" >"$out" 2>"$err"; rc=$?; set -e
 if [[ "$rc" == 2 ]] && grep -qF "usage:" "$err"; then pass=$((pass+1)); else echo "FAIL [no-args]: rc=$rc" >&2; fail=$((fail+1)); fi
 rm -f "$out" "$err"
 
-# Case 8: missing seed dir
-run_case "missing seed dir → exit 2" 2 "seed dir not found" "/tmp/nope-$$-seed" "$WORK/c1/live"
+# Case 8: missing seed dir (use a path inside $WORK, guaranteed absent)
+run_case "missing seed dir → exit 2" 2 "seed dir not found" "$WORK/nope-seed" "$WORK/c1/live"
 
-# Case 9: missing live dir
-run_case "missing live dir → exit 2" 2 "live dir not found" "$WORK/c1/seed" "/tmp/nope-$$-live"
+# Case 9: missing live dir (use a path inside $WORK, guaranteed absent)
+run_case "missing live dir → exit 2" 2 "live dir not found" "$WORK/c1/seed" "$WORK/nope-live"
 
 echo ""
 echo "passed: $pass"
