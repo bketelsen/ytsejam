@@ -1,0 +1,25 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
+
+const root = new URL("..", import.meta.url).pathname;
+const src = readFileSync(join(root, "src/components/Sidebar.tsx"), "utf8");
+
+const activeSessionRender = src.match(/\{sessions\.map\(\(s\)\s*=>\s*\([\s\S]*?\n\s*\)\)\}/)?.[0] ?? "";
+const archivedSessionRender = src.match(/\{archivedRows\.map\(\(s\)\s*=>\s*\([\s\S]*?\n\s*\)\)\}/)?.[0] ?? "";
+
+test("Sidebar active session rows check for YOLO approval mode", () => {
+  assert.match(activeSessionRender, /s\.approvalMode\s*===\s*["']yolo["']/);
+});
+
+test("Sidebar active session rows use warning-themed left rail accent for YOLO", () => {
+  assert.match(activeSessionRender, /\bborder-l-2\b/);
+  assert.match(activeSessionRender, /\bborder-warning\b/);
+});
+
+test("Sidebar YOLO warning tint is scoped to the active session list", () => {
+  assert.ok(activeSessionRender, "expected to find sessions.map render block");
+  assert.ok(archivedSessionRender, "expected to find archivedRows.map render block");
+  assert.doesNotMatch(archivedSessionRender, /approvalMode\s*===\s*["']yolo["']|\bborder-warning\b/);
+});
