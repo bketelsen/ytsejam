@@ -50,6 +50,8 @@ export interface AppDeps {
 export function createApp(deps: AppDeps) {
   const { manager, indexer, persona, config } = deps;
   const app = new Hono();
+  // wss exported for the SIGTERM drain in index.ts (Task 4, #210):
+  // the drain iterates wss.clients and sends 1001 close frames.
   const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app });
 
   /** events every client gets regardless of subscription (sidebar liveness) */
