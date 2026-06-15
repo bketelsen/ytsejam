@@ -67,6 +67,30 @@ Two issues touching the same files: dispatch the first; when its PR **merges**, 
 second from fresh `origin/main` ("PR #NNN just merged — start from fresh main"). Never dispatch a
 dependent before its dependency merges — worktrees diverge into rebase conflicts.
 
+## Rebase-before-merge gate (Phase 2.5)
+
+Every PR after the first in a multi-weed burst has a stale base the moment its predecessor merges.
+The skill's Phase 2.5 is the iron law: rebase locally + re-run the local gate + force-push, then
+wait for CI green. **`gh pr update-branch <N>` does not count** — it does a server-side rebase but
+doesn't re-run the local gate against the new main, and a rebase can introduce silent conflicts
+that compile but fail tests.
+
+Sequence per stale-base PR:
+
+```bash
+cd /tmp/<branch>
+git fetch origin main
+git rebase origin/main
+# resolve conflicts if any — non-trivial conflict = the fix crossed scope, stop and escalate
+bash scripts/gate.sh
+# DO NOT force-push if the local gate failed — fix it first
+git push --force-with-lease
+# wait for CI green on the force-push, then merge
+```
+
+Doc-only PRs (no code in the diff) MAY use `gh pr update-branch <N>` as a shortcut — no test
+surface to invalidate. Anything else: local gate.
+
 ## CI polling
 
 ```bash
@@ -82,9 +106,10 @@ done
 
 | Error | Fix |
 |---|---|
-| `not mergeable: head branch not up to date` | `gh pr update-branch <N>`, wait for CI |
+| `not mergeable: head branch not up to date` | Run Phase 2.5 (local rebase + re-gate + force-push) — NOT just `gh pr update-branch` |
 | `base branch policy prohibits merge` | CI still running — wait for the gate checks to complete |
 | `enablePullRequestAutoMerge` error | Drop `--auto`; merge directly once green |
 | Gate fails on `node_modules not found` | Check the symlink: `ln -s <repo-root>/node_modules /tmp/<branch>/node_modules` |
 | Subagent times out before the gate finishes | The gate includes a Vite build — it needs several minutes. With the 25-min task timeout this is usually fine; for a heavy issue, keep the fix small or split "do the work" and "gate + PR" into two dispatches. |
 | Tests hang after extracting a module | If the suite uses per-test module isolation with mocks, only extract files with NO mocked imports and NO module-level state (pure helpers/constants/types). Files importing mocked deps must stay put. |
+| `cannot delete branch used by worktree` after `gh pr merge --delete-branch` | The merge + remote-branch-delete still succeeded. After the PR is merged: `cd <repo-root> && git worktree remove /tmp/<branch> --force && git branch -D <branch>`. |
