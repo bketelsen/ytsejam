@@ -6,7 +6,7 @@
 
 **Spec:** `docs/plans/2026-06-15-cog-cleanup-design.md` (section "Skill rewrite")
 
-**Architecture:** Single-file edit to `server/skills/cog.md` (the canonical seed in the repo). Skill is markdown; no code change. The seed is propagated to `~/.ytsejam/data/skills/cog.md` via `SkillsStore.seed()` at boot (COPYFILE_EXCL) or via `bash deploy/sync-skills.sh --yes` for live activation. `scripts/check-skills-drift.sh` catches seed-vs-live drift at deploy time.
+**Architecture:** Two-file edit. (1) `server/skills/cog.md` (the canonical seed in the repo). Skill is markdown; no code change. The seed is propagated to `~/.ytsejam/data/skills/cog.md` via `SkillsStore.seed()` at boot (COPYFILE_EXCL) or via `bash deploy/sync-skills.sh --yes` for live activation. `scripts/check-skills-drift.sh` catches seed-vs-live drift at deploy time. (2) `AGENTS.md` — add a `## Skills` breadcrumb pointing at `docs/agents/skills.md`. Today AGENTS.md has zero mention of skills, so every agent (this one included) rediscovers the seed/runtime split from primary sources — Brian has hit this 4-5 times. Doc-only fix; no behavior change.
 
 **Tech Stack:** Markdown only. Shell-side validation: `scripts/check-skills-drift.sh` + a smoke run of `/cog` post-merge.
 
@@ -421,6 +421,46 @@ git log origin/main --oneline | head -10
 ```
 
 PR-1 must be in `origin/main`. Search PR-1's commit messages for `init_canonical_file` and `skill_write` to confirm the dispatcher wiring is merged. If PR-1 is not yet in `origin/main`, BLOCK this PR's merge.
+
+### Step 4: Verify the drift gate would NOT fail at deploy
+
+Run:
+
+```bash
+bash scripts/check-skills-drift.sh server/skills ~/.ytsejam/data/skills 2>&1
+```
+
+Expected output: `── cog.md ──` — the gate detects the seed-vs-live drift this PR creates by design. This output is the EXPECTED state for PR review — it tells the operator to run `sync-skills.sh` after merge. The deploy-time gate will then catch any un-synced state, which is the correct safeguard.
+
+(If the gate exits 0 — no drift — that means the live copy was already updated out-of-band, which is unusual but acceptable. Note it in the PR body.)
+
+### Step 5: Check rebase status against origin/main
+
+Run: `git fetch origin main && git log origin/main..HEAD --oneline`
+Expected: only the commit from Task 1. If `origin/main` has advanced since the worktree was created, rebase and re-run the gate.
+
+### Step 6: Hand back to `/ship`
+
+The plan ends here. `/ship` handles push + PR open + merge. PR body must include:
+
+- "Closes #200, #201, #206."
+- The activation instruction from Task 3 Step 1.
+- A note that PR-1 must be merged first (the skill calls RPCs introduced there).
+
+---
+
+## Gate baseline reference
+
+Recorded on this worktree at start: server tests 158 pass, web tests 158 pass, lint + typecheck clean. Final expected: unchanged (158/158/clean). The drift-gate test (`scripts/test/check-skills-drift.test.sh`) continues to pass — the gate logic is unchanged, only the content one specific seed file is changed.
+
+## Out of scope for this PR
+
+- Adding/removing `init_canonical_file` template variants → would require a PR-1 follow-up
+- Changing the `cog_rpc` dispatcher → already done in PR-1
+- Changing the `cog_write` write-time guards → already done in PR-2
+- Updating non-cog skills (`infra`, `personal`, `work`, etc.) — their routing skills are regenerated only by re-running `/cog`; if the user wants their existing routing skills to use any new conventions, they re-run `/cog`
+- Migrating existing on-disk `domains.yml` files that contain legacy duplicates → handled at runtime by Phase 0.5; no migration tool needed
+ wiring is merged. If PR-1 is not yet in `origin/main`, BLOCK this PR's merge.
 
 ### Step 4: Verify the drift gate would NOT fail at deploy
 
