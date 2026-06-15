@@ -26,6 +26,8 @@ what the WebSocket relays to the browser:
 | `schedule` | a `ScheduleRow` snapshot after a schedule state change |
 | `compaction_start` | a session began compacting (`trigger: "proactive" \| "reactive"`) |
 | `compaction_end` | a session finished compacting (`status: "succeeded" \| "surrendered" \| "failed"`) |
+| `approval_request` / `approval_resolved` | ASK-mode tool approval lifecycle |
+| `approval_mode_changed` | per-session YOLO/ASK mode flip |
 
 The bus is the single fan-out point for "the server changed state, tell
 everyone." UI subscribers route events into React state; tests subscribe
@@ -188,6 +190,23 @@ the health endpoint surfaces (`scannedFiles / scannedLines / replayed /
 skipped / errors`). Tail the systemd journal (`journalctl --user -fu
 ytsejam`) to watch the bridge work; absence of these lines after the
 default 5-minute interval is itself a signal.
+
+
+## Process lifecycle / graceful shutdown
+
+The deploy/restart observability story changed in PR #215: ytsejam no longer relies on systemd's `TimeoutStopSec=45` to eventually SIGKILL a Node process with live handles. `server/src/index.ts` now registers a single `drainAndExit(signal)` handler for `SIGTERM`/`SIGINT` after the HTTP server and WebSocket server exist. The handler logs `[shutdown] <signal> received, draining`, executes every step in its own try/catch, and **does not call `process.exit`**; after handles close, Node exits naturally. If a handle wedges, systemd's 45s timeout remains the backstop and the journal still shows which drain step logged last.
+
+Current drain order is load-bearing:
+
+1. `scheduler.stop()` first, so no timer can launch a new scheduled injection after the manager/task sweeps.
+2. Close every WebSocket client with code **1001** (`"server shutting down"`). This happens before `server.close()` because upgraded WebSockets keep the Node HTTP server open.
+3. `server.close()` stops accepting new HTTP connections and waits for in-flight requests / closing upgraded sockets.
+4. `manager.abortAll()` aborts in-flight user-facing turns.
+5. `taskManager.cancelAll()` records active subagents as cancelled and initiates harness aborts fire-and-forget. It does not wait for a wedged tool to fully quiesce; cancel-wins JSONL plus boot recovery make later settlement harmless.
+6. `shutdownLtm(signal)` stops the reconciler, detaches `memory.attachReconciler(null)` / `attachLtm(null)`, and closes the LTM store.
+7. `indexer.close()` closes sqlite and its checkpoint timer.
+
+Expected journal shape during `systemctl --user restart ytsejam`: a quick `[shutdown] ... draining` followed by `[shutdown] drain complete, awaiting handle release`, with no `State 'stop-sigterm' timed out. Killing.` / `SIGKILL` lines. The WebSocket close should make browsers reconnect cleanly instead of sitting on a dead upgraded connection. See `docs/plans/2026-06-15-graceful-shutdown-design.md` for the design rationale and [`deployment.md`](deployment.md) for how this fits the release restart path.
 
 ## Snapshot Race-Cleared State Before A Downstream Await
 
