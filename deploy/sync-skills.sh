@@ -2,9 +2,11 @@
 # Sync seeded skills from the current release dir over the live runtime dir.
 #
 # Resolves the drift that `check-skills-drift.sh` flags: copies each seeded
-# `<name>.md` from the release seed dir over the matching live file. Live
-# files that have no seed counterpart (generated domain skills, user-added
-# dir-bundles, etc.) are NEVER touched.
+# `<name>.md` from the release seed dir over the matching live file. Also
+# handles dir-bundle seeds (`<name>/SKILL.md` plus immediate sibling `*.md`
+# resources). Live files that have no seed counterpart (generated domain
+# skills, user-added bundles, user-added files INSIDE a seeded bundle) are
+# NEVER touched.
 #
 # Usage:
 #   bash deploy/sync-skills.sh           # dry-run (print what would change, exit 0)
@@ -78,27 +80,29 @@ on_exit() {
 trap on_exit EXIT
 
 shopt -s nullglob
-for seed_file in "$SEED_DIR"/*.md; do
-  # defensive: skip if a future seed glob match is a directory, not a file
-  [[ -f "$seed_file" ]] || continue
-  name="$(basename "$seed_file")"
-  live_file="$LIVE_DIR/$name"
+
+# A small helper: given seed + live + qualified-name, do the diff-and-sync
+# step that's identical for flat files and bundle files. Mutates the loop
+# counters via the enclosing-scope variables (would_copy/synced/trouble/
+# current_file). Pure helper would need name-based output channels — this
+# is bash; closures over the counters are how we keep one truth.
+sync_one() {
+  local seed_file="$1" live_file="$2" name="$3"
 
   # Live missing: not drift, skip (boot will seed it).
-  [[ -f "$live_file" ]] || continue
+  [[ -f "$live_file" ]] || return 0
 
   # diff exit: 0=same (skip), 1=differ (sync), ≥2=trouble (treat conservatively).
-  # See lesson: scripts/check-skills-drift.sh applies the same pattern.
-  rc=0
+  local rc=0
   diff -q "$seed_file" "$live_file" > /dev/null 2>&1 || rc=$?
   if [[ $rc -eq 0 ]]; then
-    continue
+    return 0
   elif [[ $rc -ne 1 ]]; then
     # Trouble warnings go to stderr — they're anomaly signals, not progress.
     # Operators piping stdout to a log must still see "this skill was left un-synced".
     warn_err "cannot compare $name (diff exit $rc) — skipping; resolve manually"
     trouble=$((trouble + 1))
-    continue
+    return 0
   fi
 
   would_copy=$((would_copy + 1))
@@ -113,6 +117,33 @@ for seed_file in "$SEED_DIR"/*.md; do
   else
     warn "would sync $name (use --yes to apply)"
   fi
+}
+
+# Flat seeds.
+for seed_file in "$SEED_DIR"/*.md; do
+  # defensive: skip if a future seed glob match is a directory, not a file
+  [[ -f "$seed_file" ]] || continue
+  name="$(basename "$seed_file")"
+  sync_one "$seed_file" "$LIVE_DIR/$name" "$name"
+done
+
+# Dir-bundle seeds (`<name>/SKILL.md` + immediate sibling `*.md` resources).
+# Each bundle file is independently synced; files only present live in a
+# seeded bundle are NEVER touched (same user-dir-wins contract).
+for seed_skill in "$SEED_DIR"/*/SKILL.md; do
+  [[ -f "$seed_skill" ]] || continue
+  bundle_dir="$(dirname "$seed_skill")"
+  bundle_name="$(basename "$bundle_dir")"
+  live_bundle="$LIVE_DIR/$bundle_name"
+
+  # Live bundle missing entirely: not drift, skip (boot seeds the whole bundle).
+  [[ -d "$live_bundle" ]] || continue
+
+  for bundle_file in "$bundle_dir"/*.md; do
+    [[ -f "$bundle_file" ]] || continue
+    file_name="$(basename "$bundle_file")"
+    sync_one "$bundle_file" "$live_bundle/$file_name" "$bundle_name/$file_name"
+  done
 done
 
 if [[ $would_copy -eq 0 ]]; then

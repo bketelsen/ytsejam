@@ -15,8 +15,10 @@
 #   1  one or more seeded names have differing content live
 #   2  bad arguments
 #
-# Scope: flat `<name>.md` seeds only. Dir-bundle seeds (`<name>/SKILL.md`)
-# are not compared because none exist today; extend when one is added.
+# Scope: both flat `<name>.md` seeds AND dir-bundle seeds (`<name>/SKILL.md`
+# plus immediate sibling `*.md` resources like REFERENCE.md). Files only
+# present live (no seed counterpart) are NEVER reported — same user-dir-wins
+# contract that the seeder honors via COPYFILE_EXCL.
 
 set -euo pipefail
 
@@ -40,7 +42,7 @@ drift_count=0
 drift_names=()
 drift_compare_trouble=()
 
-# Iterate over flat seed files only (dir-bundles intentionally skipped).
+# Iterate over flat seed files.
 shopt -s nullglob
 for seed_file in "$SEED_DIR"/*.md; do
   name="$(basename "$seed_file")"
@@ -65,6 +67,46 @@ for seed_file in "$SEED_DIR"/*.md; do
     drift_names+=("$name")
     drift_compare_trouble+=("$name")
   fi
+done
+
+# Iterate over dir-bundle seeds (`<name>/SKILL.md` and immediate sibling
+# `*.md` resources). Each bundle file is independently tracked, reported as
+# `<bundle>/<filename>` so the existing report formatting works unchanged.
+# Files present only in a live bundle (no seed counterpart) are NEVER
+# reported — same user-dir-wins contract as flat seeds.
+for seed_skill in "$SEED_DIR"/*/SKILL.md; do
+  [[ -f "$seed_skill" ]] || continue
+  bundle_dir="$(dirname "$seed_skill")"
+  bundle_name="$(basename "$bundle_dir")"
+  live_bundle="$LIVE_DIR/$bundle_name"
+
+  # Live bundle missing entirely: fine — boot seeds the whole bundle.
+  [[ -d "$live_bundle" ]] || continue
+
+  # Compare each seeded `*.md` in the bundle against its live counterpart.
+  # Non-md sibling files are also covered (shell glob would miss them, but
+  # bundles today are `*.md`-only; extend the glob when that changes).
+  for bundle_file in "$bundle_dir"/*.md; do
+    [[ -f "$bundle_file" ]] || continue
+    file_name="$(basename "$bundle_file")"
+    qualified="$bundle_name/$file_name"
+    live_file="$live_bundle/$file_name"
+
+    # Live counterpart missing: fine — boot's COPYFILE_EXCL seeds individual files.
+    [[ -f "$live_file" ]] || continue
+
+    rc=0
+    diff -q "$bundle_file" "$live_file" > /dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 1 ]]; then
+      drift_count=$((drift_count + 1))
+      drift_names+=("$qualified")
+    elif [[ $rc -ne 0 ]]; then
+      echo "warning: cannot compare $qualified (diff exit $rc) — treating as drift" >&2
+      drift_count=$((drift_count + 1))
+      drift_names+=("$qualified")
+      drift_compare_trouble+=("$qualified")
+    fi
+  done
 done
 
 if [[ $drift_count -eq 0 ]]; then
