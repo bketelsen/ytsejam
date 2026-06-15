@@ -32,6 +32,8 @@ import type {
   ScenarioCheckResult,
   SearchResults,
   SessionBrief,
+  SkillWriteParams,
+  SkillWriteResult,
   StatsResult,
   WikiIndexResult,
   WriteResult,
@@ -370,4 +372,11 @@ export async function initCanonicalFile(
   params: InitCanonicalFileParams,
 ): Promise<InitCanonicalFileResult> {
   return consolidated.initCanonicalFile(params);
+}
+
+/** Write a routing-skill markdown file with canonical frontmatter. */
+export async function skillWrite(
+  params: SkillWriteParams,
+): Promise<SkillWriteResult> {
+  return consolidated.skillWrite(params);
 }

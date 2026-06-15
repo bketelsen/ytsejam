@@ -4,3 +4,4 @@ export { openActions } from "./open-actions.ts";
 export { domainSummary } from "./domain-summary.ts";
 export { recentObservations } from "./recent-observations.ts";
 export { initCanonicalFile } from "./init-canonical-file.ts";
+export { skillWrite } from "./skill-write.ts";
