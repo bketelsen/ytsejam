@@ -108,6 +108,7 @@ These are the cog memory-pipeline skills plus `create-gate`:
 | `foresight` | Cross-domain strategic scan → one forward-looking nudge. |
 | `history` | Deep memory search / narrative reconstruction across observations + glacier. |
 | `create-gate` | Bootstrap a `scripts/gate.sh` for a project and record it in cog hot memory. |
+| `cron-pull-weeds` | Cron-driven weed pulling for ytsejam. Files+gates only — never merges. Wraps `/pull-weeds` Phase 1-4 with cron-specific safety rules for unsupervised operation. |
 
 The cog-pipeline skills' canonical source is the cogmemory repo (`docs/llm/skills/`), vendored here
 with ytsejam host-adaptations; see `server/skills/UPSTREAM`. User dev-workflow skills (`develop`,
