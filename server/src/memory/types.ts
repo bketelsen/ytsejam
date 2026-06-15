@@ -494,3 +494,31 @@ export interface L0IndexResult {
   /** Newline-joined L0 header text; mirrors Go's `strings.Join(lines, "\n")`. */
   index: string;
 }
+
+/** Parameters for the `init_canonical_file` RPC. */
+export interface InitCanonicalFileParams {
+  path: string;
+  file_type: "hot-memory" | "observations" | "action-items" | "dev-log" | "generic";
+  label: string;
+}
+
+/** Result of the `init_canonical_file` RPC. */
+export interface InitCanonicalFileResult {
+  created: boolean;
+  path: string;
+  bytes: number;
+}
+
+/** Parameters for the `skill_write` RPC. */
+export interface SkillWriteParams {
+  id: string;
+  description: string;
+  triggers: string[];
+  body: string;
+}
+
+/** Result of the `skill_write` RPC. */
+export interface SkillWriteResult {
+  path: string;
+  bytes: number;
+}
