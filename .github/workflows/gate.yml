@@ -1,0 +1,35 @@
+name: gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-flight runs for the same PR/ref when a new commit lands.
+concurrency:
+  group: gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        # `npm ci` runs the `postinstall: patch-package` hook automatically,
+        # so no separate patch-package step is needed.
+        run: npm ci
+
+      - name: Run quality gate
+        # The gate script handles `env -u NODE_ENV` internally — it runs
+        # typecheck (tsc --noEmit), server tests, ltm tests, web build, and
+        # web tests. Single iron-law-gate, exit-code-only contract.
+        run: bash scripts/gate.sh
