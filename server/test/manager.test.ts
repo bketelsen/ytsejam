@@ -343,6 +343,90 @@ describe("AgentManager", () => {
     expect(indexer.getSession(row.id)!.title).toBeNull();
   });
 
+  test("maybeGenerateTitle queues to pendingTitle when a new turn races ahead", async () => {
+    // Race A: title gen's model call is in flight; meanwhile a second turn
+    // starts and ends, so opened.running flips true→false twice during the
+    // model call. Before the fix, the write was guarded by !opened.running
+    // and dropped the title silently when the inner state happened to be
+    // running at write-time. After: the write goes through unconditionally
+    // (queued to pendingTitle if running, written through if idle).
+    //
+    // This test fires a long second turn so the first title-gen completes
+    // WHILE the second turn is still running — exercising the new
+    // pendingTitle queue path (opened.running === true at the write point).
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("first reply"),
+      // title gen: completes fast, but BEFORE we trigger it, we'll start a
+      // long second turn so opened.running === true at the write point.
+      fauxAssistantMessage("Generated Title"),
+      // second turn: slow so opened.running stays true through the title write
+      async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        return fauxAssistantMessage("second reply");
+      },
+      // second turn's title-gen — early-returns because title is set by now;
+      // provide a stub so faux's "no responses queued" path is silent
+      fauxAssistantMessage("never reached"),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "first");
+    await manager.waitForIdle(row.id);
+    // Start a long second turn so opened.running === true when title-gen writes
+    void manager.sendMessage(row.id, "second");
+    // Wait until second turn is running AND title-gen has fired its write
+    await waitFor(() => indexer.getSession(row.id)?.title === "Generated Title");
+    // At this moment the JSONL append is deferred via pendingTitle until
+    // agent_end. Wait for the second turn to finish so the flush runs.
+    await manager.waitForIdle(row.id);
+    expect(indexer.getSession(row.id)!.title).toBe("Generated Title");
+
+    // Survive rebuild from JSONL — proves the pendingTitle flush actually
+    // wrote, rather than just leaving the title in the indexer
+    await manager.rebuildIndex();
+    expect(indexer.getSession(row.id)!.title).toBe("Generated Title");
+  });
+
+  test("maybeGenerateTitle does not overwrite a user rename that lands during the model call", async () => {
+    // Race B/C: between the early-return check and the write, a rename
+    // arrives. The re-check at the write point must catch it. User rename
+    // always wins over auto-generation.
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+
+    let renameCalled = false;
+    let renameDone = false;
+    faux.setResponses([
+      fauxAssistantMessage("reply"),
+      // title gen: long enough to call rename mid-flight
+      async () => {
+        // give the early-return checks time to pass, then trigger rename
+        await new Promise((r) => setTimeout(r, 20));
+        if (!renameCalled) {
+          renameCalled = true;
+          // rename the session — must win over the about-to-arrive title
+          void manager.rename(row.id, "User Chose This").then(() => {
+            renameDone = true;
+          });
+        }
+        // keep the title-gen pending until rename has settled
+        await waitFor(() => renameDone);
+        return fauxAssistantMessage("Auto Title Loses");
+      },
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi");
+    await manager.waitForIdle(row.id);
+    // wait for the title-gen Promise + the pendingTitle flush to settle
+    await new Promise((r) => setTimeout(r, 150));
+    expect(indexer.getSession(row.id)!.title).toBe("User Chose This");
+
+    // Confirm via JSONL too — the rename's session_info is the last one
+    await manager.rebuildIndex();
+    expect(indexer.getSession(row.id)!.title).toBe("User Chose This");
+  });
+
   test("rename and archive update index and emit events; JSONL file stays on disk", async () => {
     const { mkdtempSync, readdirSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

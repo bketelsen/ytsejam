@@ -939,11 +939,24 @@ export class AgentManager {
         return;
       }
       const title = previewOf(result).split("\n")[0]?.trim().slice(0, 80);
-      if (title && !opened.running) {
+      if (!title) return;
+      // Re-check user-rename invariants at the WRITE point, not just at the
+      // start. Between the early-return at the top of this function and here,
+      // a user can land a rename() (which sets pendingTitle synchronously when
+      // running, or writes title + setTitle directly when idle). User rename
+      // ALWAYS wins over auto-generation.
+      if (this.opts.indexer.getSession(opened.id)?.title) return;
+      if (opened.pendingTitle !== undefined) return;
+      // Mirror rename()'s shape: when running, defer the JSONL append to the
+      // agent_end pendingTitle flush; index + emit immediately so the UI sees
+      // the title in the next list/meta event. When idle, write through.
+      if (opened.running) {
+        opened.pendingTitle = title;
+      } else {
         await opened.session.appendSessionName(title);
-        this.opts.indexer.setTitle(opened.id, title);
-        this.emitMeta(opened.id);
       }
+      this.opts.indexer.setTitle(opened.id, title);
+      this.emitMeta(opened.id);
     } catch (err) {
       console.error(`title generation failed for ${opened.id}`, err);
     }
