@@ -130,7 +130,7 @@ errors) or 1 (one or more per-line parse errors). `--rebuild` re-embeds current 
 process, NOT live server health) followed by a single JSON stats line on
 stdout; exit code mirrors `ltm replay`.
 
-A live-server health endpoint is tracked in issue #92.
+A live-server health endpoint is now available at `/api/memory/health`.
 
 ### Health surface
 
@@ -149,7 +149,7 @@ const h = await memory.health();
 ```
 
 `h.ltm` is OMITTED (not present, not `undefined`) when no reconciler is
-attached. Issue #92 tracks surfacing this in the web UI.
+attached. The web UI surfaces this via the Brain health icon (`web/src/components/HealthIcon.tsx`).
 
 ## Auto-commit cadence
 
