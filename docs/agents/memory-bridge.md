@@ -74,6 +74,8 @@ existing memory module's public surface:
 - **`reconcileNow({force?})`** — pass-through to the attached reconciler.
   Exposed through `cog_rpc({method:"reconcile_now"})` so a skill or the
   agent can force a tick (e.g. just after a bulk external edit).
+- **`initCanonicalFile({path, file_type, label})`** — idempotently creates a canonical markdown file for a registered domain from the daemon-owned template set. Exposed as `cog_rpc({method:"init_canonical_file"})`; used by the rewritten `/cog` setup skill instead of hand-rendering hot-memory/observations/action-items/dev-log stubs.
+- **`skillWrite({id, description, triggers, body})`** — allow-listed write surface for generated domain routing skills. Exposed as `cog_rpc({method:"skill_write"})`; renders canonical skill frontmatter and writes `<dataDir>/skills/<id>.md` rather than allowing `/cog` to write arbitrary files.
 - **`recordObservation({domainPath, text, tags, timestamp?})`** — the
   preferred write API for observations. Required tags; rejects embedded
   `\n`/`\r` in text (multi-line would split into multiple cog lines but
@@ -87,6 +89,16 @@ in `/observations.md` (without a `section`) and re-routes through
 `recordObservation()` line-by-line. **All lines are parsed first; a single
 malformed line aborts the whole batch** — preserving the per-invocation
 atomicity the prior `memory.append(path, multi_line_text)` had.
+
+
+### Setup RPCs used by `/cog`
+
+The cog cleanup PRs added two RPC methods to keep setup generation inside narrow daemon-owned surfaces:
+
+- **`init_canonical_file`** validates params (`path`, `file_type`, `label` only), resolves the target under the cog memory root, requires the target path to sit under a registered domain path, and enforces a sluggy basename (`[a-z][a-z0-9-]*`). If the file already exists it returns `{created:false, path, bytes:0}` and never clobbers user content. Otherwise it creates parent directories and writes one of the standard templates (`hot-memory`, `observations`, `action-items`, `dev-log`, or a generic L0+heading template). It deliberately does not auto-commit today; it is setup scaffolding, not a general write primitive.
+- **`skill_write`** validates params (`id`, `description`, `triggers`, `body` only), requires `id` to match `[a-z][a-z0-9-]*`, requires at least one non-empty trigger, renders YAML frontmatter, and writes `<dataDir>/skills/<id>.md`. Its path resolver is intentionally not model-supplied: the caller provides a skill id, not an arbitrary path. The RPC overwrites on re-run because `/cog` treats generated routing skills as derived from `domains.yml`.
+
+Both are exposed only through the fixed `RPC_METHODS` allow-list in `server/src/tools/cog.ts`. File-style cog operations (`cog_write`, `cog_append`, etc.) remain separate tools; the new setup RPCs do not widen `cog_rpc` into a filesystem tunnel.
 
 ## Reconciler internals — `server/src/memory/bridge/ltm-reconciler.ts`
 
@@ -270,6 +282,15 @@ distinguishes "unknown / not wired" from "ok / bad".
 
 `/api/memory/health` (bearer-gated) returns `{ltm: h.ltm ?? null}` for the
 web UI. See [`observability.md`](observability.md) § Health icons.
+
+
+## Manifest write validation (`domains.yml`)
+
+`domains.yml` writes are now validated synchronously before they reach disk. `memory.write()` calls `validateWholeFileWritePath()` as before, then for `rel === "domains.yml"` parses and validates the proposed YAML with `validateManifestContent(content)` before the atomic write. A bad manifest therefore fails the tool call close to the cause instead of persisting corrupt YAML and surfacing later as a mysterious `domains.get` / routing failure.
+
+Validation checks the structure the controller expects: top-level YAML must be an object when present, `domains` must be an array, ids are non-empty and unique across nested subdomains, paths are non-empty relative paths with no `..`, `files`/`triggers` are string arrays, file basenames are declared without slashes and without `.md`, and `subdomains` is an array when present. `null` / empty manifests normalize to an empty domain list.
+
+The read side still keeps the stale-but-served controller behavior for external edits or races: `Controller.maybeReload()` catches parse/validate failures, stores `lastError`, and continues serving the last-good manifest. `Controller.get(id)` includes the cached manifest-load error in the unknown-id message, so the error is visible through the normal `cog_rpc({method:"domains.get"})` surface. The difference after PR #211 is that writes through ytsejam's own `cog_write("domains.yml", ...)` cannot silently persist an invalid manifest in the first place.
 
 ## Patterns to know if you touch this code
 
