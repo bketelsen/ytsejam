@@ -90,16 +90,52 @@ echo "new a" > "$WORK/c5/seed/a.md"; echo "old a" > "$WORK/c5/live/a.md"
 echo "new b" > "$WORK/c5/seed/b.md"; echo "old b" > "$WORK/c5/live/b.md"
 run_case "multi drift count" 1 "" "2 seeded skill" "$WORK/c5/seed" "$WORK/c5/live"
 
-# Case 6: dir-bundles in seed are IGNORED (only flat *.md compared).
-# To prove this is SELECTIVITY (the loop ran and ignored the bundle) and not
-# EMPTINESS (the loop never ran), pair the ignored bundle drift with a flat
-# clean file. If the bundle were accidentally compared, exit would be 1.
+# Case 6: dir-bundle seeds (`<name>/SKILL.md` + sibling `*.md` resources) are
+# in scope. Clean bundle + clean flat → no drift.
 mkdir -p "$WORK/c6/seed/bundle" "$WORK/c6/live/bundle"
-echo "seedy" > "$WORK/c6/seed/bundle/SKILL.md"
-echo "livey" > "$WORK/c6/live/bundle/SKILL.md"
+echo "matched" > "$WORK/c6/seed/bundle/SKILL.md"
+echo "matched" > "$WORK/c6/live/bundle/SKILL.md"
+echo "matched-ref" > "$WORK/c6/seed/bundle/REFERENCE.md"
+echo "matched-ref" > "$WORK/c6/live/bundle/REFERENCE.md"
 echo "matching-flat" > "$WORK/c6/seed/flat.md"
 echo "matching-flat" > "$WORK/c6/live/flat.md"
-run_case "dir-bundle ignored, flat clean → exit 0" 0 "✓ no seeded-skill drift" "" "$WORK/c6/seed" "$WORK/c6/live"
+run_case "clean bundle + clean flat → exit 0" 0 "✓ no seeded-skill drift" "" "$WORK/c6/seed" "$WORK/c6/live"
+
+# Case 6b: bundle SKILL.md drift detected, reported as `bundle/SKILL.md`.
+mkdir -p "$WORK/c6b/seed/bundle" "$WORK/c6b/live/bundle"
+echo "seedy" > "$WORK/c6b/seed/bundle/SKILL.md"
+echo "livey" > "$WORK/c6b/live/bundle/SKILL.md"
+run_case "bundle SKILL.md drift → exit 1, qualified name" 1 "" "── bundle/SKILL.md ──" "$WORK/c6b/seed" "$WORK/c6b/live"
+
+# Case 6c: bundle sibling drift (REFERENCE.md changes, SKILL.md matches).
+mkdir -p "$WORK/c6c/seed/bundle" "$WORK/c6c/live/bundle"
+echo "matched" > "$WORK/c6c/seed/bundle/SKILL.md"
+echo "matched" > "$WORK/c6c/live/bundle/SKILL.md"
+echo "new ref" > "$WORK/c6c/seed/bundle/REFERENCE.md"
+echo "old ref" > "$WORK/c6c/live/bundle/REFERENCE.md"
+run_case "bundle sibling drift → exit 1, qualified name" 1 "" "── bundle/REFERENCE.md ──" "$WORK/c6c/seed" "$WORK/c6c/live"
+
+# Case 6d: live bundle missing entirely → fine (boot seeds it).
+mkdir -p "$WORK/c6d/seed/bundle" "$WORK/c6d/live"
+echo "seedy" > "$WORK/c6d/seed/bundle/SKILL.md"
+echo "seedy-ref" > "$WORK/c6d/seed/bundle/REFERENCE.md"
+run_case "live bundle missing → exit 0" 0 "✓ no seeded-skill drift" "" "$WORK/c6d/seed" "$WORK/c6d/live"
+
+# Case 6e: live has a user-only file INSIDE a seeded bundle. The seeded files
+# match; the live-extra file must NOT trigger drift.
+mkdir -p "$WORK/c6e/seed/bundle" "$WORK/c6e/live/bundle"
+echo "matched" > "$WORK/c6e/seed/bundle/SKILL.md"
+echo "matched" > "$WORK/c6e/live/bundle/SKILL.md"
+echo "user-only" > "$WORK/c6e/live/bundle/user-notes.md"
+run_case "user-extra inside bundle → exit 0" 0 "✓ no seeded-skill drift" "" "$WORK/c6e/seed" "$WORK/c6e/live"
+
+# Case 6f: multi-file bundle drift counts each independently.
+mkdir -p "$WORK/c6f/seed/bundle" "$WORK/c6f/live/bundle"
+echo "new skill" > "$WORK/c6f/seed/bundle/SKILL.md"
+echo "old skill" > "$WORK/c6f/live/bundle/SKILL.md"
+echo "new ref" > "$WORK/c6f/seed/bundle/REFERENCE.md"
+echo "old ref" > "$WORK/c6f/live/bundle/REFERENCE.md"
+run_case "multi-file bundle drift count" 1 "" "2 seeded skill" "$WORK/c6f/seed" "$WORK/c6f/live"
 
 # Case 7: bad args
 # Plan's placeholder run_case with two real directories was removed: it passed
