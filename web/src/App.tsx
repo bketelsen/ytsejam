@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { HealthIcon } from "./components/HealthIcon";
+import { ApprovalToggle } from "./components/ApprovalToggle";
 import { Settings } from "./components/Settings";
 import { TasksDialog } from "./components/TasksDialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { getToken } from "./lib/api";
 import { useApp } from "./useApp";
+import type { ApprovalMode } from "./lib/types";
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(() => getToken() !== null);
@@ -74,6 +76,12 @@ function Main() {
         ? "LTM: healthy"
         : `LTM: ${app.ltmLastError ?? "unhealthy"}`;
 
+  const currentSession = useMemo(
+    () => app.sessions.find((s) => s.id === app.currentId),
+    [app.sessions, app.currentId],
+  );
+  const currentMode: ApprovalMode = currentSession?.approvalMode ?? "ask";
+
   const sidebarProps = {
     sessions: app.sessions,
     currentId: app.currentId,
@@ -110,7 +118,7 @@ function Main() {
         sessionId={app.currentId}
         messages={app.messages}
         streaming={app.streaming}
-        running={app.sessions.find((s) => s.id === app.currentId)?.running ?? false}
+        running={currentSession?.running ?? false}
         compacting={app.sessions.find((s) => s.id === app.currentId)?.compacting ?? false}
         tasks={app.tasks}
         pendingApprovals={app.pendingApprovals}
@@ -122,6 +130,11 @@ function Main() {
         onMenuClick={() => setSidebarOpen(true)}
         headerRight={
           <>
+            <ApprovalToggle
+              mode={currentMode}
+              onChange={(m) => app.currentId && app.setApprovalMode(app.currentId, m)}
+              disabled={!app.currentId || !currentSession}
+            />
             <HealthIcon kind="ws" state={app.wsState} title={wsTitle} />
             <HealthIcon kind="ltm" state={app.ltmState} title={ltmTitle} />
           </>

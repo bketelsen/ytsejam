@@ -7,19 +7,23 @@ interface ApprovalCardProps {
   onRespond: (decision: "approve" | "deny") => void;
   /** Disable actions while the WebSocket is not healthy; otherwise clicks during reconnect can silently no-op. */
   disabled?: boolean;
-  /** Seconds remaining until server auto-denies. Pass 300 (5min) as default. */
-  ttlSeconds?: number;
 }
 
-export function ApprovalCard({ request, onRespond, disabled, ttlSeconds = 300 }: ApprovalCardProps) {
-  const [remaining, setRemaining] = useState(ttlSeconds);
+const TTL_MS = 5 * 60 * 1000;
+function computeRemaining(createdAt: number): number {
+  if (!Number.isFinite(createdAt)) return 0;
+  return Math.max(0, Math.floor((createdAt + TTL_MS - Date.now()) / 1000));
+}
+
+export function ApprovalCard({ request, onRespond, disabled }: ApprovalCardProps) {
+  const [remaining, setRemaining] = useState(() => computeRemaining(request.createdAt));
   const [responded, setResponded] = useState<"approve" | "deny" | null>(null);
 
   useEffect(() => {
     if (responded) return;
-    const t = setInterval(() => setRemaining((r) => Math.max(0, r - 1)), 1000);
+    const t = setInterval(() => setRemaining(computeRemaining(request.createdAt)), 1000);
     return () => clearInterval(t);
-  }, [responded]);
+  }, [responded, request.createdAt]);
 
   const handleClick = (decision: "approve" | "deny") => {
     if (responded || disabled) return;

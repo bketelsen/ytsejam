@@ -4,6 +4,7 @@ export type ApprovalDecision = "approve" | "deny" | "timeout";
 
 export interface ApprovalRequest {
   approvalId: string;
+  createdAt: number;
   sessionId: string;
   toolName: string;
   toolLabel: string;
@@ -48,9 +49,9 @@ export class ApprovalCoordinator {
    * pending entry remains registered until the timeout fires. Callers (transport
    * layer) must ensure `onRequest` does not throw, or wrap it themselves.
    */
-  request(input: Omit<ApprovalRequest, "approvalId">): Promise<ApprovalDecision> {
+  request(input: Omit<ApprovalRequest, "approvalId" | "createdAt">): Promise<ApprovalDecision> {
     const approvalId = randomUUID();
-    const fullRequest: ApprovalRequest = { approvalId, ...input };
+    const fullRequest: ApprovalRequest = { approvalId, createdAt: Date.now(), ...input };
     return new Promise<ApprovalDecision>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pending.delete(approvalId)) {

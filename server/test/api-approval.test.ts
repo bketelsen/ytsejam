@@ -152,6 +152,7 @@ describe("approval-mode session API", () => {
         events.push({
           type: "approval_request",
           approvalId: req.approvalId,
+          createdAt: req.createdAt,
           sessionId: req.sessionId,
           toolName: req.toolName,
           toolLabel: req.toolLabel,
