@@ -263,10 +263,20 @@ const drainAndExit = async (signal: string): Promise<void> => {
   draining = true;
   console.log(`[shutdown] ${signal} received, draining`);
 
-  // Step 1: close every attached WebSocket with code 1001 (going away).
+  // Step 1: stop the scheduler's polling timer. Done FIRST so a scheduler
+  // tick can't launch a new session AFTER the manager.abortAll sweep below
+  // and orphan it. scheduler.stop is a sync clearInterval -- no inter-step
+  // dependency on the later steps.
+  try {
+    scheduler.stop();
+  } catch (err) {
+    console.warn(`[shutdown] scheduler.stop: ${(err as Error).message}`);
+  }
+
+  // Step 2: close every attached WebSocket with code 1001 (going away).
   // wss.clients is ws.WebSocketServer's standard Set<WebSocket>.
   //
-  // CRITICAL: this MUST run before step 2 (server.close). Node's
+  // CRITICAL: this MUST run before step 3 (server.close). Node's
   // http.Server.close(cb) waits for ALL open connections, including
   // upgraded WebSockets, to close before firing the callback. If we
   // awaited server.close first, the callback would never fire on a
@@ -283,7 +293,7 @@ const drainAndExit = async (signal: string): Promise<void> => {
     }
   }
 
-  // Step 2: stop accepting new HTTP connections + wait for in-flight to finish.
+  // Step 3: stop accepting new HTTP connections + wait for in-flight to finish.
   // server.close(cb) stops listening immediately and the cb fires once all
   // currently-open connections (including the WS sockets we just told to close
   // above) have closed. Wrap in a Promise.
@@ -298,26 +308,19 @@ const drainAndExit = async (signal: string): Promise<void> => {
     console.warn(`[shutdown] server.close threw: ${(err as Error).message}`);
   }
 
-  // Step 3: abort all in-flight subagent sessions.
+  // Step 4: abort all in-flight subagent sessions.
   try {
     await manager.abortAll();
   } catch (err) {
     console.warn(`[shutdown] manager.abortAll: ${(err as Error).message}`);
   }
 
-  // Step 4: cancel all in-flight tasks (durably records "cancelled" and
+  // Step 5: cancel all in-flight tasks (durably records "cancelled" and
   // initiates harness.abort() fire-and-forget; see header docstring).
   try {
     await taskManager.cancelAll();
   } catch (err) {
     console.warn(`[shutdown] taskManager.cancelAll: ${(err as Error).message}`);
-  }
-
-  // Step 5: stop the scheduler's polling timer.
-  try {
-    scheduler.stop();
-  } catch (err) {
-    console.warn(`[shutdown] scheduler.stop: ${(err as Error).message}`);
   }
 
   // Step 6: drain the LTM bridge (reconciler + memory store).
