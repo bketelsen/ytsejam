@@ -227,7 +227,8 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
   and per-task timeout `YTSEJAM_TASK_TIMEOUT_MIN`. **Subagents cannot delegate further** (the tools
   aren't wired into the worker toolset). → [`delegation.md`](delegation.md)
 - **The quality gate is `scripts/gate.sh`** — server typecheck + server tests + ltm tests + web
-  build/typecheck + web tests, in that order. **There is no CI; the gate is the bar.** →
+  build/typecheck + web tests, in that order. **CI runs this same script on every PR via
+  `.github/workflows/gate.yml`** — local and CI gates are the same contract. →
   [`quality-gate.md`](quality-gate.md)
 - **Subagent worktree gotcha:** the harness shell inherits `NODE_ENV=production`, so a bare
   `npm install` skips devDeps the gate needs. Symlink `node_modules` from a good checkout, or install
