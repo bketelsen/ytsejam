@@ -97,18 +97,24 @@ leading `.`, or an absolute path, tries the flat path then the bundle path, and 
 
 ## Seeded skills (current set, `server/skills/`)
 
-These are the cog memory-pipeline skills plus `create-gate`:
+These are the repo-seeded skills (flat `.md` files plus directory bundles) shipped from `server/skills/`:
 
 | Skill | Purpose |
 | --- | --- |
-| `cog` | Bootstrap/reconfigure cog memory domains (first-time setup; adds per-domain generated skills). |
+| `cog` | Conversational memory-domain setup/reconfiguration. Writes `domains.yml`, initializes canonical memory files via `init_canonical_file`, and writes per-domain routing skills via `skill_write`. |
 | `reflect` | Mine recent activity for patterns and consolidate memory (3-gate pipeline). |
 | `housekeeping` | Memory maintenance — archive, prune, temporal sweep, rebuild indexes. |
 | `evolve` | Monthly architecture audit of the memory system. |
 | `foresight` | Cross-domain strategic scan → one forward-looking nudge. |
 | `history` | Deep memory search / narrative reconstruction across observations + glacier. |
 | `create-gate` | Bootstrap a `scripts/gate.sh` for a project and record it in cog hot memory. |
-| `cron-pull-weeds` | Cron-driven weed pulling for ytsejam. Files+gates only — never merges. Wraps `/pull-weeds` Phase 1-4 with cron-specific safety rules for unsupervised operation. |
+| `cron-pull-weeds` | Directory-bundled scheduler skill for autonomous ytsejam weed-pulling. Wraps `/pull-weeds` Phase 1-4, but stops at branch pushed + PR open + gate green; it never merges. |
+
+
+### Notes on the newer seeded skills
+
+- **`cog` was rewritten in PR #213.** It no longer hand-renders canonical file bodies or writes generated skills with broad file tools. The playbook now relies on two cog RPCs added in PR #212: `cog_rpc({method:"init_canonical_file", ...})` for idempotent per-domain markdown templates, and `cog_rpc({method:"skill_write", ...})` for allow-listed writes to `<dataDir>/skills/<domain>.md`. Keep future `/cog` edits in that shape; do not re-expand the old manual-write workflow.
+- **`cron-pull-weeds` is scheduler-driven, not user-interactive merge automation.** Brian manually registers the recurring schedule after the skill ships, using the `schedule` tool with cron `0 8 * * 1-5` in server-local time (production runs in EDT for this schedule) and a prompt that invokes `cron-pull-weeds`. The skill itself is files+gates only: it delegates `/pull-weeds` Phase 1-4 work, opens PRs, produces a digest, and explicitly never calls `gh pr merge`.
 
 The cog-pipeline skills' canonical source is the cogmemory repo (`docs/llm/skills/`), vendored here
 with ytsejam host-adaptations; see `server/skills/UPSTREAM`. User dev-workflow skills (`develop`,

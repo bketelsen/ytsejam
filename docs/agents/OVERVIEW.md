@@ -48,9 +48,11 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
 
 - **`index.ts`** — composition root. Loads config, constructs every store/service, wires tools into
   the `AgentManager`, rebuilds the sqlite index from JSONL, recovers interrupted tasks, catches up
-  schedules, opens LTM + starts the cog→LTM bridge, then starts the Hono server + WebSocket. Also
-  intercepts CLI argv via `runCli()` **before** any of that boot work, so `node server/src/index.ts
-  ltm replay` exits without ever opening the HTTP listener.
+  schedules, opens LTM + starts the cog→LTM bridge, then starts the Hono server + WebSocket. It also
+  owns the SIGTERM/SIGINT graceful-drain orchestrator (scheduler stop → WS 1001 close → HTTP close
+  → manager/task cancellation → LTM drain → indexer close). Also intercepts CLI argv via `runCli()`
+  **before** any of that boot work, so `node server/src/index.ts ltm replay` exits without ever
+  opening the HTTP listener.
 - **`cli/`** — argv subcommands that share the server's modules but never boot it. `dispatch.ts`
   owns the `ltm` namespace; `ltm-commands.ts` implements `ltm replay [--force]` and `ltm health`
   by opening LTM directly + running one reconcile tick. Used for one-off back-fill from the shell
@@ -153,7 +155,7 @@ and `server/src/memory/README.md`.
 
 ### `server/skills/` — seeded skill playbooks
 
-Markdown skills shipped in the repo (cog-pipeline skills + `create-gate`). On boot they're copied
+Markdown skills shipped in the repo (cog-pipeline skills, `create-gate`, and the `cron-pull-weeds` scheduler bundle). On boot they're copied
 into `<dataDir>/skills/` **only if absent**; the user/data-dir copy wins. See [`skills.md`](skills.md).
 
 ### `web/src/` — the UI
@@ -201,7 +203,8 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 3. The harness runs the agent loop: it composes the system prompt (persona + memory brief + skills table
    + context files), streams model output, and **dispatches tool calls** to the wired tools — file/
    shell tools resolve against the session's workdir; `delegate` spawns a background subagent; `cog_*`
-   tools call the in-process memory module.
+   tools call the in-process memory module; `skill` loads markdown playbooks such as `/cog` or
+   `/cron-pull-weeds`.
 4. State changes are written **JSONL-first** (the pi session tree, or a store's event log), then
    mirrored into the sqlite index, then emitted on the `EventBus`.
 5. The WebSocket relays harness/metadata events to subscribed clients; the UI streams the assistant's
@@ -236,6 +239,7 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
   if either substrate fails (LTM is wrapped in a try/catch at boot; bridge failures don't fail the
   cog write). → [`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md),
   `server/src/memory/README.md`.
+- **Graceful shutdown is orchestrated, not a SIGKILL timeout.** On `SIGTERM`/`SIGINT`, `index.ts` stops the scheduler, closes WebSockets with 1001, closes HTTP, aborts manager turns, cancels task-manager work, drains LTM, closes sqlite, and then lets Node exit naturally. A `TimeoutStopSec=45` SIGKILL line in the journal is now a bug signal, not the expected restart path. → [`observability.md`](observability.md), [`deployment.md`](deployment.md)
 - **Crash-safety via event-sourcing:** tasks and schedules record their state-changing event *before*
   the side effect (a cancel before abort; a schedule fire before inject), so a crash never
   double-fires and recovery is a fold over the log.
@@ -253,7 +257,9 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 | --- | --- | --- |
 | `YTSEJAM_AUTH_TOKEN` | **required** | shared bearer login token (checked on every `/api/*` request and at WS connect) |
 | `YTSEJAM_PORT` | `3000` (prod unit sets `9873`) | HTTP port |
-| `YTSEJAM_DATA_DIR` | `./data` (prod unit sets `~/.ytsejam/data`) | JSONL SSOT + `index.db` + cog `memory/` + `ltm/` |
+| `YTSEJAM_HOST` | `127.0.0.1` | HTTP bind host; all-interface binds log a warning |
+| `YTSEJAM_DATA_DIR` | `./data` (prod unit sets `~/.ytsejam/data`) | JSONL SSOT + `index.db` + default cog `memory/` + default `ltm/`; implicit `./data` is refused when it would land inside the repo |
+| `YTSEJAM_MEMORY_DIR` | `<dataDir>/memory` (or legacy `~/.chapterhouse/memory` fallback if present) | override cog markdown memory root; prefer an absolute path |
 | `YTSEJAM_WEB_DIST` | `../web/dist` (prod unit sets the release's) | built web assets to serve |
 | `YTSEJAM_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | `provider/modelId`, must exist in the pi-ai catalog |
 | `YTSEJAM_SUBAGENT_MODEL` | = default model | model for delegated subagents |
@@ -266,6 +272,11 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 | `YTSEJAM_PI_AUTH` | `~/.pi/agent/auth.json` | pi CLI OAuth credentials (Copilot/Codex subscriptions) |
 | `LTM_STORE_DIR` | `<dataDir>/ltm` | LTM substrate directory (single-writer). Empty-string falls through to default. |
 | `LTM_RECONCILE_INTERVAL_MS` | `300000` (5 min) | cog→LTM back-fill reconciler tick interval |
+| `YTSEJAM_LTM_EMBEDDER` | `auto` | LTM embedder selection: `auto`, `copilot`, `ollama`, or `hash` |
+| `YTSEJAM_LTM_COPILOT_MODEL` | `text-embedding-3-small` | Copilot embedding model when using/probing Copilot |
+| `YTSEJAM_LTM_COPILOT_URL` | `https://api.enterprise.githubcopilot.com` | Copilot embedding API base URL |
+| `YTSEJAM_LTM_OLLAMA_MODEL` | `nomic-embed-text:latest` | Ollama embedding model when using/probing Ollama |
+| `YTSEJAM_LTM_OLLAMA_URL` | `http://localhost:11434` | Ollama API base URL |
 | `BRAVE_API_KEY` | — | enables the `web_search` tool |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, … | — | enabling a provider's key adds its models to the picker |
 
@@ -293,15 +304,17 @@ Config files:
   timeout config, the no-nested-delegation rule, subagent absolute-path requirement, and the
   `NODE_ENV=production` install workaround.
 - [`memory-bridge.md`](memory-bridge.md) — the cog→LTM bridge: two write paths (inline +
-  reconciler), public surface (`attachLtm`/`attachReconciler`/`recordObservation`/`getLtm`),
-  `recall()` semantics, the `server/src/cli/` LTM subcommands, and the health surface that drives
-  the web brain icon.
+  reconciler), public surface (`attachLtm`/`attachReconciler`/`recordObservation`/`getLtm` plus
+  setup RPCs `init_canonical_file`/`skill_write`), `domains.yml` validate-on-write, `recall()`
+  semantics, the `server/src/cli/` LTM subcommands, and the health surface that drives the web brain
+  icon.
 - [`observability.md`](observability.md) — the `EventBus`/`ServerEvent` union, compaction
   telemetry (three entry points, `compaction_start`/`compaction_end`, the `entry_point` field, the
-  per-session `.compactions.jsonl` sidecar), health icons in the chat header, and
-  `/api/memory/health`.
+  per-session `.compactions.jsonl` sidecar), health icons in the chat header, `/api/memory/health`,
+  and the graceful shutdown lifecycle.
 - [`deployment.md`](deployment.md) — systemd `--user` unit, `current`→release symlink, `deploy.sh`
-  flow with auto-rollback, `dev.sh` isolation, and `migrate-data.sh` semantics.
+  flow with staged-release skill drift gate + auto-rollback, `sync-skills.sh`, `dev.sh` isolation,
+  and `migrate-data.sh` semantics.
 - [`quality-gate.md`](quality-gate.md) — what `scripts/gate.sh` runs, in what order, how to read a
   failure, and when to run it.
 

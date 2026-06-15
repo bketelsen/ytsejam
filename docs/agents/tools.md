@@ -126,10 +126,13 @@ File-style ops: `cog_read`, `cog_write`, `cog_append`, `cog_patch`, `cog_outline
 `cog_list`, `cog_move`. Plus `recall`, the unified cog-+-LTM retrieval tool (see below), and
 `cog_rpc`, a single tool that fans out to a fixed allow-list of consolidated methods
 (`session_brief`, `domain_summary`, `housekeeping_scan`, `open_actions`, `recent_observations`,
-audits, index computations, `domains.list/get`, `stats`, `git`, `health`, `reconcile_now`, …).
+audits, index computations, `domains.list/get`, `stats`, `git`, `health`, `init_canonical_file`, `skill_write`, `reconcile_now`, …).
 The method list is the `RPC_METHODS` const in `cog.ts`; file operations are deliberately excluded
 from `cog_rpc` so they go through their dedicated tools. These names mirror the cog skill
 vocabulary so skill playbooks port verbatim.
+
+
+**Setup-only RPCs:** `init_canonical_file` and `skill_write` are deliberately narrow surfaces used by the rewritten `/cog` skill. `init_canonical_file` creates a registered-domain markdown file from daemon-owned templates and is idempotent on existing files; `skill_write` renders a generated routing skill at `<dataDir>/skills/<id>.md` from an id/description/triggers/body payload. They avoid giving setup playbooks arbitrary file-write reach. See [`memory-bridge.md`](memory-bridge.md) § Setup RPCs used by `/cog`.
 
 **`cog_append` to a `*/observations.md` path** is intercepted: each line is parsed, then
 `memory.recordObservation()` is called per line, which writes the cog SSOT line **and** best-
