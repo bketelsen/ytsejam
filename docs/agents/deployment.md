@@ -2,7 +2,7 @@
 
 > Sub-doc of [`OVERVIEW.md`](OVERVIEW.md). Read this before changing anything under `deploy/`.
 > Scripts: `deploy/install.sh`, `deploy/deploy.sh`, `deploy/rollback.sh`, `deploy/dev.sh`,
-> `deploy/migrate-data.sh`. Unit: `deploy/ytsejam.service`. Env template: `deploy/ytsejam.env.example`.
+> `deploy/migrate-data.sh`, `deploy/sync-skills.sh`. Unit: `deploy/ytsejam.service`. Env template: `deploy/ytsejam.env.example`.
 > The authoritative operator doc is `deploy/README.md`; this doc is the agent-facing summary.
 
 ## Runtime model
@@ -40,7 +40,7 @@ service — no root. Key facts from `deploy/ytsejam.service`:
 - `ExecStartPre=` checks for `server/src/index.ts` and `web/dist/index.html` — fail loud at activation
   if a release is incomplete.
 - Memory is in-process; the unit has no memory-service dependency.
-- Stop sends `SIGTERM` with `TimeoutStopSec=45` to let an in-flight LLM stream drain.
+- Stop sends `SIGTERM` with `TimeoutStopSec=45`; the server now orchestrates a graceful drain (scheduler stop, WebSocket 1001 closes, HTTP close, manager/task cancellation, LTM drain, sqlite close) and should exit naturally before systemd needs the timeout.
 
 ## Release layout
 
@@ -76,17 +76,36 @@ $USER` to survive logout.)
    on `patch-package` being resolvable on PATH during install), then `npx --no-install patch-package`
    to apply `patches/` explicitly, then `env -u NODE_ENV npm run build` (web). Asserts
    `web/dist/index.html` and `server/src/index.ts` exist or dies.
-4. **Atomic symlink swap** — point `previous` at the old `current`, then
+4. **Seeded-skill drift gate, against the staged release** — before `current` moves, run
+   `scripts/check-skills-drift.sh <new-release>/server/skills ~/.ytsejam/data/skills`. A content drift
+   exit (`1`) aborts unless `ALLOW_SKILL_DRIFT=1`; structural errors still abort. This is intentionally
+   after the release dir exists and before activation, so a failed deploy leaves the prepared release
+   available as the operator's sync source but does not change what systemd is running.
+5. **Atomic symlink swap** — point `previous` at the old `current`, then
    `ln -sfn <release> current.new && mv -Tf current.new current` (atomic rename).
-5. **Restart + health-check** — if the unit is enabled, `systemctl --user restart ytsejam`, then up to
+6. **Restart + health-check** — if the unit is enabled, `systemctl --user restart ytsejam`, then up to
    5 retries of `curl -fsS http://127.0.0.1:<port>/`. **On failure: auto-rollback** — flip `current`
    back to `previous`, restart, and exit non-zero. If the unit isn't enabled, it cuts the release and
    swaps the symlink but doesn't start anything.
-6. **Prune** — keep the last `KEEP_RELEASES` (default 5) release dirs.
+7. **Prune** — keep the last `KEEP_RELEASES` (default 5) release dirs.
 
 The agent contract: `deploy.sh` verifies the *exit code* and the health check, not log scraping. The
 quality gate (`scripts/gate.sh`) is a **separate** pre-deploy bar — `deploy.sh` does not run it; run
 the gate before you deploy. See [`quality-gate.md`](quality-gate.md).
+
+
+## `deploy/sync-skills.sh` semantics
+
+Use this when the deploy drift gate says seeded skills differ from the live runtime copy:
+
+```bash
+bash deploy/sync-skills.sh           # dry-run: list seeded files that would change
+bash deploy/sync-skills.sh --yes     # copy those seeded files into the live skills dir
+```
+
+The important post-#216 behavior: by default the script reads seeds from the **newest timestamped release directory** under `$YTSEJAM_HOME/releases/`, not from `~/.ytsejam/current`. A drift-gate abort happens after `deploy.sh` has already built `<new-release>/server/skills` but before it advances `current`; comparing against `current` would therefore compare the live skills against the previous successful release and can incorrectly report "no drift". `sync-skills.sh` instead diffs/copies what **will** be live if the blocked deploy proceeds. On fresh/non-deploy boxes with no `releases/` dir, it falls back to `$YTSEJAM_HOME/current/server/skills`.
+
+Only seeded names are touched: flat `*.md` seeds and directory-bundle `*.md` files (`<name>/SKILL.md` plus immediate markdown siblings). Generated domain skills, user bundles, live-only files inside a seeded bundle, and any live skill with no seed counterpart are never deleted or overwritten. Override `SEED_DIR=` or `LIVE_DIR=` only when deliberately syncing a non-default tree.
 
 ## `deploy/rollback.sh`
 
