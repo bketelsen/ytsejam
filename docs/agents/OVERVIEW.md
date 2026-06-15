@@ -55,9 +55,9 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   opening the HTTP listener.
 - **`cli/`** — argv subcommands that share the server's modules but never boot it. `dispatch.ts`
   owns the `ltm` namespace; `ltm-commands.ts` implements `ltm replay [--force]` and `ltm health`
-  by opening LTM directly + running one reconcile tick. Used for one-off back-fill from the shell
-  (`npm run ltm -- replay`); requires the server stopped because LTM is single-writer. See
-  [`memory-bridge.md`](memory-bridge.md) § CLI.
+  (open LTM directly + reconcile tick; require server stopped — single-writer lock) plus
+  `ltm backfill <dir>` (rate-limited turn ingest via the running server's admin route — requires
+  server **running**). See [`memory-bridge.md`](memory-bridge.md) § CLI.
 - **`config.ts`** — `loadConfig()` reads env into a typed `Config`. The only required var is
   `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout.
 - **`server.ts`** — `createApp()` builds the Hono app: bearer-token auth on `/api/*`, the REST routes
@@ -149,8 +149,10 @@ short TTL, never throws — sessions degrade gracefully if a memory read fails).
 
 The memory module also drives the **cog→LTM bridge**: cog observation writes are mirrored into
 the long-term-memory substrate at `packages/ltm/` (opened against `<dataDir>/ltm/`), with a
-back-fill reconciler for anything that missed the inline path. The `recall` tool queries both
-substrates and interleaves results. See [`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md),
+back-fill reconciler for anything that missed the inline path. **Conversation turns themselves**
+are ingested into LTM on each session end via `ingestSessionFile()` — chat sessions on
+`agent_end`, subagent sessions on `run()` completion. The `recall` tool queries both substrates
+and interleaves results. See [`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md),
 and `server/src/memory/README.md`.
 
 ### `server/skills/` — seeded skill playbooks

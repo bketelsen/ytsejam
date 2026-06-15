@@ -45,6 +45,7 @@ import {
   type RunInlineCompactionResult,
 } from "./compaction.ts";
 import { memoryRoot } from "./memory/index.ts";
+import type { LtmIngestSink } from "./memory/ltm-ingest-sink.ts";
 
 const SUBAGENT_CWD = "subagent";
 const REPORT_MAX = 16_000;
@@ -118,6 +119,14 @@ export interface TaskManagerOptions {
   timeoutMs: number;
   /** inject a completion/failure message into the parent session */
   notifyParent: (parentSessionId: string, text: string) => Promise<void>;
+  /**
+   * Optional LTM ingest hook fired fire-and-forget when a subagent task
+   * run completes. Lazy getter (not a direct ref) because the managers
+   * are constructed before the LTM store is opened at boot; the thunk
+   * re-reads the live ref each call, so it also correctly returns null
+   * after shutdown detaches LTM via attachLtm(null).
+   */
+  ltm?: () => LtmIngestSink | null;
 }
 
 /**
@@ -626,6 +635,17 @@ export class TaskManager {
         }
       } finally {
         clearTimeout(timer);
+        setTimeout(() => {
+          void this.opts.ltm
+            ?.()
+            ?.ingestSessionFile(active.metadata.path)
+            .catch((err) =>
+              console.error(
+                `failed to ingest subagent session ${active.metadata.id} for task ${taskId} into LTM`,
+                err,
+              ),
+            );
+        }, 0);
         this.active.delete(taskId);
       }
 

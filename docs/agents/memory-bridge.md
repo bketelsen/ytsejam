@@ -35,7 +35,7 @@ append fans out into LTM as a `kind: "observation"` record, content-addressed
 by `cog:<domainPath>/observations.md#<sha256(line)[:12]>` so replay never
 duplicates. LTM → cog is **not** mirrored.
 
-## Two write paths into LTM
+## Three write paths into LTM
 
 1. **Inline path — `memory.recordObservation()`** (live write). Every
    `cog_append` to `<domain>/observations.md` is routed through this in
@@ -49,8 +49,17 @@ duplicates. LTM → cog is **not** mirrored.
    external editor writes, edits made while LTM was down, lines that
    pre-date wire-up. Uses the same content-addressed origin and a per-line
    `ltm.hasObservation(origin)` dedup so a normal tick is cheap.
+3. **Turn-ingest path — `ingestSessionFile()`** (per session end). When a
+   chat session emits `agent_end`, the manager calls
+   `ltm.ingestSessionFile(sessionJsonlPath)`. Subagent sessions mirror this
+   from the task manager's `run()` completion path. Best-effort: a detached
+   or throwing LTM never breaks the session. This is the path that puts
+   conversation turns (not just `observations.md` lines) into the LTM
+   substrate, complementing the cog-mirror paths above. Late-bound via
+   `ltm: () => memory.getLtm()` thunk in the manager/task-manager so
+   construction order and `attachLtm(null)` shutdown remain clean.
 
-Both paths produce the **same origin string** for the same line bytes, so a
+The two cog-mirror paths produce the **same origin string** for the same line bytes, so a
 line that hit both paths is mirrored exactly once. CRLF and trailing
 whitespace are normalized before hashing (the reconciler reads files split
 on `/\r?\n/` and trimmed; the inline writer formats clean lines from
@@ -248,6 +257,8 @@ patched dependency, no separate binary that duplicates boot.
 node server/src/index.ts ltm replay [--force] [--rebuild] [--prune]   # one reconcile tick, JSON stats
 node server/src/index.ts ltm health             # one-off CLI snapshot
 npm run ltm -- replay                           # ergonomic wrapper from repo root
+node server/src/index.ts ltm backfill <dir> [--rate=N] [--batch=N] [--pause-ms=N] [--poll-ms=N]
+                                                  # rate-limited backfill via running server's admin route
 ```
 
 `ltm replay` exits 0 if `stats.errors === 0`, 1 otherwise. `--force`
@@ -260,6 +271,15 @@ LTM directly, so **the server must be stopped** (single-writer lock). The
 CLI's `ltm health` is intentionally not a live-server health surface — for
 live state, hit the server's `/api/memory/health` endpoint or watch the
 brain icon in the web UI (see [`observability.md`](observability.md)).
+
+`ltm backfill` is different from the other two subcommands: it requires the
+server to be **running** because it speaks HTTP to the admin route at
+`POST/GET/DELETE /api/admin/ltm-backfill[/:jobId]` rather than opening LTM
+directly. This preserves the single-writer invariant — only the server
+process touches the substrate. The CLI POSTs to start a job, polls GET
+until terminal status, and sends DELETE on Ctrl-C for graceful cancel.
+Auth via `YTSEJAM_API_TOKEN`, server URL via `YTSEJAM_API_URL` (default
+`http://127.0.0.1:9873`).
 
 ## Health surface
 

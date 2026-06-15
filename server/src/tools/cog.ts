@@ -44,6 +44,7 @@ const RPC_METHODS = [
   "init_canonical_file",
   "skill_write",
   "reconcile_now",
+  "consolidate_ltm",
 ] as const;
 
 type RpcMethod = (typeof RPC_METHODS)[number];
@@ -96,6 +97,7 @@ const rpcDispatch: Record<RpcMethod, (params: RpcParams) => Promise<unknown>> = 
     }
     return memory.reconcileNow(force !== undefined ? { force } : {});
   },
+  "consolidate_ltm": () => memory.consolidateLtm(),
 };
 
 // rejectParams: tool-layer unknown-key guard for methods whose memory function
@@ -294,7 +296,7 @@ export function createCogTools(): AgentTool<any>[] {
       name: "cog_rpc",
       label: "Cog envelope RPC",
       description:
-        "Call a consolidated cogmemory RPC (session_brief, domain_summary, housekeeping_scan, audits, index computations...). Returns the JSON envelope. Used mainly by skill playbooks.",
+        "Call a consolidated cogmemory RPC (session_brief, domain_summary, housekeeping_scan, consolidate_ltm, audits, index computations...). Returns the JSON envelope. Used mainly by skill playbooks.",
       parameters: rpcParams,
       execute: async (_id, p) => {
         const { method, params } = p as { method: string; params?: RpcParams };

@@ -29,6 +29,7 @@ import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
 import { memoryRoot } from "./memory/index.ts";
+import type { LtmIngestSink } from "./memory/ltm-ingest-sink.ts";
 import { createSessionCwdTools } from "./tools/index.ts";
 import {
   appendDevLogLine,
@@ -112,6 +113,14 @@ export interface AgentManagerOptions {
   skills?: { promptSection(): Promise<string> };
   /** Approval prompt coordinator, plumbed now for gated-tool integration. */
   approvalCoordinator?: ApprovalCoordinator;
+  /**
+   * Optional LTM ingest hook fired fire-and-forget when a chat session
+   * settles at agent_end. Lazy getter (not a direct ref) because the
+   * managers are constructed before the LTM store is opened at boot;
+   * the thunk re-reads the live ref each call, so it also correctly
+   * returns null after shutdown detaches LTM via attachLtm(null).
+   */
+  ltm?: () => LtmIngestSink | null;
 }
 
 interface OpenSession {
@@ -382,6 +391,17 @@ export class AgentManager {
         // outside the run's listener settlement to avoid reentrancy
         setTimeout(() => void this.maybeGenerateTitle(opened), 0);
       }
+      setTimeout(() => {
+        void this.opts.ltm
+          ?.()
+          ?.ingestSessionFile(opened.metadata.path)
+          .catch((err) =>
+            console.error(
+              `failed to ingest session ${opened.id} into LTM`,
+              err,
+            ),
+          );
+      }, 0);
       if (opened.compaction?.pendingCompaction?.trigger === "reactive") {
         // Reactive overflow recovery runs at agent_end, not turn_end, because:
         //   (1) harness.compact() requires phase === "idle" — the agent_end
