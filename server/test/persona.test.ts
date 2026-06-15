@@ -24,6 +24,17 @@ describe("composeWorkerPrompt", () => {
     expect(prompt).toContain("Paraphrase");
     expect(prompt.toLowerCase()).toContain("verbatim");
   });
+
+  test("tells workers there is no approval gating inside a subagent", () => {
+    const prompt = composeWorkerPrompt("You are Jeeves.", {
+      dataDir: "/data",
+      now: new Date("2026-06-09T12:00:00Z"),
+    });
+    // Approval gating is parent-only; subagents inherit nothing and always
+    // run their tools. Stale vibe-only guidance must be gone.
+    expect(prompt).toContain("no approval gating inside a subagent");
+    expect(prompt).not.toContain("Be careful with destructive commands");
+  });
 });
 
 describe("composeSystemPrompt", () => {
@@ -35,6 +46,13 @@ describe("composeSystemPrompt", () => {
     expect(prompt.indexOf("Jeeves")).toBeLessThan(prompt.indexOf("2026-06-09"));
     expect(prompt).toContain("/data");
     expect(prompt).toContain("web_search");
+    expect(prompt).toContain("In ASK mode they pause for user approval; in YOLO mode they run immediately");
+    expect(prompt).toContain("/yolo and /careful prefixes");
+    expect(prompt).toContain("always run (memory writes are exempt from the approval gate by design)");
+    expect(prompt).toContain("check_task");
+    expect(prompt).toContain("recall");
+    expect(prompt).not.toContain("never run them speculatively");
+    expect(prompt).not.toContain("Be careful with destructive commands");
   });
 
   test("appends cog and skills sections when provided, omits them otherwise", () => {
