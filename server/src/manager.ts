@@ -113,7 +113,13 @@ export interface AgentManagerOptions {
   skills?: { promptSection(): Promise<string> };
   /** Approval prompt coordinator, plumbed now for gated-tool integration. */
   approvalCoordinator?: ApprovalCoordinator;
-  /** Optional LTM ingest hook for completed chat turns. */
+  /**
+   * Optional LTM ingest hook fired fire-and-forget when a chat session
+   * settles at agent_end. Lazy getter (not a direct ref) because the
+   * managers are constructed before the LTM store is opened at boot;
+   * the thunk re-reads the live ref each call, so it also correctly
+   * returns null after shutdown detaches LTM via attachLtm(null).
+   */
   ltm?: () => LtmIngestSink | null;
 }
 
