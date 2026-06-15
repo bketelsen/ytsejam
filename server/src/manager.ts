@@ -782,6 +782,19 @@ export class AgentManager {
     this.emitMeta(id);
   }
 
+  /**
+   * Trigger title generation for a session that's missing one. No-op if the
+   * session already has a title, or has no user messages, or is mid-rename.
+   * Same path as the automatic post-first-turn trigger (maybeGenerateTitle)
+   * — same invariants, same races. Built for one-shot backfill of sessions
+   * that pre-date the OAuth fix (commit c2cf026); also handy as a general
+   * "regenerate" operator action.
+   */
+  async regenerateTitle(id: string): Promise<void> {
+    const opened = await this.getOrOpen(id);
+    await this.maybeGenerateTitle(opened);
+  }
+
   async setModel(id: string, modelRef: string): Promise<void> {
     const opened = await this.getOrOpen(id);
     await opened.harness.setModel(this.opts.resolveModel(modelRef));

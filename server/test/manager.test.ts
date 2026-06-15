@@ -427,6 +427,31 @@ describe("AgentManager", () => {
     expect(indexer.getSession(row.id)!.title).toBe("User Chose This");
   });
 
+  test("regenerateTitle backfills a NULL title on an existing session", async () => {
+    // Backfill path for sessions that pre-date commit c2cf026 (the OAuth fix
+    // for maybeGenerateTitle). The wrapper just opens the session and calls
+    // the same private maybeGenerateTitle, so it inherits all the same
+    // invariants (skip if already titled, skip if no user msgs, skip if
+    // pendingTitle set). This test verifies the happy backfill path; the
+    // no-op-when-titled path is implicit in maybeGenerateTitle's first guard
+    // and covered by the existing race tests.
+    const { manager, indexer } = makeManager(faux, { generateTitles: false });
+    // Phase 1: create session, send first turn, confirm NO title was written
+    // (generateTitles: false).
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "tell me a joke");
+    await manager.waitForIdle(row.id);
+    expect(indexer.getSession(row.id)!.title).toBeNull();
+
+    // Phase 2: regenerateTitle should now write one. Use a fresh response
+    // queue because the title call consumes one response.
+    faux.setResponses([fauxAssistantMessage("Backfilled Title Six Words")]);
+    await manager.regenerateTitle(row.id);
+    await waitFor(() => indexer.getSession(row.id)?.title === "Backfilled Title Six Words");
+    expect(indexer.getSession(row.id)!.title).toBe("Backfilled Title Six Words");
+  });
+
   test("rename and archive update index and emit events; JSONL file stays on disk", async () => {
     const { mkdtempSync, readdirSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
