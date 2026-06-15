@@ -12,18 +12,42 @@
 #   bash deploy/sync-skills.sh           # dry-run (print what would change, exit 0)
 #   bash deploy/sync-skills.sh --yes     # actually copy
 #
-# Reads from $YTSEJAM_HOME/current/server/skills (the active release's seed dir)
+# Reads from $YTSEJAM_HOME/releases/<newest>/server/skills (the most recent
+# release dir, which is what deploy.sh's drift gate compares against —
+# `current` is the last *successful* deploy and may be stale when a failed
+# deploy aborted at the drift gate)
 # Writes to $YTSEJAM_HOME/data/skills (the live runtime dir)
 #
 # Override paths via env vars:
 #   YTSEJAM_HOME       deploy root        (default ~/.ytsejam)
-#   SEED_DIR           seed source        (default $YTSEJAM_HOME/current/server/skills)
+#   SEED_DIR           seed source        (default newest dir under $YTSEJAM_HOME/releases/)
 #   LIVE_DIR           live destination   (default $YTSEJAM_HOME/data/skills)
 
 set -euo pipefail
 
 YTSEJAM_HOME="${YTSEJAM_HOME:-$HOME/.ytsejam}"
-SEED_DIR="${SEED_DIR:-$YTSEJAM_HOME/current/server/skills}"
+# Default to the NEWEST release dir, not `current`. When deploy.sh aborts
+# at the drift gate, it has built a fresh release dir but has NOT yet
+# advanced the `current` symlink (that swap is downstream of the gate).
+# Comparing against `current` would compare the operator against the
+# PREVIOUS release's seeds — exactly the false-negative ("no drift —
+# nothing to sync") that masked the real drift in the unreleased build
+# they're trying to ship. Walk releases/ instead. Operator can still
+# override with SEED_DIR= to point anywhere.
+if [[ -z "${SEED_DIR:-}" ]]; then
+  releases_root="$YTSEJAM_HOME/releases"
+  if [[ -d "$releases_root" ]]; then
+    # find -maxdepth + sort -r picks the lexicographically-newest dir,
+    # which matches deploy.sh's TIMESTAMP=$(date +%Y%m%d-%H%M%S) format.
+    newest_release="$(find "$releases_root" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r | head -1)"
+    if [[ -n "$newest_release" ]]; then
+      SEED_DIR="$releases_root/$newest_release/server/skills"
+    fi
+  fi
+  # Fallback: if no releases/ dir exists yet (fresh checkout, dev box),
+  # fall back to `current` so the script still works in non-deploy contexts.
+  SEED_DIR="${SEED_DIR:-$YTSEJAM_HOME/current/server/skills}"
+fi
 LIVE_DIR="${LIVE_DIR:-$YTSEJAM_HOME/data/skills}"
 
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; NC='\033[0m'

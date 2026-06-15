@@ -169,6 +169,90 @@ echo "livey" > "$WORK/c12/live/foo.md"
 SEED_DIR="$WORK/c12/seed" LIVE_DIR="$WORK/c12/live" bash "$SYNC_SCRIPT" --yes >/dev/null 2>&1
 run_case "idempotent re-run → no drift" "dry" 0 "no drift" "" "$WORK/c12/seed" "$WORK/c12/live"
 
+# ── Cases 13–17: SEED_DIR-defaulting regression (the 2026-06-15 bug). ──
+# When YTSEJAM_HOME is set and SEED_DIR is NOT, the script must default to
+# the NEWEST dir under $YTSEJAM_HOME/releases/, not $YTSEJAM_HOME/current.
+# This catches the false-negative where deploy.sh aborts at the gate
+# (current still stale) and the operator's `sync-skills.sh --yes` sees
+# "no drift" against current and re-fails the next deploy.
+# These cases set YTSEJAM_HOME and LIVE_DIR but deliberately leave SEED_DIR
+# unset to exercise the new defaulting path.
+
+assert_substring() {
+  # Lightweight helper for the YTSEJAM_HOME-based cases (run_case takes SEED_DIR).
+  local name="$1" want="$2" got="$3"
+  if [[ "$got" == *"$want"* ]]; then
+    echo "PASS [$name]"
+    pass=$((pass + 1))
+  else
+    echo "FAIL [$name]" >&2
+    echo "  want substring: $want" >&2
+    echo "  got: $got" >&2
+    fail=$((fail + 1))
+  fi
+}
+
+# Case 13: stale current, newer release pending, live = stale → must detect drift
+mkdir -p "$WORK/c13/releases/20260101-000000/server/skills"
+mkdir -p "$WORK/c13/releases/20260102-000000/server/skills"
+mkdir -p "$WORK/c13/data/skills"
+echo "old skill content" > "$WORK/c13/releases/20260101-000000/server/skills/cog.md"
+echo "new skill content" > "$WORK/c13/releases/20260102-000000/server/skills/cog.md"
+echo "old skill content" > "$WORK/c13/data/skills/cog.md"
+ln -sfn "$WORK/c13/releases/20260101-000000" "$WORK/c13/current"
+
+out13=$(LIVE_DIR="$WORK/c13/data/skills" YTSEJAM_HOME="$WORK/c13" bash "$SYNC_SCRIPT" 2>&1)
+assert_substring "stale-current-pending-release: dry-run detects drift" "would sync cog.md" "$out13"
+assert_substring "stale-current-pending-release: cites count of 1" "1 seeded skill(s) would be synced" "$out13"
+
+# Case 14: --yes against the same scenario writes the NEW release's content
+out14=$(LIVE_DIR="$WORK/c14/data/skills" YTSEJAM_HOME="$WORK/c14" bash -c "
+  set -euo pipefail
+  mkdir -p $WORK/c14/releases/20260101-000000/server/skills
+  mkdir -p $WORK/c14/releases/20260102-000000/server/skills
+  mkdir -p $WORK/c14/data/skills
+  echo 'old skill content' > $WORK/c14/releases/20260101-000000/server/skills/cog.md
+  echo 'new skill content' > $WORK/c14/releases/20260102-000000/server/skills/cog.md
+  echo 'old skill content' > $WORK/c14/data/skills/cog.md
+  ln -sfn $WORK/c14/releases/20260101-000000 $WORK/c14/current
+  LIVE_DIR=$WORK/c14/data/skills YTSEJAM_HOME=$WORK/c14 bash $SYNC_SCRIPT --yes
+  cat $WORK/c14/data/skills/cog.md
+" 2>&1)
+assert_substring "stale-current-pending-release: --yes writes NEW content" "new skill content" "$out14"
+assert_substring "stale-current-pending-release: --yes reports sync" "synced 1 seeded skill(s)" "$out14"
+
+# Case 15: live already matches NEWEST release → no drift
+mkdir -p "$WORK/c15/releases/20260101-000000/server/skills"
+mkdir -p "$WORK/c15/releases/20260102-000000/server/skills"
+mkdir -p "$WORK/c15/data/skills"
+echo "old" > "$WORK/c15/releases/20260101-000000/server/skills/cog.md"
+echo "match" > "$WORK/c15/releases/20260102-000000/server/skills/cog.md"
+echo "match" > "$WORK/c15/data/skills/cog.md"
+ln -sfn "$WORK/c15/releases/20260102-000000" "$WORK/c15/current"
+
+out15=$(LIVE_DIR="$WORK/c15/data/skills" YTSEJAM_HOME="$WORK/c15" bash "$SYNC_SCRIPT" 2>&1)
+assert_substring "match-newest-release: no drift" "no drift" "$out15"
+
+# Case 16: explicit SEED_DIR override still wins (operator can point anywhere)
+mkdir -p "$WORK/c16/releases/20260102-000000/server/skills"
+mkdir -p "$WORK/c16/alt-seed" "$WORK/c16/data/skills"
+echo "newest-release" > "$WORK/c16/releases/20260102-000000/server/skills/cog.md"
+echo "alt-content" > "$WORK/c16/alt-seed/cog.md"
+echo "newest-release" > "$WORK/c16/data/skills/cog.md"
+ln -sfn "$WORK/c16/releases/20260102-000000" "$WORK/c16/current"
+
+out16=$(SEED_DIR="$WORK/c16/alt-seed" LIVE_DIR="$WORK/c16/data/skills" YTSEJAM_HOME="$WORK/c16" bash "$SYNC_SCRIPT" 2>&1)
+assert_substring "SEED_DIR-override: takes precedence over YTSEJAM_HOME default" "would sync cog.md" "$out16"
+
+# Case 17: no releases/ dir → fall back to current/server/skills
+mkdir -p "$WORK/c17/fresh/server/skills" "$WORK/c17/data/skills"
+echo "fresh" > "$WORK/c17/fresh/server/skills/cog.md"
+echo "old-live" > "$WORK/c17/data/skills/cog.md"
+ln -sfn "$WORK/c17/fresh" "$WORK/c17/current"
+
+out17=$(LIVE_DIR="$WORK/c17/data/skills" YTSEJAM_HOME="$WORK/c17" bash "$SYNC_SCRIPT" 2>&1)
+assert_substring "no-releases-dir: falls back to current/server/skills" "would sync cog.md" "$out17"
+
 echo ""
 echo "sync-skills.test.sh: $pass passed, $fail failed"
 [[ $fail -eq 0 ]]
