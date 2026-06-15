@@ -11,11 +11,12 @@ import { join } from "node:path";
 vi.mock("../../src/cli/ltm-commands.ts", () => ({
   ltmReplay: vi.fn(async () => 0),
   ltmHealth: vi.fn(async () => 0),
+  ltmBackfill: vi.fn(async () => 0),
 }));
 
 // Imported AFTER the mock so the mocked symbols are bound.
 import { runCli } from "../../src/cli/dispatch.ts";
-import { ltmReplay, ltmHealth } from "../../src/cli/ltm-commands.ts";
+import { ltmReplay, ltmHealth, ltmBackfill } from "../../src/cli/ltm-commands.ts";
 
 describe("runCli", () => {
   let dataDir = "";
@@ -45,6 +46,7 @@ describe("runCli", () => {
     // Reset call history per test so routing assertions are independent.
     vi.mocked(ltmReplay).mockClear();
     vi.mocked(ltmHealth).mockClear();
+    vi.mocked(ltmBackfill).mockClear();
   });
 
   afterEach(async () => {
@@ -163,5 +165,64 @@ describe("runCli", () => {
     expect(await runCli(["ltm", "health"])).toBe(0);
     expect(ltmHealth).toHaveBeenCalledTimes(1);
     expect(vi.mocked(ltmHealth).mock.calls[0]![0]).toEqual({});
+  });
+
+  it("routes `ltm backfill <dir>` to ltmBackfill with defaults", async () => {
+    expect(await runCli(["ltm", "backfill", "/tmp/fixture"])).toBe(0);
+    expect(ltmBackfill).toHaveBeenCalledTimes(1);
+    const opts = vi.mocked(ltmBackfill).mock.calls[0]![0];
+    expect(opts.dir).toBe("/tmp/fixture");
+    expect(opts.rate).toBe(2);
+    expect(opts.batch).toBe(10);
+    expect(opts.pauseMs).toBe(2000);
+    expect(opts.pollMs).toBe(5000);
+    expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("routes `ltm backfill <dir> --rate=N --batch=N --pause-ms=N --poll-ms=N` forwarding all flags", async () => {
+    expect(
+      await runCli([
+        "ltm",
+        "backfill",
+        "/tmp/fixture",
+        "--rate=5",
+        "--batch=20",
+        "--pause-ms=500",
+        "--poll-ms=1000",
+      ]),
+    ).toBe(0);
+    expect(ltmBackfill).toHaveBeenCalledTimes(1);
+    const opts = vi.mocked(ltmBackfill).mock.calls[0]![0];
+    expect(opts.dir).toBe("/tmp/fixture");
+    expect(opts.rate).toBe(5);
+    expect(opts.batch).toBe(20);
+    expect(opts.pauseMs).toBe(500);
+    expect(opts.pollMs).toBe(1000);
+  });
+
+  it("parseFlag rejects NaN/zero/negative values and falls back to defaults", async () => {
+    // --rate=abc (NaN), --batch=0 (≤0), --pause-ms=-1 (≤0), --poll-ms is omitted (default)
+    expect(
+      await runCli([
+        "ltm",
+        "backfill",
+        "/tmp/fixture",
+        "--rate=abc",
+        "--batch=0",
+        "--pause-ms=-1",
+      ]),
+    ).toBe(0);
+    expect(ltmBackfill).toHaveBeenCalledTimes(1);
+    const opts = vi.mocked(ltmBackfill).mock.calls[0]![0];
+    expect(opts.dir).toBe("/tmp/fixture");
+    expect(opts.rate).toBe(2); // default
+    expect(opts.batch).toBe(10); // default
+    expect(opts.pauseMs).toBe(2000); // default
+    expect(opts.pollMs).toBe(5000); // default (not provided)
+  });
+
+  it("returns 2 for `ltm backfill` (missing <dir>) without calling ltmBackfill", async () => {
+    expect(await runCli(["ltm", "backfill"])).toBe(2);
+    expect(ltmBackfill).not.toHaveBeenCalled();
   });
 });
