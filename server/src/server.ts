@@ -164,15 +164,19 @@ export function createApp(deps: AppDeps) {
   app.post("/api/admin/ltm-backfill", async (c) => {
     const ltm = memory.getLtm();
     if (!ltm) return c.json({ error: "ltm not attached" }, 503);
-    if (currentBackfillJob && (currentBackfillJob.status === "pending" || currentBackfillJob.status === "running")) {
-      return c.json({ error: "backfill already running", jobId: currentBackfillJob.id }, 409);
-    }
     const body = await c.req.json().catch(() => ({}));
     const dir = typeof body.dir === "string" ? body.dir : "";
     if (!dir) return c.json({ error: "dir is required" }, 400);
     const ratePerSec = typeof body.ratePerSec === "number" && body.ratePerSec > 0 ? body.ratePerSec : 2;
     const batchSize = typeof body.batchSize === "number" && body.batchSize > 0 ? body.batchSize : 10;
     const pauseMs = typeof body.pauseMs === "number" && body.pauseMs >= 0 ? body.pauseMs : 2000;
+    // Singleton guard + slot write are synchronous (no await between) so two
+    // concurrent POSTs can't both pass the guard. Body parse above runs first
+    // because it's the only await; once parsing returns, the guard and the
+    // currentBackfillJob = job assignment execute on the same microtask.
+    if (currentBackfillJob && (currentBackfillJob.status === "pending" || currentBackfillJob.status === "running")) {
+      return c.json({ error: "backfill already running", jobId: currentBackfillJob.id }, 409);
+    }
     const job = new BackfillJob({ ltm, dir, ratePerSec, batchSize, pauseMs });
     currentBackfillJob = job;
     // Fire and forget — keep the job in the slot for later GET reads even after done.

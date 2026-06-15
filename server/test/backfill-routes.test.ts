@@ -183,6 +183,29 @@ describe("admin backfill routes", () => {
     });
   });
 
+  test("concurrent POSTs: only one wins; the others get 409 (no race)", async () => {
+    memory.attachLtm({
+      ingestSessionFile: async () => {
+        await new Promise((r) => setTimeout(r, 100));
+        return { sessionsSeen: 1, turnsIngested: 1, recordsCreated: 1, warnings: [] };
+      },
+    } as never);
+    // Fire 3 POSTs concurrently with Promise.all — they all race through the
+    // body parse simultaneously. Only ONE should succeed; the rest must 409.
+    const reqs = Array.from({ length: 3 }, () =>
+      app.request("/api/admin/ltm-backfill", {
+        method: "POST",
+        body: JSON.stringify({ dir: backfillDir, ratePerSec: 100, batchSize: 10, pauseMs: 0 }),
+        headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+      }),
+    );
+    const responses = await Promise.all(reqs);
+    const okCount = responses.filter((r) => r.status === 200).length;
+    const conflictCount = responses.filter((r) => r.status === 409).length;
+    expect(okCount).toBe(1);
+    expect(conflictCount).toBe(2);
+  });
+
   test("GET returns 404 for unknown jobId", async () => {
     const res = await app.request("/api/admin/ltm-backfill/backfill-bogus-id", {
       headers: { authorization: "Bearer test-token" },
