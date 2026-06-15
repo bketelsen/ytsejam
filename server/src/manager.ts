@@ -16,7 +16,6 @@ import {
   type AssistantMessage,
   type Model,
 } from "@earendil-works/pi-ai";
-import type { MemorySystem } from "ltm";
 import type { ApprovalCoordinator } from "./approval/coordinator.ts";
 import { extractTurnOverride } from "./approval/prefix.ts";
 import { deriveApprovalMode } from "./approval/session-entry.ts";
@@ -30,6 +29,7 @@ import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
 import { memoryRoot } from "./memory/index.ts";
+import type { LtmIngestSink } from "./memory/ltm-ingest-sink.ts";
 import { createSessionCwdTools } from "./tools/index.ts";
 import {
   appendDevLogLine,
@@ -114,7 +114,7 @@ export interface AgentManagerOptions {
   /** Approval prompt coordinator, plumbed now for gated-tool integration. */
   approvalCoordinator?: ApprovalCoordinator;
   /** Optional LTM ingest hook for completed chat turns. */
-  ltm?: Pick<MemorySystem, "ingestSessionFile">;
+  ltm?: () => LtmIngestSink | null;
 }
 
 interface OpenSession {
@@ -387,6 +387,7 @@ export class AgentManager {
       }
       setTimeout(() => {
         void this.opts.ltm
+          ?.()
           ?.ingestSessionFile(opened.metadata.path)
           .catch((err) =>
             console.error(

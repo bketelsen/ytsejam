@@ -26,7 +26,7 @@ describe("AgentManager LTM ingest", () => {
         warnings: [],
       })),
     };
-    const { manager, dataDir } = makeManager(faux, { ltm });
+    const { manager, dataDir } = makeManager(faux, { ltm: () => ltm });
     faux.setResponses([fauxAssistantMessage("reply for ltm ingest")]);
 
     const row = await manager.createSession();

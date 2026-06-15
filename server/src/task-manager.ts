@@ -12,7 +12,6 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { MemorySystem } from "ltm";
 import type { EventBus } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
@@ -46,6 +45,7 @@ import {
   type RunInlineCompactionResult,
 } from "./compaction.ts";
 import { memoryRoot } from "./memory/index.ts";
+import type { LtmIngestSink } from "./memory/ltm-ingest-sink.ts";
 
 const SUBAGENT_CWD = "subagent";
 const REPORT_MAX = 16_000;
@@ -120,7 +120,7 @@ export interface TaskManagerOptions {
   /** inject a completion/failure message into the parent session */
   notifyParent: (parentSessionId: string, text: string) => Promise<void>;
   /** Optional LTM ingest hook for completed subagent tasks. */
-  ltm?: Pick<MemorySystem, "ingestSessionFile">;
+  ltm?: () => LtmIngestSink | null;
 }
 
 /**
@@ -631,6 +631,7 @@ export class TaskManager {
         clearTimeout(timer);
         setTimeout(() => {
           void this.opts.ltm
+            ?.()
             ?.ingestSessionFile(active.metadata.path)
             .catch((err) =>
               console.error(
