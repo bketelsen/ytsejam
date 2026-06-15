@@ -125,3 +125,26 @@ not seeded — see `docs/plans/2026-06-12-norma-skills-port.md`.
   (the parser is minimal).
 - Start the body with an "Announce at start" line and a clear step sequence — see `create-gate.md`
   as the model.
+
+## Drift gate (deploy-time)
+
+The COPYFILE_EXCL seeding rule (see [Discovery: seeded vs user, and precedence](#discovery-seeded-vs-user-and-precedence)) means a PR that updates a seeded skill (e.g. `server/skills/reflect.md`) does NOT update the live copy at `~/.ytsejam/data/skills/reflect.md` if the live file already exists. Without a check, the new behavior never reaches the runtime and the release silently "activates" stale code.
+
+`deploy/deploy.sh` runs `scripts/check-skills-drift.sh` between the release build and the symlink swap. If any seeded `<name>.md` differs from its live counterpart, the deploy aborts with a `diff -u` excerpt per drifted file. The check is read-only — an abort throws away only the prepared (un-activated) release dir; the live tree is never touched.
+
+To resolve drift before deploying:
+
+```bash
+bash deploy/sync-skills.sh           # dry-run: list what would change
+bash deploy/sync-skills.sh --yes     # apply: copy seeds over drifted live files
+```
+
+`sync-skills.sh` only touches seeded names. Generated domain-routing skills (written by `/cog setup` to the live dir only) and user dir-bundles (e.g. `brainstorm/SKILL.md`) are never compared and never copied — they have no seed counterpart.
+
+To override the gate without resolving the drift (e.g. when the live divergence is intentional and the operator accepts the risk):
+
+```bash
+ALLOW_SKILL_DRIFT=1 bash deploy/deploy.sh
+```
+
+This is rare and should be justified in a commit message or follow-up note. The override applies ONLY to content drift; structural errors from the check script (missing dirs, bad args) still abort the deploy.

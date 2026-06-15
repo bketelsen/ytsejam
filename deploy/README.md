@@ -48,6 +48,8 @@ mutates your working tree), runs `npm ci` + `npm run build`, swaps `current`
 atomically, restarts, and **auto-rolls-back if the health check on the prod port
 fails**. Old releases are pruned to the last `KEEP_RELEASES` (default 5).
 
+Between build and symlink-swap, the deploy runs a **skill drift gate**: any seeded `server/skills/*.md` that differs from its live counterpart at `~/.ytsejam/data/skills/<name>.md` aborts the deploy with a `diff -u` per drifted file. Run `bash deploy/sync-skills.sh` (dry-run) to list what would change, then `bash deploy/sync-skills.sh --yes` to apply. To override the gate (rare, justify in commit), set `ALLOW_SKILL_DRIFT=1`. See `docs/agents/skills.md` for the full contract.
+
 ## Rolling back
 
     deploy/rollback.sh   # flip current -> previous, restart, health-check

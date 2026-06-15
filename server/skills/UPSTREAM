@@ -7,10 +7,15 @@ upstream to sync back to.
 Propagation note: SkillsStore.seed() (server/src/skills.ts) copies
 seeds into the runtime data dir with COPYFILE_EXCL — copy-if-missing
 only. Editing this seed does NOT update an already-seeded live copy
-at ~/.ytsejam/data/skills/<name>.md. To activate a seed change on a
-running instance, edit the live copy directly (SkillsStore reads
-files fresh on each invocation) or delete the live copy and restart
-to let the next boot re-seed.
+at ~/.ytsejam/data/skills/<name>.md.
+
+To activate a seed change on a running instance:
+
+  bash deploy/sync-skills.sh --yes   # copy seeds → live for drifted skills
+
+deploy/deploy.sh runs scripts/check-skills-drift.sh between build and
+symlink-swap; a release that has not been synced will abort the deploy.
+See docs/agents/skills.md "Drift gate (deploy-time)" for the full contract.
 
 This file has no .md extension on purpose: the skills store seeds
 and lists only *.md files.

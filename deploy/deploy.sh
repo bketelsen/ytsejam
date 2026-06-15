@@ -95,6 +95,33 @@ log "Building web UI…"
 [[ -f "$RELEASE_DIR/web/dist/index.html" ]] || die "web build missing: $RELEASE_DIR/web/dist/index.html"
 [[ -f "$RELEASE_DIR/server/src/index.ts" ]] || die "server entry missing: $RELEASE_DIR/server/src/index.ts"
 
+# ─── 2b. Drift gate — seeded skills must match live before we go live ───
+# Why: SkillsStore.seed() (server/src/skills.ts) is COPYFILE_EXCL — it copies a
+# seed into the live data dir ONLY when the live file is missing. If a PR
+# updates a seeded skill but the live copy already exists, the new behavior
+# never reaches the runtime. This gate catches that drift before the symlink
+# swap; the release dir is built and verified but not yet live, so abort is
+# free (the prepared release just isn't activated).
+LIVE_SKILLS_DIR="$YTSEJAM_HOME/data/skills"
+RELEASE_SKILLS_DIR="$RELEASE_DIR/server/skills"
+
+if [[ -d "$LIVE_SKILLS_DIR" ]]; then
+  drift_rc=0
+  bash "$SOURCE_DIR/scripts/check-skills-drift.sh" "$RELEASE_SKILLS_DIR" "$LIVE_SKILLS_DIR" || drift_rc=$?
+  if [[ $drift_rc -eq 1 ]]; then
+    if [[ "${ALLOW_SKILL_DRIFT:-0}" == "1" ]]; then
+      warn "ALLOW_SKILL_DRIFT=1 set — proceeding past skill drift"
+    else
+      die "Refusing to deploy with skill drift. Run 'bash deploy/sync-skills.sh --yes' to sync seeds → live, or set ALLOW_SKILL_DRIFT=1 to override."
+    fi
+  elif [[ $drift_rc -ne 0 ]]; then
+    # exit ≥2 = structural error (bad args, missing dir). ALLOW_SKILL_DRIFT must NOT cover this.
+    die "Drift check failed with exit $drift_rc (structural error, not content drift). Inspect $RELEASE_SKILLS_DIR and $LIVE_SKILLS_DIR."
+  fi
+else
+  log "No live skills dir yet — skipping drift gate (first deploy)"
+fi
+
 # ─── 3. Swap symlinks atomically (save previous for rollback) ───
 log "Swapping symlinks…"
 CURRENT_LINK="$YTSEJAM_HOME/current"
