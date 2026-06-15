@@ -37,5 +37,6 @@ editing live seeded copies.
 
 ## Quality gate
 
-Before opening any PR run `bash scripts/gate.sh`. It must pass — there is no CI; this script
-is the bar.
+Before opening any PR run `bash scripts/gate.sh`. It must pass. CI runs the same script on every
+PR via `.github/workflows/gate.yml` (Node 22, `npm ci` then `bash scripts/gate.sh`) — local and CI
+gates are the same contract, so green locally means green in CI.

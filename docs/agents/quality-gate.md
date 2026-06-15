@@ -2,9 +2,17 @@
 
 > Sub-doc of [`OVERVIEW.md`](OVERVIEW.md). Script: `scripts/gate.sh`.
 
-`scripts/gate.sh` is **the single authoritative quality check for the repo. There is no CI** — this
-script is the bar. `AGENTS.md` states it must pass before any PR. Treat a green gate as the
-precondition for landing or deploying anything.
+`scripts/gate.sh` is **the single authoritative quality check for the repo** — every other gate
+(CI, deploy-time checks, agent self-verification) runs this same script. `AGENTS.md` states it must
+pass before any PR. Treat a green gate as the precondition for landing or deploying anything.
+
+CI runs the gate on every pull request and every push to `main` via
+[`.github/workflows/gate.yml`](../../.github/workflows/gate.yml) — `actions/setup-node@v4` (Node 22)
++ `npm ci` (whose `postinstall: patch-package` hook applies vendor patches automatically) +
+`bash scripts/gate.sh`. The workflow has a 15-minute timeout and uses concurrency cancellation so a
+new push to a PR cancels its in-flight run. **The workflow is intentionally thin** — all the actual
+gating logic lives in `scripts/gate.sh`, so CI and local runs diverge only on environment, never on
+contract.
 
 ## What it runs, in order
 
