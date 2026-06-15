@@ -52,6 +52,19 @@ Before proceeding, verify there's enough material to maintain:
 
 Don't run a full pipeline over an empty system. Acknowledge and exit early.
 
+## LTM consolidation
+
+Fold cooled episodic records in long-term memory into per-session summaries:
+
+```
+cog_rpc("consolidate_ltm")
+```
+
+Returns `{created, folded}` (counts of new summary records and the
+old episodic records they replaced), or `null` if no LTM is attached
+(boot-time misconfig or LTM disabled — non-blocking). Run early so
+later steps see the consolidated state.
+
 ## Process
 
 ### 1. Garbage Collect

@@ -111,6 +111,16 @@ export function getLtm(): MemorySystem | null {
   return attachedLtm;
 }
 
+/**
+ * Run LTM's decay-driven maintenance pass — fold cooled episodic records
+ * into per-session summaries. Returns null when no LTM is attached
+ * (best-effort, mirroring getLtm semantics). Called by /housekeeping.
+ */
+export async function consolidateLtm(): Promise<{ created: number; folded: number } | null> {
+  if (!attachedLtm) return null;
+  return attachedLtm.consolidate();
+}
+
 // Type-only structural reference to LtmReconciler -- avoids a cycle if
 // memory/index.ts is imported by bridge code in the future.
 type ReconcilerLike = {
