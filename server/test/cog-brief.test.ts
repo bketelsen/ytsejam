@@ -39,6 +39,24 @@ describe("CogBriefProvider", () => {
     expect(section).toMatch(/high-priority/i);
   });
 
+  test("renders decisions kind in conventions (numbered rule, edit-patterns row, glacier threshold)", async () => {
+    mockSessionBrief(async () => BRIEF);
+    const section = await new CogBriefProvider().promptSection();
+
+    // Numbered rule for decisions.md, appended as #9 after the existing 8 rules
+    expect(section).toMatch(/9\.\s+decisions\.md/);
+    expect(section).toMatch(/\[d-<slug>\]/);
+    expect(section).toMatch(/supersedes/);
+
+    // File-edit-patterns table row
+    expect(section).toMatch(/\| decisions\.md \|.*[Ss]upersede/);
+
+    // Glacier threshold mention (100 entries OR 6 months; live non-superseded never glaciered)
+    expect(section).toMatch(/decisions\.md.*100 entries/);
+    expect(section).toMatch(/6 months/i);
+    expect(section).toMatch(/live.*non-superseded.*never/i);
+  });
+
   test("caches within the TTL", async () => {
     const spy = mockSessionBrief(async () => BRIEF);
     const provider = new CogBriefProvider({ ttlMs: 60_000 });

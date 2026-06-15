@@ -33,6 +33,7 @@ Every memory file begins with \`<!-- L0: summary (max 80 chars) -->\`.
 6. Temporal validity: time-bounded facts carry \`<!-- until:YYYY-MM-DD grace:N -->\`; stable-since facts \`<!-- from:YYYY-MM-DD -->\`
 7. ALWAYS write to a domain's *path* from the Domains table below, never its id — the memory store rejects id-as-path writes
 8. cog-meta/patterns.md: edit in place, ≤70 lines of distilled, timeless rules
+9. decisions.md: append new entry \`- YYYY-MM-DD [d-<slug>]: <one-line decision>. <!-- origin: <pr-or-commit>, supersedes: <d-prior or omit> -->\`; on supersedes, also append \`<!-- superseded-by: d-<new> -->\` to the cited entry to keep the chain followable both directions
 
 ### File edit patterns
 
@@ -42,6 +43,7 @@ Every memory file begins with \`<!-- L0: summary (max 80 chars) -->\`.
 | observations.md | Append only |
 | action-items.md | Append new, check off done |
 | entities.md | Edit in place (3-line max) |
+| decisions.md | Append new, on supersedes also stamp \`<!-- superseded-by: -->\` on the cited entry |
 | cog-meta/patterns.md | Edit in place (≤70 lines) |
 | Thread files | Current State: rewrite / Timeline: append |
 | glacier/* | Read-only |
@@ -62,6 +64,7 @@ Spike: ≥5 entries in <7 days = heating topic (thread candidate, not pattern-re
 
 - observations.md >50 entries → archive oldest to \`glacier/{domain-path}/observations-{tag}.md\`
 - action-items.md >10 completed → \`glacier/{domain-path}/action-items-done.md\`
+- decisions.md >100 entries OR head entry >6 months → archive entries that are EITHER superseded OR older than the cutoff to \`glacier/{domain-path}/decisions-YYYY-MM.md\`. Live, non-superseded decisions never glacier regardless of age.
 - glacier files need YAML frontmatter: type, domain, tags, date_range, entries, summary
 
 ### Pipeline cadence (manual — suggest to the user, never run unasked)
