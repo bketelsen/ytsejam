@@ -106,12 +106,17 @@ LIVE_SKILLS_DIR="$YTSEJAM_HOME/data/skills"
 RELEASE_SKILLS_DIR="$RELEASE_DIR/server/skills"
 
 if [[ -d "$LIVE_SKILLS_DIR" ]]; then
-  if ! bash "$SOURCE_DIR/scripts/check-skills-drift.sh" "$RELEASE_SKILLS_DIR" "$LIVE_SKILLS_DIR"; then
+  drift_rc=0
+  bash "$SOURCE_DIR/scripts/check-skills-drift.sh" "$RELEASE_SKILLS_DIR" "$LIVE_SKILLS_DIR" || drift_rc=$?
+  if [[ $drift_rc -eq 1 ]]; then
     if [[ "${ALLOW_SKILL_DRIFT:-0}" == "1" ]]; then
       warn "ALLOW_SKILL_DRIFT=1 set — proceeding past skill drift"
     else
       die "Refusing to deploy with skill drift. Run 'bash deploy/sync-skills.sh --yes' to sync seeds → live, or set ALLOW_SKILL_DRIFT=1 to override."
     fi
+  elif [[ $drift_rc -ne 0 ]]; then
+    # exit ≥2 = structural error (bad args, missing dir). ALLOW_SKILL_DRIFT must NOT cover this.
+    die "Drift check failed with exit $drift_rc (structural error, not content drift). Inspect $RELEASE_SKILLS_DIR and $LIVE_SKILLS_DIR."
   fi
 else
   log "No live skills dir yet — skipping drift gate (first deploy)"
