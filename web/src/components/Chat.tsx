@@ -12,7 +12,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { client, getToken, setToken } from "@/lib/api";
-import type { ChatMessage, SkillSummary, TaskRow } from "@/lib/types";
+import type { ApprovalRequest, ChatMessage, HealthState, SkillSummary, TaskRow } from "@/lib/types";
+import { ApprovalCard } from "./ApprovalCard";
 import { Message } from "./Message";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { TaskTranscriptDialog } from "./TaskCard";
@@ -26,9 +27,12 @@ export function Chat({
   running,
   compacting,
   tasks,
+  pendingApprovals,
+  wsState,
   cwd,
   onCwdChange,
   onSend,
+  respondToApproval,
   onMenuClick,
   headerRight,
 }: {
@@ -38,9 +42,12 @@ export function Chat({
   running: boolean;
   compacting: boolean;
   tasks: Record<string, TaskRow>;
+  pendingApprovals: Record<string, ApprovalRequest>;
+  wsState: HealthState;
   cwd: string | undefined;
   onCwdChange: (cwd: string | undefined) => void;
   onSend: (text: string) => Promise<void>;
+  respondToApproval: (approvalId: string, decision: "approve" | "deny") => void;
   onMenuClick: () => void;
   headerRight?: React.ReactNode;
 }) {
@@ -66,9 +73,11 @@ export function Chat({
 
   const slash = useSlashMenu(draft, skills);
 
+  const approvalRequests = useMemo(() => Object.values(pendingApprovals), [pendingApprovals]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streaming]);
+  }, [messages.length, streaming, approvalRequests.length]);
 
   // Memoize so the reference is stable across re-renders driven by unrelated
   // state (e.g. the composer's `draft`). Without this, the fresh Map on every
@@ -136,6 +145,14 @@ export function Chat({
               <Message message={streaming} toolResults={toolResults} tasks={tasks} onViewTranscript={setTranscriptTaskId} />
             </MessageErrorBoundary>
           )}
+          {approvalRequests.map((request) => (
+            <ApprovalCard
+              key={request.approvalId}
+              request={request}
+              disabled={wsState !== "ok"}
+              onRespond={(decision) => respondToApproval(request.approvalId, decision)}
+            />
+          ))}
           <div ref={bottomRef} />
         </div>
       </div>
