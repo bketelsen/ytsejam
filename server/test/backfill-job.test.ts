@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -20,8 +20,16 @@ function makeFakeJsonl(dir: string, sid: string): string {
 }
 
 describe("BackfillJob", () => {
+  const tmpdirs: string[] = [];
+
+  afterEach(() => {
+    while (tmpdirs.length)
+      fs.rmSync(tmpdirs.pop()!, { recursive: true, force: true });
+  });
+
   it("processes files in order, fires onProgress per file, reports done status", async () => {
     const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "backfill-test-"));
+    tmpdirs.push(tmpdir);
     for (let i = 0; i < 3; i++)
       makeFakeJsonl(tmpdir, `019eb000-0000-7000-0000-00000000000${i}`);
     const progressLog: number[] = [];
@@ -51,6 +59,7 @@ describe("BackfillJob", () => {
 
   it("honors cancellation between files", async () => {
     const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "backfill-cancel-"));
+    tmpdirs.push(tmpdir);
     for (let i = 0; i < 10; i++)
       makeFakeJsonl(tmpdir, `019eb000-0000-7000-0000-00000000001${i}`);
     const fakeLtm = {
@@ -76,6 +85,7 @@ describe("BackfillJob", () => {
 
   it("aggregates per-file failures into warnings and keeps going", async () => {
     const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "backfill-warn-"));
+    tmpdirs.push(tmpdir);
     for (let i = 0; i < 3; i++)
       makeFakeJsonl(tmpdir, `019eb000-0000-7000-0000-00000000002${i}`);
     let n = 0;
@@ -98,6 +108,37 @@ describe("BackfillJob", () => {
     expect(job.processed).toBe(2); // 2 of 3 succeeded
     expect(job.warnings.length).toBe(1);
     expect(job.warnings[0]).toContain("simulated ingest fail");
+  });
+
+  it("double-run is a no-op", async () => {
+    const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "backfill-doublerun-"));
+    tmpdirs.push(tmpdir);
+    for (let i = 0; i < 2; i++)
+      makeFakeJsonl(tmpdir, `019eb000-0000-7000-0000-00000000003${i}`);
+    let calls = 0;
+    const fakeLtm = {
+      ingestSessionFile: async () => {
+        calls++;
+        return { sessionsSeen: 1, turnsIngested: 1, recordsCreated: 1, warnings: [] };
+      },
+    };
+    const job = new BackfillJob({
+      ltm: fakeLtm,
+      dir: tmpdir,
+      ratePerSec: 1000,
+      batchSize: 10,
+      pauseMs: 0,
+    });
+    await job.run();
+    expect(job.status).toBe("done");
+    expect(job.processed).toBe(2);
+    expect(calls).toBe(2);
+
+    // Second run should be a no-op.
+    await job.run();
+    expect(job.status).toBe("done");
+    expect(job.processed).toBe(2);
+    expect(calls).toBe(2);
   });
 
   it("sets failed status when dir doesn't exist", async () => {

@@ -33,6 +33,12 @@ export type BackfillStatus =
  * JSONLs into LTM without flooding the live server. The job is deliberately
  * small and in-memory: routes/CLI own lifecycle policy, while this class owns
  * walking, pacing, per-file isolation, cancellation checkpoints, and progress.
+ *
+ * Cancellation is observed only BETWEEN files — a mid-flight ingest, the
+ * per-turn rate-sleep, and the per-batch pause all complete before the
+ * next file's cancellation check. For most use cases this is fine
+ * (files are small, rate is modest); callers needing instant cancel
+ * should keep file batches small and pace conservatively.
  */
 export class BackfillJob {
   readonly id: string;
@@ -58,6 +64,10 @@ export class BackfillJob {
   }
 
   async run(): Promise<void> {
+    // Single-shot: re-entry would re-ingest everything. The pending-cancellation
+    // checkpoint below handles cancel() called before run() starts.
+    if (this.status !== "pending") return;
+
     if (this.cancelRequested) {
       this.status = "cancelled";
       return;
