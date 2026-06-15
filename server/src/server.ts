@@ -9,6 +9,7 @@ import type { Indexer } from "./indexer.ts";
 import type { AgentManager } from "./manager.ts";
 import type { ApprovalCoordinator } from "./approval/coordinator.ts";
 import * as memory from "./memory/index.ts";
+import { BackfillJob } from "./memory/bridge/backfill-job.ts";
 import { listAvailableModels } from "./models.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
@@ -50,6 +51,7 @@ export interface AppDeps {
 export function createApp(deps: AppDeps) {
   const { manager, indexer, persona, config } = deps;
   const app = new Hono();
+  let currentBackfillJob: BackfillJob | null = null;
   // wss exported for the SIGTERM drain in index.ts (Task 4, #210):
   // the drain iterates wss.clients and sends 1001 close frames.
   const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app });
@@ -157,6 +159,50 @@ export function createApp(deps: AppDeps) {
   app.get("/api/memory/health", async (c) => {
     const h = await memory.health();
     return c.json({ ltm: h.ltm ?? null });
+  });
+
+  app.post("/api/admin/ltm-backfill", async (c) => {
+    const ltm = memory.getLtm();
+    if (!ltm) return c.json({ error: "ltm not attached" }, 503);
+    if (currentBackfillJob && (currentBackfillJob.status === "pending" || currentBackfillJob.status === "running")) {
+      return c.json({ error: "backfill already running", jobId: currentBackfillJob.id }, 409);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    const dir = typeof body.dir === "string" ? body.dir : "";
+    if (!dir) return c.json({ error: "dir is required" }, 400);
+    const ratePerSec = typeof body.ratePerSec === "number" && body.ratePerSec > 0 ? body.ratePerSec : 2;
+    const batchSize = typeof body.batchSize === "number" && body.batchSize > 0 ? body.batchSize : 10;
+    const pauseMs = typeof body.pauseMs === "number" && body.pauseMs >= 0 ? body.pauseMs : 2000;
+    const job = new BackfillJob({ ltm, dir, ratePerSec, batchSize, pauseMs });
+    currentBackfillJob = job;
+    // Fire and forget — keep the job in the slot for later GET reads even after done.
+    void job.run().catch((err) => console.error(`[backfill] job ${job.id} crashed:`, err));
+    return c.json({ jobId: job.id, status: job.status }, 200);
+  });
+
+  app.get("/api/admin/ltm-backfill/:jobId", (c) => {
+    const jobId = c.req.param("jobId");
+    if (!currentBackfillJob || currentBackfillJob.id !== jobId) {
+      return c.json({ error: "job not found" }, 404);
+    }
+    const job = currentBackfillJob;
+    return c.json({
+      jobId: job.id,
+      status: job.status,
+      processed: job.processed,
+      total: job.total,
+      lastSessionId: job.lastSessionId,
+      warnings: job.warnings,
+    });
+  });
+
+  app.delete("/api/admin/ltm-backfill/:jobId", (c) => {
+    const jobId = c.req.param("jobId");
+    if (!currentBackfillJob || currentBackfillJob.id !== jobId) {
+      return c.json({ error: "job not found" }, 404);
+    }
+    currentBackfillJob.cancel();
+    return c.body(null, 204);
   });
 
   app.post("/api/sessions", async (c) => {
