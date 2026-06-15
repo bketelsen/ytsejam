@@ -107,7 +107,7 @@ fi
   done
   echo "Resolve before deploying:"
   echo "  1. Sync seeds → live:    bash deploy/sync-skills.sh --yes"
-  echo "  2. Override (use sparingly): ALLOW_SKILL_DRIFT=1 deploy/deploy.sh"
+  echo "  2. Override (use sparingly): ALLOW_SKILL_DRIFT=1 bash deploy/deploy.sh"
   echo ""
 } >&2
 
