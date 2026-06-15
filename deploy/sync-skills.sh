@@ -25,10 +25,11 @@ SEED_DIR="${SEED_DIR:-$YTSEJAM_HOME/current/server/skills}"
 LIVE_DIR="${LIVE_DIR:-$YTSEJAM_HOME/data/skills}"
 
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; NC='\033[0m'
-# Suppress color when stdout is not a terminal (operator may capture output to a log).
-if [[ ! -t 1 ]]; then RED=''; YELLOW=''; GREEN=''; NC=''; fi
+# Suppress color when neither stdout nor stderr is a terminal (operator may capture both).
+if [[ ! -t 1 && ! -t 2 ]]; then RED=''; YELLOW=''; GREEN=''; NC=''; fi
 log()  { echo -e "${GREEN}▸${NC} $*"; }
 warn() { echo -e "${YELLOW}▸${NC} $*"; }
+warn_err() { echo -e "${YELLOW}▸${NC} $*" >&2; }
 die()  { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 
 [[ -d "$SEED_DIR" ]] || die "seed dir not found: $SEED_DIR"
@@ -46,6 +47,7 @@ case "${1:-}" in
 esac
 
 would_copy=0
+trouble=0
 shopt -s nullglob
 for seed_file in "$SEED_DIR"/*.md; do
   # defensive: skip if a future seed glob match is a directory, not a file
@@ -63,7 +65,10 @@ for seed_file in "$SEED_DIR"/*.md; do
   if [[ $rc -eq 0 ]]; then
     continue
   elif [[ $rc -ne 1 ]]; then
-    warn "cannot compare $name (diff exit $rc) — skipping; resolve manually"
+    # Trouble warnings go to stderr — they're anomaly signals, not progress.
+    # Operators piping stdout to a log must still see "this skill was left un-synced".
+    warn_err "cannot compare $name (diff exit $rc) — skipping; resolve manually"
+    trouble=$((trouble + 1))
     continue
   fi
 
@@ -77,10 +82,22 @@ for seed_file in "$SEED_DIR"/*.md; do
 done
 
 if [[ $would_copy -eq 0 ]]; then
-  log "no drift — nothing to sync"
+  if [[ $trouble -gt 0 ]]; then
+    log "no syncable drift ($trouble skill(s) skipped due to compare errors — see warnings above)"
+  else
+    log "no drift — nothing to sync"
+  fi
 elif [[ $APPLY -eq 1 ]]; then
-  log "synced $would_copy seeded skill(s)"
+  if [[ $trouble -gt 0 ]]; then
+    log "synced $would_copy seeded skill(s); $trouble skipped due to compare errors"
+  else
+    log "synced $would_copy seeded skill(s)"
+  fi
 else
   echo ""
-  warn "dry-run: $would_copy seeded skill(s) would be synced; re-run with --yes to apply"
+  if [[ $trouble -gt 0 ]]; then
+    warn "dry-run: $would_copy seeded skill(s) would be synced; $trouble skipped due to compare errors; re-run with --yes to apply"
+  else
+    warn "dry-run: $would_copy seeded skill(s) would be synced; re-run with --yes to apply"
+  fi
 fi
