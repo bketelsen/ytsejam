@@ -145,7 +145,11 @@ export function Sidebar({
                   aria-label="Session title"
                 />
               ) : (
-                <span className="flex-1 truncate text-sm" onDoubleClick={(e) => startRename(s, e)}>
+                <span
+                  className="flex-1 truncate text-sm"
+                  title={s.title ?? undefined}
+                  onDoubleClick={(e) => startRename(s, e)}
+                >
                   {s.title ?? "New session"}
                   {s.approvalMode === "yolo" ? <span className="sr-only"> (approvals off)</span> : null}
                 </span>
