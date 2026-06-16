@@ -574,6 +574,77 @@ describe("AgentManager", () => {
     expect(indexer.listSessions().map((s) => s.id)).toEqual([]);
     expect(indexer.listSessions({ includeArchived: true }).map((s) => s.id)).toEqual([row.id]);
   });
+
+  test("opening a session pinned to a vanished model falls back to the default instead of throwing", async () => {
+    // Regression: a session's transcript pins the model it last used
+    // (context.model). When that model disappears from the catalog — e.g. a
+    // github-copilot entry disabled upstream — resolveModel throws
+    // "Unknown model:" and openSession used to reject, bricking the session so
+    // it could not be opened to even re-pick a model. The fix degrades to the
+    // default model with a console.warn instead of throwing.
+    //
+    // The faux transcript pins "faux/faux-1" (faux model's provider/id). We
+    // re-open through a second manager whose resolver throws on that pin but
+    // resolves the "faux/faux" default — proving the fallback path.
+    const fauxModel = faux.getModel() as any;
+    const first = makeManager(faux);
+    faux.setResponses([fauxAssistantMessage("pinned reply")]);
+    const row = await first.manager.createSession();
+    await first.manager.sendMessage(row.id, "hi");
+    await first.manager.waitForIdle(row.id);
+
+    // simulate a catalog change + restart: fresh index, fresh manager whose
+    // resolver rejects the now-vanished pin but honors the default
+    first.indexer.reset();
+    const { AgentManager } = await import("../src/manager.ts");
+    const { PersonaStore } = await import("../src/persona.ts");
+    const { EventBus } = await import("../src/events.ts");
+    const { join } = await import("node:path");
+
+    const resolveCalls: string[] = [];
+    const resolveModel = (ref: string) => {
+      resolveCalls.push(ref);
+      if (ref === "faux/faux-1") {
+        throw new Error("Unknown model: faux/faux-1");
+      }
+      return fauxModel;
+    };
+
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+    try {
+      const manager2 = new AgentManager({
+        dataDir: first.dataDir,
+        indexer: first.indexer,
+        bus: new EventBus(),
+        persona: new PersonaStore(join(first.dataDir, "persona")),
+        resolveModel,
+        defaultModel: "faux/faux",
+        tools: [],
+        generateTitles: false,
+        authStore: new PiAuthStore(join(first.dataDir, "no-auth.json")),
+      });
+      await manager2.rebuildIndex();
+
+      // KEY: opening the session must NOT throw — it forces openSession, which
+      // hits the vanished pin and must degrade to the default.
+      const messages = await manager2.getMessages(row.id);
+      expect(messages.some((m: any) => m.role === "assistant")).toBe(true);
+
+      // the resolver was asked for the vanished pin first, then the default
+      expect(resolveCalls).toContain("faux/faux-1");
+      expect(resolveCalls).toContain("faux/faux");
+      // a non-fatal warning explaining the fallback was logged
+      expect(
+        warnings.some(
+          (w) => w.includes("faux/faux-1") && w.includes("falling back") && w.includes("faux/faux"),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
 });
 
 describe("injectMessage", () => {

@@ -220,14 +220,38 @@ export class AgentManager {
     if (!metadata) throw new Error(`Session not found: ${id}`);
     const session = await this.repo.open(metadata);
     const context = await session.buildContext();
-    const model = context.model
-      ? this.opts.resolveModel(
-          `${context.model.provider}/${context.model.modelId}`,
-        )
-      : this.opts.resolveModel(this.opts.defaultModel);
+    const model = this.resolveSessionModel(id, context.model);
     const opened = this.wire(metadata, session, model);
     this.open.set(id, opened);
     return opened;
+  }
+
+  /**
+   * Resolve the model an opened session should run on. A session's transcript
+   * pins the model it last used (context.model, derived from the last
+   * assistant message / model_change). When that pinned model has vanished
+   * from the catalog — e.g. a github-copilot entry disabled upstream —
+   * resolveModel throws "Unknown model:". That must NOT brick the session:
+   * fall back to the default so the transcript stays openable, and let the
+   * user re-pick via setModel. A default that itself fails to resolve is a
+   * genuine misconfiguration and is allowed to throw.
+   */
+  private resolveSessionModel(
+    id: string,
+    pinned: { provider: string; modelId: string } | null,
+  ): Model<any> {
+    if (!pinned) return this.opts.resolveModel(this.opts.defaultModel);
+    const pinnedRef = `${pinned.provider}/${pinned.modelId}`;
+    try {
+      return this.opts.resolveModel(pinnedRef);
+    } catch (err) {
+      console.warn(
+        `[manager] session ${id}: pinned model ${pinnedRef} no longer ` +
+          `resolves (${(err as Error).message}); falling back to default ` +
+          `${this.opts.defaultModel}`,
+      );
+      return this.opts.resolveModel(this.opts.defaultModel);
+    }
   }
 
   private wire(
