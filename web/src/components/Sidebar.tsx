@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Archive, ArchiveRestore, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { client } from "@/lib/api";
@@ -37,6 +37,12 @@ export function Sidebar({
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // Synchronous re-entry latch: Enter and a trailing blur can both call commitRename
+  // bound to the same render closure (where editingId still equals id), so a state-read
+  // guard wouldn't stop the second. A ref is shared across closures and set synchronously,
+  // so the first call latches it and the second returns immediately — independent of
+  // whether React fires onBlur for the unmounting input.
+  const committingRef = useRef(false);
 
   // Reload the archived list when the panel is opened. It's a small fetch on a
   // user gesture; not worth maintaining a live cache.
@@ -75,14 +81,18 @@ export function Sidebar({
   }
 
   async function commitRename(id: string) {
-    // Guard against double-commit (Enter sets editingId=null, then blur fires).
-    if (editingId !== id) return;
-    const next = draft.trim();
-    const original = sessions.find((s) => s.id === id)?.title ?? "";
-    setEditingId(null);
-    if (!next || next === original) return; // empty/whitespace or unchanged → no write
-    await client.patchSession(id, { title: next });
-    // Server emits a session_info update over WS; useApp's list re-renders the row.
+    if (committingRef.current) return; // re-entry latch (handles Enter+blur double-fire)
+    committingRef.current = true;
+    try {
+      const next = draft.trim();
+      const original = sessions.find((s) => s.id === id)?.title ?? "";
+      setEditingId(null);
+      if (!next || next === original) return; // empty/whitespace or unchanged → no write
+      await client.patchSession(id, { title: next });
+      // Server emits a session_info update over WS; useApp's list re-renders the row.
+    } finally {
+      committingRef.current = false;
+    }
   }
 
   function cancelRename() {
