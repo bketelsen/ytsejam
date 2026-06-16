@@ -263,7 +263,7 @@ export function createCogTools(): AgentTool<any>[] {
     {
       name: "recall",
       label: "Recall across cog + LTM",
-      description: "Unified recall across cog memory (full-text search) and long-term memory (semantic retrieval). Returns interleaved hits from both substrates, deduped by origin (cog wins on collision). Each hit is labeled with its source ('cog' or 'ltm'). Use when looking up what you know about a topic — broader and smarter than cog_search alone, especially for past conversations consolidated into LTM.",
+      description: "Your memory of past conversations and everything you've learned, retrieved by meaning. Reach for this FIRST whenever you're about to answer from what you know — a past decision, why something was done, what was discussed, what you concluded before, or whether you've seen something already — instead of grepping memory files or answering from the current context window. Searches both cog memory (full-text over distilled markdown) and long-term memory / LTM (semantic, over thousands of raw conversation turns those files were distilled from). Key distinction: cog_search only scans the markdown files; recall ALSO reaches the conversation history behind them — so for 'what did we decide / discuss / where were we / did I already tell you' questions, recall is right and cog_search will miss. Use cog_read instead when you already know the exact file to open, and grep/cog_search when you need a literal string in a file rather than recollection. Returns interleaved hits from both substrates, deduped by origin (cog wins on collision), each labeled with its source ('cog' or 'ltm').",
       parameters: searchParams,
       execute: async (_id, p) => {
         const { query } = p as { query: string };
