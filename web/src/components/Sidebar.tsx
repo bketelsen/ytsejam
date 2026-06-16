@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, ArchiveRestore } from "lucide-react";
+import { Archive, ArchiveRestore, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { client } from "@/lib/api";
 import type { SessionRow } from "@/lib/types";
@@ -35,6 +35,8 @@ export function Sidebar({
   const [showArchived, setShowArchived] = useState(false);
   const [archivedRows, setArchivedRows] = useState<SessionRow[]>([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   // Reload the archived list when the panel is opened. It's a small fetch on a
   // user gesture; not worth maintaining a live cache.
@@ -64,6 +66,27 @@ export function Sidebar({
     await client.unarchiveSession(id);
     setArchivedRows((prev) => prev.filter((s) => s.id !== id));
     onArchived(id);
+  }
+
+  function startRename(s: SessionRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setEditingId(s.id);
+    setDraft(s.title ?? "");
+  }
+
+  async function commitRename(id: string) {
+    // Guard against double-commit (Enter sets editingId=null, then blur fires).
+    if (editingId !== id) return;
+    const next = draft.trim();
+    const original = sessions.find((s) => s.id === id)?.title ?? "";
+    setEditingId(null);
+    if (!next || next === original) return; // empty/whitespace or unchanged → no write
+    await client.patchSession(id, { title: next });
+    // Server emits a session_info update over WS; useApp's list re-renders the row.
+  }
+
+  function cancelRename() {
+    setEditingId(null);
   }
 
   return (
@@ -100,20 +123,56 @@ export function Sidebar({
               ) : s.unread ? (
                 <span className="size-2 shrink-0 rounded-full bg-primary" />
               ) : null}
-              <span className="flex-1 truncate text-sm">
-                {s.title ?? "New session"}
-                {s.approvalMode === "yolo" ? <span className="sr-only"> (approvals off)</span> : null}
-              </span>
-              <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>
-              <button
-                data-slot="button"
-                onClick={(e) => archive(s.id, e)}
-                className="block text-muted-foreground hover:text-foreground md:hidden md:group-hover:block"
-                title="Archive"
-                aria-label="Archive session"
-              >
-                <Archive className="size-4" />
-              </button>
+              {editingId === s.id ? (
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void commitRename(s.id);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelRename();
+                    }
+                  }}
+                  onBlur={() => void commitRename(s.id)}
+                  className="flex-1 rounded border border-sidebar-border bg-sidebar px-1 text-sm text-sidebar-foreground outline-none"
+                  aria-label="Session title"
+                />
+              ) : (
+                <span className="flex-1 truncate text-sm" onDoubleClick={(e) => startRename(s, e)}>
+                  {s.title ?? "New session"}
+                  {s.approvalMode === "yolo" ? <span className="sr-only"> (approvals off)</span> : null}
+                </span>
+              )}
+              {editingId === s.id ? null : <span className="text-xs text-muted-foreground">{timeAgo(s.updatedAt)}</span>}
+              {editingId === s.id ? null : (
+                <button
+                  data-slot="button"
+                  onClick={(e) => startRename(s, e)}
+                  className="block text-muted-foreground hover:text-foreground md:hidden md:group-hover:block"
+                  title="Rename"
+                  aria-label="Rename session"
+                >
+                  <Pencil className="size-4" />
+                </button>
+              )}
+              {editingId === s.id ? null : (
+                <button
+                  data-slot="button"
+                  onClick={(e) => archive(s.id, e)}
+                  className="block text-muted-foreground hover:text-foreground md:hidden md:group-hover:block"
+                  title="Archive"
+                  aria-label="Archive session"
+                >
+                  <Archive className="size-4" />
+                </button>
+              )}
             </div>
             <p className="truncate text-xs text-muted-foreground">{s.preview}</p>
           </div>
