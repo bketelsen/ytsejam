@@ -90,6 +90,14 @@ phase_task_set() {
   phase_state_write "$slug" "$j"
 }
 
+# phase_task_set_str <slug> <key> <field> <string-value> — set one string field without jq-code interpolation.
+phase_task_set_str() {
+  local slug="$1" key="$2" field="$3" val="$4" cur j
+  cur="$(phase_state_read "$slug")" || return $?
+  j="$(printf '%s' "$cur" | jq --arg k "$key" --arg f "$field" --arg v "$val" '.tasks[$k][$f] = $v')" || return $?
+  phase_state_write "$slug" "$j"
+}
+
 # phase_reconcile <slug> — map Bottega task/PR status into local phase state.
 # Pure over injectable lookup function: PHASE_TASK_STATUS_FN or _phase_task_status_live.
 phase_reconcile() {
@@ -164,6 +172,84 @@ phase_gate() {
   echo "pass"; return 0
 }
 
+# phase_launch_ready <slug> — launch pending tasks whose dependencies are all merged.
+phase_launch_ready() {
+  local slug="$1" j key keys
+  j="$(phase_state_read "$slug")" || return $?
+  keys="$(printf '%s' "$j" | jq -r '.tasks | keys[]')" || return $?
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    local st
+    st="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].state')" || return $?
+    [ "$st" = "pending" ] || continue
+
+    local unmet
+    unmet="$(printf '%s' "$j" | jq -r --arg k "$key" '
+      first(.tasks as $t | $t[$k].after[]? | select(($t[.].state // "pending") != "merged")) // empty')" || return $?
+    [ -n "$unmet" ] && continue
+
+    local title proj newid
+    title="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].title // $k')" || return $?
+    proj="$(printf '%s' "$j" | jq -r '.project')" || return $?
+    if ! newid="$("${PHASE_CREATE_FN:-_phase_create_live}" "$proj" "$key" "$title")"; then
+      phase_task_set "$slug" "$key" '.state="failed"' || return $?
+      phase_task_set_str "$slug" "$key" reason "create-failed" || return $?
+      continue
+    fi
+    if [ -z "$newid" ] || [ "$newid" = "null" ] || ! [[ "$newid" =~ ^[0-9]+$ ]]; then
+      phase_task_set "$slug" "$key" '.state="failed"' || return $?
+      phase_task_set_str "$slug" "$key" reason "create-failed" || return $?
+      continue
+    fi
+    "${PHASE_KICKOFF_FN:-_phase_kickoff_live}" "$newid" >/dev/null 2>&1 || true
+    phase_task_set "$slug" "$key" ".taskId=$newid | .state=\"running\"" || return $?
+    phase_log "$slug" "launched $key as task $newid" || return $?
+  done <<< "$keys"
+}
+
+# phase_advance_prs <slug> — gate open PRs and merge only in autonomous mode when the gate passes.
+phase_advance_prs() {
+  local slug="$1" j key auto keys
+  j="$(phase_state_read "$slug")" || return $?
+  auto="$(printf '%s' "$j" | jq -r '.autonomous')" || return $?
+  keys="$(printf '%s' "$j" | jq -r '[.tasks|to_entries[]|select(.value.state=="pr_open")|.key][]')" || return $?
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    [ "$auto" = "true" ] || continue
+    local verdict
+    verdict="$(phase_gate "$slug" "$key")"
+    if [ "$verdict" = "pass" ]; then
+      local pr cur
+      cur="$(phase_state_read "$slug")" || return $?
+      pr="$(printf '%s' "$cur" | jq -r --arg k "$key" '.tasks[$k].pr')" || return $?
+      if "${PHASE_MERGE_FN:-_phase_merge_live}" "$pr"; then
+        phase_task_set "$slug" "$key" '.state="merged"' || return $?
+        phase_log "$slug" "merged $key (pr $pr)" || return $?
+      else
+        phase_task_set "$slug" "$key" '.state="parked"' || return $?
+        phase_task_set_str "$slug" "$key" reason "merge-failed" || return $?
+      fi
+    else
+      phase_task_set "$slug" "$key" '.state="parked"' || return $?
+      phase_task_set_str "$slug" "$key" reason "$verdict" || return $?
+      phase_log "$slug" "parked $key: $verdict" || return $?
+    fi
+  done <<< "$keys"
+}
+
+# phase_tick_once <slug> — one orchestration tick; returns 0 when no pending/running/pr_open tasks remain.
+phase_tick_once() {
+  local slug="$1"
+  phase_reconcile "$slug" || return $?
+  phase_advance_prs "$slug" || return $?
+  phase_launch_ready "$slug" || return $?
+  local j2 remaining
+  j2="$(phase_state_read "$slug")" || return 1
+  remaining="$(printf '%s' "$j2" | jq -r '[.tasks[]|select(.state|IN("pending","running","pr_open"))]|length')" || return 1
+  case "$remaining" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$remaining" -eq 0 ]
+}
+
 # ponytail: live helpers shell into the bottega container; offline tests inject stubs via PHASE_*_FN.
 _phase_container_gate_live() {  # <pr-branch> -> exit 0 pass / non-zero fail (incl. can't-fetch=90)
   local br="$1"
@@ -193,4 +279,17 @@ _phase_pr_branch_live() {  # <pr> -> branch name (Task 6 will wire gh; placehold
 
 _phase_pr_meta_live() {  # <pr> <tid> -> "ci mergeable blocked" (Task 6 wires bottega-api.sh); placeholder errors closed
   echo "_phase_pr_meta_live: not wired until Task 6" >&2; return 1
+}
+
+
+_phase_create_live() {  # <project> <key> <title> -> task id (Task 6 will wire bottega-api.sh)
+  echo "_phase_create_live: not wired until Task 6" >&2; return 1
+}
+
+_phase_kickoff_live() {  # <task-id> -> start task (Task 6 will wire bottega-api.sh)
+  echo "_phase_kickoff_live: not wired until Task 6" >&2; return 1
+}
+
+_phase_merge_live() {  # <pr> -> merge PR (Task 6 will wire gh/API)
+  echo "_phase_merge_live: not wired until Task 6" >&2; return 1
 }

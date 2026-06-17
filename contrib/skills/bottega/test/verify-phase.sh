@@ -194,4 +194,57 @@ export PHASE_PR_META_FN=_t_meta_ok
 rm -f /tmp/pwn_* /tmp/pwn2
 rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN
 
+
+# Task 5: full tick over stubs (autonomous run)
+export PHASE_DIR="$(mktemp -d)"
+phase_state_init t "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+ID=10; _t_create() { echo $((ID++)); }; export -f _t_create; export PHASE_CREATE_FN=_t_create ID
+_t_kick() { :; }; export -f _t_kick; export PHASE_KICKOFF_FN=_t_kick
+phase_tick_once t || true
+check "tick1: schema running"  '[ "$(phase_state_read t | jq -r .tasks.schema.state)" = "running" ]'
+check "tick1: middleware still pending (dep unmet)" '[ "$(phase_state_read t | jq -r .tasks.middleware.state)" = "pending" ]'
+phase_task_set t schema '.pr=231'
+_phase_task_status_live() { echo '{"pr_agent_complete":1,"pr_number":231,"workflow_blocked":0}'; }; export -f _phase_task_status_live
+_t_branch(){ echo b; }; export -f _t_branch; export PHASE_PR_BRANCH_FN=_t_branch
+_t_meta(){ echo "pass MERGEABLE 0"; }; export -f _t_meta; export PHASE_PR_META_FN=_t_meta
+_t_sb(){ echo ""; }; export -f _t_sb; export PHASE_STALE_BASE_FN=_t_sb
+_t_cg(){ return 0; }; export -f _t_cg; export PHASE_CONTAINER_GATE_FN=_t_cg
+_t_merge(){ return 0; }; export -f _t_merge; export PHASE_MERGE_FN=_t_merge
+phase_tick_once t || true
+check "tick2: schema merged"   '[ "$(phase_state_read t | jq -r .tasks.schema.state)" = "merged" ]'
+check "tick2: middleware launched (dep met)" '[ "$(phase_state_read t | jq -r .tasks.middleware.state)" = "running" ]'
+check "tick2: docs launched too (parallel)"  '[ "$(phase_state_read t | jq -r .tasks.docs.state)" = "running" ]'
+B="$(phase_state_read t)"; phase_tick_once t || true
+check "tick3: idempotent (no churn on merged schema)" '[ "$(phase_state_read t | jq -r .tasks.schema.taskId)" = "$(echo "$B" | jq -r .tasks.schema.taskId)" ]'
+# Task 5: injection-safety — a park VERDICT carrying jq-breakout chars must NOT flip state; reason stored literally
+unset PHASE_MERGE_FN; _t_meta_conf(){ echo "pass CONFLICTING 0"; }; export -f _t_meta_conf; export PHASE_PR_META_FN=_t_meta_conf
+phase_state_init z "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_task_set z schema '.taskId=9 | .state="pr_open" | .pr=231'
+phase_advance_prs z || true
+check "inj: conflict parks (not merged)" '[ "$(phase_state_read z | jq -r .tasks.schema.state)" = "parked" ]'
+check "inj: reason is the literal verdict" '[ "$(phase_state_read z | jq -r .tasks.schema.reason)" = "park:not-mergeable(CONFLICTING)" ]'
+# Direct jq-injection probe on phase_task_set_str: a value with quotes/jq-meta is stored as DATA, never executed
+phase_task_set_str z schema reason 'x")|.state="merged"|(.x="'
+check "inj: malicious reason stored literally" '[ "$(phase_state_read z | jq -r .tasks.schema.reason)" = "x\")|.state=\"merged\"|(.x=\"" ]'
+check "inj: malicious reason did NOT flip state to merged" '[ "$(phase_state_read z | jq -r .tasks.schema.state)" = "parked" ]'
+# Task 5: default/non-autonomous mode never merges, even with a green gate and merge function available.
+phase_state_init na "$(printf '%s' "$J" | jq '.autonomous=false')" "" >/dev/null
+phase_task_set na schema '.taskId=9 | .state="pr_open" | .pr=231'
+export PHASE_PR_META_FN=_t_meta; export PHASE_MERGE_FN=_t_merge
+phase_advance_prs na || true
+check "tick: non-autonomous leaves pr_open (no merge)" '[ "$(phase_state_read na | jq -r .tasks.schema.state)" = "pr_open" ]'
+# A gate helper can emit a park verdict with rc=1; advance_prs must still record it fail-closed instead of aborting.
+phase_state_init grc "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_task_set grc schema '.taskId=9 | .state="pr_open" | .pr=231'
+( phase_gate() { echo "park:synthetic-failed"; return 1; }
+  phase_advance_prs grc || true )
+check "tick: gate rc1 still parks" '[ "$(phase_state_read grc | jq -r .tasks.schema.state)" = "parked" ]'
+check "tick: gate rc1 reason preserved" '[ "$(phase_state_read grc | jq -r .tasks.schema.reason)" = "park:synthetic-failed" ]'
+rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_CREATE_FN PHASE_KICKOFF_FN PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN PHASE_MERGE_FN ID
+
+# Task 5: F3 regression lock — real _phase_stale_base_live body must fail-closed on a git error (lesson: Adversarially Probe Stubbed-Out Helper Bodies)
+( incus() { local p="${*: -1}"; git() { case "$1" in diff) echo "fatal: bad object" >&2; return 128;; merge-base) echo abc;; fetch|worktree) return 0;; *) command git "$@";; esac; }; export -f git; bash -c "$p"; }; export -f incus
+  out="$(_phase_stale_base_live somebranch 2>/dev/null)"; rc=$?
+  [ "$rc" -ne 0 ] ) && echo "  ok: stale-base live body fails closed on git error" || { echo "  FAIL: stale-base live body did not fail closed"; fails=$((fails+1)); }
+
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }
