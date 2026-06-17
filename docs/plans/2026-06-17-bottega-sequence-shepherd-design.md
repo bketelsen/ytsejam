@@ -119,7 +119,10 @@ Two launch verbs (autonomy chosen here, per run — never stored):
   auto-merge if the gate passes, advancing the whole DAG unattended.
 
 ### Autonomous merge gate — ALL must pass, or PARK (never merge on doubt)
-1. **Gate green** — run `scripts/gate.sh` on the PR branch *ourselves* in a worktree (don't trust CI's word alone).
+1. **Gate green** — run `scripts/gate.sh` on the PR branch *ourselves* in a worktree (don't trust CI's word
+   alone). **Runs IN THE CONTAINER** (`incus exec bottega -- su - code -c ...`), where the ytsejam checkout,
+   the gate, and the per-task worktrees already live — not on the host. The tick shells into the container to
+   fetch the PR branch into a throwaway worktree, run the gate, read the exit code, and remove the worktree.
 2. **CI passed** — GitHub checks green.
 3. **MERGEABLE** — no conflicts.
 4. **Clean termination** — not `workflow_blocked`, not run-count thrash.
@@ -201,6 +204,11 @@ The first autonomous run should be low-stakes (a couple of test-add tasks, like 
 the gate is observed on real PRs before it is trusted with anything touching server logic.
 
 ## Grounding facts (confirmed this session)
+
+- **DECISION (2026-06-17): gate #1 runs in the `bottega` container**, not the host — the container holds
+  `/home/code/projects/ytsejam` (a real checkout @ `bade808`, with `scripts/gate.sh` + AGENTS.md gate
+  breadcrumb) and is where Bottega cuts each task's worktree, so verifying there matches the execution
+  surface. The shepherd skill itself runs on the host; only the gate step shells in via `incus exec`.
 
 - No native task dependencies; `tasks` schema + `init.sql` have no edge/order/parent columns; create =
   `{title?, description?, yolo_mode?}`.
