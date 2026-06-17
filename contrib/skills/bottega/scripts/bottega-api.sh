@@ -122,7 +122,8 @@ case "$cmd" in
   doc-set)  # doc-set <taskId> <body|@file>  -> overwrite the task brief (PUT documentation)
     tid="$1"; body="$2"
     case "$body" in @*) body="$(cat "${body#@}")";; esac
-    api PUT "/api/tasks/$tid/documentation" "$(jq -n --arg c "$body" '{content:$c}')" | jq -r '. as $r | if .success then "doc-set OK: task '"$tid"' brief now \($r|tostring|length) chars sent" else ($r|tostring) end' ;;
+    body_bytes=$(printf '%s' "$body" | wc -c | tr -d ' ')
+    api PUT "/api/tasks/$tid/documentation" "$(jq -n --arg c "$body" '{content:$c}')" | jq -r --arg body_bytes "$body_bytes" '. as $r | if .success then "doc-set OK: task '"$tid"' brief now \($body_bytes) bytes sent" else ($r|tostring) end' ;;
   pr)       api GET "/api/tasks/$1/pull-request" | jq -r 'if .exists==false then "no live PR (none opened yet, or merged/closed + branch deleted)" else "url=\(.url)\nstate=\(.state)  mergeable=\(.mergeable)  ci=\(.ciStatus.status // "?")" end' ;;
   copilot)  api GET /api/copilot-auth/status | jq -r '"authenticated=\(.authenticated)  status=\(.status)  login=\(.login // .username // "-")"' ;;
   models)   api GET /api/copilot-auth/models | jq -r '(.models // .data // .) | (if type=="array" then .[] else . end) | (.id // .name // .)' ;;
