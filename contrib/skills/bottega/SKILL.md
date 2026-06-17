@@ -177,7 +177,7 @@ Commands:
 Advance policy (`advance:`):
 - `park` (default): stop at both human-judgment seams. After planification completes, log `awaiting-plan-review` and wait for a human to edit/re-plan/kick implementation. At a green PR gate, log `awaiting-merge` and leave the PR open for the user.
 - `auto`: after planification completes, automatically kick `implementation`; after a green PR gate, merge via Bottega's merge-cleanup path.
-- `yolo`: create Bottega tasks with `yolo_mode:1` so Bottega's yolo agent drives plan+implementation+PR; after a green PR gate, merge via merge-cleanup.
+- `yolo`: create Bottega tasks with `yolo_mode:1` **and kick them with `agentType=yolo`** (Bottega does not auto-start a yolo run on create), so Bottega's single yolo agent drives plan+implementation+PR end-to-end in one run; after a green PR gate, merge via merge-cleanup. Use only for low-risk single-file fixes (e.g. weed pulls) — yolo has no separate review/refinement pass; the merge gate is its only safety net.
 
 The gate remains the irreversible-edge guard under all three modes. Even `yolo` parks on a red gate, and the shepherd never merges on any non-`pass` verdict. Legacy phase files with `autonomous: true` are read as `advance: auto`; new files should use `advance:`.
 

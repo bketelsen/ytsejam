@@ -61,6 +61,38 @@ test_create_yolo_payload() {
   [ "$park_yolo" = "0" ] && [ "$auto_yolo" = "0" ] && [ "$yolo_yolo" = "1" ]
 }
 
+# A yolo task MUST be kicked with agentType=yolo (Bottega does NOT auto-start a yolo run on create;
+# without this kick the task would sit forever). park/auto start with planification (no agentType arg).
+test_launch_kicks_yolo_agent() {
+  local td rc park_kick yolo_kick
+  td="$(mktemp -d)" || return $?
+  (
+    set -- __source_only
+    . "$HERE/../scripts/bottega-api.sh" >/dev/null 2>/dev/null
+    export PHASE_DIR="$td/phases"
+    # create stub returns a fixed id; kick stub records "<id> <agentType>" per call.
+    api() { printf '{"task":{"id":781}}'; }
+    _t_kick_rec() { printf '%s|%s\n' "$1" "${2:-PLANIFICATION}" >> "$td/kicks"; }
+    PHASE_KICKOFF_FN=_t_kick_rec
+    : > "$td/kicks"
+    parsed="$(jq -n '{phase:"x",project:1,advance:"park",tasks:{t1:{key:"t1",title:"T",brief:"B",after:[]}}}')"
+    phase_state_init lkpark "$parsed" "" >/dev/null
+    phase_launch_ready lkpark >/dev/null
+    cp "$td/kicks" "$td/kicks-park"; : > "$td/kicks"
+    parsed="$(jq -n '{phase:"x",project:1,advance:"yolo",tasks:{t1:{key:"t1",title:"T",brief:"B",after:[]}}}')"
+    phase_state_init lkyolo "$parsed" "" >/dev/null
+    phase_launch_ready lkyolo >/dev/null
+    cp "$td/kicks" "$td/kicks-yolo"
+  ); rc=$?
+  if [ "$rc" -ne 0 ]; then rm -rf "$td"; return "$rc"; fi
+  park_kick="$(cat "$td/kicks-park")" || { rm -rf "$td"; return 1; }
+  yolo_kick="$(cat "$td/kicks-yolo")" || { rm -rf "$td"; return 1; }
+  rm -rf "$td"
+  # park kicks task 781 with the default (planification, no 2nd arg -> our stub records PLANIFICATION);
+  # yolo kicks task 781 with agentType=yolo.
+  [ "$park_kick" = "781|PLANIFICATION" ] && [ "$yolo_kick" = "781|yolo" ]
+}
+
 test_create_brief_falls_back_to_title() {
   local td payload title desc rc
   td="$(mktemp -d)" || return $?
@@ -191,6 +223,7 @@ check "state: bad-json write kept original intact"   'phase_state_read leak | jq
 check "create: brief reaches description" 'test_create_brief_reaches_description'
 check "create: brief falls back to title when absent" 'test_create_brief_falls_back_to_title'
 check "create yolo: create_task sends yolo_mode by advance" 'test_create_yolo_payload'
+check "launch yolo: kicks agentType=yolo (not planification, not nothing)" 'test_launch_kicks_yolo_agent'
 rm -rf "$PHASE_DIR"; unset PHASE_DIR
 
 

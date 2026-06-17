@@ -237,8 +237,11 @@ phase_launch_ready() {
       phase_task_set_str "$slug" "$key" reason "create-failed" || return $?
       continue
     fi
-    if [ "$adv" != "yolo" ]; then
-      # ponytail: kickoff is fire-and-forget — a created task is marked running even if kickoff fails (recovered by reconcile), never stranded.
+    # ponytail: kickoff is fire-and-forget — a created task is marked running even if kickoff fails (recovered by reconcile), never stranded.
+    # yolo tasks must be kicked with agentType=yolo (Bottega does NOT auto-start a yolo run on create — the task would sit forever otherwise); all other modes start with planification.
+    if [ "$adv" = "yolo" ]; then
+      "${PHASE_KICKOFF_FN:-_phase_kickoff_live}" "$newid" yolo >/dev/null 2>&1 || true
+    else
       "${PHASE_KICKOFF_FN:-_phase_kickoff_live}" "$newid" >/dev/null 2>&1 || true
     fi
     phase_task_set "$slug" "$key" ".taskId=$newid | .state=\"running\"" || return $?
