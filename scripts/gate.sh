@@ -9,6 +9,9 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+echo "=== gate: contrib script tests ==="
+bash scripts/test/bottega-api.test.sh
+
 echo "=== gate: server typecheck (tsc --noEmit) ==="
 env -u NODE_ENV npm run check
 
