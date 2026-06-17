@@ -1,3 +1,10 @@
+/**
+ * ytsejam server entrypoint.
+ * Short-circuits matching CLI argv; otherwise loads config/data dirs, wires stores,
+ * tools, managers, and scheduler, rebuilds derived index state, attaches the
+ * best-effort LTM bridge, starts Hono HTTP + WebSocket on the configured host/port,
+ * and registers SIGTERM/SIGINT graceful-shutdown drain handlers.
+ */
 import fs from "node:fs";
 import path from "node:path";
 import { serve } from "@hono/node-server";
