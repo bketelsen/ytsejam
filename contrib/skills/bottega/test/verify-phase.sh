@@ -278,4 +278,26 @@ f3_merge_base_rc="$( ( incus() { local p="${*: -1}"; git() { case "$*" in
     _phase_stale_base_live somebranch >/dev/null 2>&1; echo "$?" ) )"
 check "stale-base live merge-base failure -> exit 3 (rc-guard pinned)" '[ "$f3_merge_base_rc" = "3" ]'
 
+
+# Task 6: PR-number sink guard — even after an all-green gate, merge receives numeric PRs only.
+export PHASE_DIR="$(mktemp -d)"
+phase_state_init sink "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_task_set sink schema '.taskId=9 | .state="pr_open" | .pr="abc"'
+_t_branch_num(){ echo b; }; export -f _t_branch_num; export PHASE_PR_BRANCH_FN=_t_branch_num
+_t_meta_num(){ echo "pass MERGEABLE 0"; }; export -f _t_meta_num; export PHASE_PR_META_FN=_t_meta_num
+_t_sb_num(){ echo ""; }; export -f _t_sb_num; export PHASE_STALE_BASE_FN=_t_sb_num
+_t_cg_num(){ return 0; }; export -f _t_cg_num; export PHASE_CONTAINER_GATE_FN=_t_cg_num
+_t_merge_num(){ : > "$PHASE_DIR/sink-merge-fired"; return 0; }; export -f _t_merge_num; export PHASE_MERGE_FN=_t_merge_num
+phase_advance_prs sink || true
+check "sink: bad PR number parks" '[ "$(phase_state_read sink | jq -r .tasks.schema.state)" = "parked" ]'
+check "sink: bad PR number reason" '[ "$(phase_state_read sink | jq -r .tasks.schema.reason)" = "bad-pr-number" ]'
+check "sink: bad PR number did not merge" '[ ! -f "$PHASE_DIR/sink-merge-fired" ]'
+phase_state_init sinkok "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_task_set sinkok schema '.taskId=9 | .state="pr_open" | .pr=231'
+rm -f "$PHASE_DIR/sink-merge-fired"
+phase_advance_prs sinkok || true
+check "sink: numeric PR merges" '[ "$(phase_state_read sinkok | jq -r .tasks.schema.state)" = "merged" ]'
+check "sink: numeric PR fired merge" '[ -f "$PHASE_DIR/sink-merge-fired" ]'
+rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN PHASE_MERGE_FN
+
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }

@@ -24,6 +24,80 @@ api() { # api <method> <path> [data]
 runs_arr() { jq 'if type=="array" then . else (.agentRuns // .runs // .data // []) end'; }
 task_obj() { jq '(.task // .)'; } # task endpoints sometimes wrap in {task:...}
 
+create_task() { # create_task <projectId> <title> <body|@file> -> prints task id only
+  # The task brief MUST go in the "description" field — that is what the server
+  # writes to task-<id>.md (the planner's {{taskDocPath}}). "documentation" is
+  # NOT a create field and is silently dropped, leaving a 0-byte brief.
+  local proj="$1" title="$2" body="$3" payload tid
+  case "$body" in @*) body="$(cat "${body#@}")";; esac
+  payload=$(jq -n --arg t "$title" --arg b "$body" '{title:$t, description:$b}')
+  CREATE_TASK_RESP=$(api POST "/api/projects/$proj/tasks" "$payload")
+  tid=$(printf '%s' "$CREATE_TASK_RESP" | jq -r '(.task // .).id // empty')
+  if [ -z "$tid" ]; then echo "create FAILED: $CREATE_TASK_RESP" >&2; return 1; fi
+  printf '%s\n' "$tid"
+}
+
+# shellcheck disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/phase-lib.sh"
+
+_phase_task_status_live() { api GET "/api/tasks/$1" | task_obj; }
+
+_phase_create_live() { # <project> <key> <title> -> task id
+  # ponytail: v1 seeds the brief from the title; richer @file briefs are a follow-up
+  create_task "$1" "$3" "$3"
+}
+
+_phase_kickoff_live() { api POST "/api/tasks/$1/agent-runs" "$(jq -n '{agentType:"planification"}')" >/dev/null; }
+
+_phase_merge_live() { gh pr merge "$1" --repo bketelsen/ytsejam --squash --delete-branch; }
+
+_phase_taskid_for_pr() {  # <pr-number> -> task id whose PR matches, or empty
+  api GET /api/tasks | jq -r --arg pr "$1" '(.tasks // .) | (if type=="array" then . else [.] end) | map(select((.pr_number // .pr | tostring) == $pr)) | .[0].id // empty'
+}
+
+_phase_pr_branch_live() {  # <pr> -> head branch name
+  local tid
+  tid="$(_phase_taskid_for_pr "$1")" || return 1
+  [ -n "$tid" ] || return 1
+  api GET "/api/tasks/$tid/pull-request" | jq -r '.headRefName // .branch // .head.ref // empty'
+}
+
+_phase_pr_meta_live() {  # <pr> <tid> -> "ci mergeable blocked"
+  local tid="$2" prj tj ci mrg blk
+  prj="$(api GET "/api/tasks/$tid/pull-request")" || return 1
+  tj="$(api GET "/api/tasks/$tid" | task_obj)" || return 1
+  ci="$(printf '%s' "$prj" | jq -r '.ciStatus.status // "unknown"')" || return 1
+  mrg="$(printf '%s' "$prj" | jq -r '.mergeable // "UNKNOWN"')" || return 1
+  blk="$(printf '%s' "$tj" | jq -r '(.workflow_blocked // false) | if . == true or . == 1 then 1 else 0 end')" || return 1
+  printf '%s %s %s\n' "$ci" "$mrg" "$blk"
+}
+
+_phase_schedule_register() { echo "PENDING-AGENT-SCHEDULE"; }   # agent replaces with a real cron id
+_phase_schedule_cancel() { echo "AGENT: cancel schedule $1" >&2; }
+
+_phase_status_pretty() {
+  local slug="$1"
+  phase_state_read "$slug" | jq -r '
+    "phase: \(.phase)  project=\(.project)  autonomous=\(.autonomous)  scheduleId=\(.scheduleId // "")",
+    (.tasks | to_entries[] | "  \(.key): \(.value.state) task=\(.value.taskId // "-") pr=\(.value.pr // "-") reason=\(.value.reason // "-") after=[\((.value.after // []) | join(","))]"),
+    (if ((.log // []) | length) > 0 then "log:", ((.log // [])[] | "  \(.)") else empty end)'
+}
+
+_phase_cancel_if_complete() {
+  local slug="$1" remaining sid cur j
+  cur="$(phase_state_read "$slug")" || return $?
+  remaining="$(printf '%s' "$cur" | jq -r '[.tasks[]|select(.state|IN("pending","running","pr_open"))]|length')" || return $?
+  if [ "$remaining" = "0" ]; then
+    sid="$(printf '%s' "$cur" | jq -r '.scheduleId // empty')" || return $?
+    if [ -n "$sid" ]; then
+      _phase_schedule_cancel "$sid" || true
+      j="$(printf '%s' "$cur" | jq '.scheduleId = ""')" || return $?
+      phase_state_write "$slug" "$j" || return $?
+      phase_log "$slug" "complete; canceled schedule $sid" || return $?
+    fi
+  fi
+}
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   check)
@@ -45,21 +119,17 @@ case "$cmd" in
   models)   api GET /api/copilot-auth/models | jq -r '(.models // .data // .) | (if type=="array" then .[] else . end) | (.id // .name // .)' ;;
 
   create) # create <projectId> <title> <body|@file>  -> prints new task id
-    # The task brief MUST go in the "description" field — that is what the server
-    # writes to task-<id>.md (the planner's {{taskDocPath}}). "documentation" is
-    # NOT a create field and is silently dropped, leaving a 0-byte brief.
     proj="$1"; title="$2"; body="$3"
-    case "$body" in @*) body="$(cat "${body#@}")";; esac
-    payload=$(jq -n --arg t "$title" --arg b "$body" '{title:$t, description:$b}')
-    resp=$(api POST "/api/projects/$proj/tasks" "$payload")
-    tid=$(printf '%s' "$resp" | jq -r '(.task // .).id // empty')
-    if [ -z "$tid" ]; then echo "create FAILED: $resp" >&2; exit 1; fi
-    echo "created task id=$tid  title=$(printf '%s' "$resp" | jq -r '(.task // .).title')"
+    tid_file="$(mktemp)"
+    create_task "$proj" "$title" "$body" > "$tid_file"
+    tid="$(cat "$tid_file")"
+    rm -f "$tid_file"
+    echo "created task id=$tid  title=$(printf '%s' "$CREATE_TASK_RESP" | jq -r '(.task // .).title')"
     # GUARD: read the brief back and assert it landed. A 0-byte doc means the
     # planner will run on the title alone (see "documentation" pitfall above).
-    doclen=$("$0" doc "$tid" | wc -c)
+    doclen=$("${BASH_SOURCE[0]}" doc "$tid" | wc -c)
     if [ "$doclen" -le 1 ]; then
-      echo "WARNING: task $tid documentation is EMPTY ($doclen bytes) — the planner will have NO brief, only the title. If you passed a body, you likely used the wrong field/endpoint. Fix with: $0 doc-set $tid @<file>" >&2
+      echo "WARNING: task $tid documentation is EMPTY ($doclen bytes) — the planner will have NO brief, only the title. If you passed a body, you likely used the wrong field/endpoint. Fix with: ${BASH_SOURCE[0]} doc-set $tid @<file>" >&2
     else
       echo "doc OK: task $tid brief is $doclen bytes"
     fi ;;
@@ -81,6 +151,47 @@ case "$cmd" in
       [ "$i" -lt "$max" ] && sleep "$iv"
     done ;;
 
+  phase)
+    verb="${1:-status}"; shift || true
+    case "$verb" in
+      run)
+        file="$1"
+        slug="$(basename "$file" | sed 's/\.[^.]*$//')"
+        sched="$(_phase_schedule_register "$slug")"
+        parsed="$(phase_parse "$file")"
+        phase_state_init "$slug" "$parsed" "$sched" >/dev/null
+        phase_tick_once "$slug" || true
+        _phase_cancel_if_complete "$slug" || true
+        _phase_status_pretty "$slug"
+        ;;
+      tick)
+        slug="$1"
+        phase_tick_once "$slug" || true
+        _phase_cancel_if_complete "$slug" || true
+        _phase_status_pretty "$slug"
+        ;;
+      status)
+        slug="$1"
+        if ! phase_state_path "$slug" >/dev/null; then exit 2; fi
+        if [ ! -f "$(phase_state_path "$slug")" ]; then echo "no such phase: $slug" >&2; exit 2; fi
+        _phase_status_pretty "$slug"
+        ;;
+      cancel)
+        slug="$1"
+        if ! cur="$(phase_state_read "$slug")"; then echo "no such phase: $slug" >&2; exit 2; fi
+        sid="$(printf '%s' "$cur" | jq -r '.scheduleId // empty')"
+        if [ -n "$sid" ]; then _phase_schedule_cancel "$sid"; fi
+        next="$(printf '%s' "$cur" | jq '.scheduleId = ""')"
+        phase_state_write "$slug" "$next"
+        phase_log "$slug" "canceled schedule ${sid:-none}"
+        _phase_status_pretty "$slug"
+        ;;
+      *)
+        echo "usage: $0 phase {run <file>|tick <slug>|status <slug>|cancel <slug>}" >&2
+        exit 2
+        ;;
+    esac ;;
+
   help|*)
     cat >&2 <<EOF
 bottega-api.sh — Bottega majordomo helper
@@ -93,6 +204,7 @@ bottega-api.sh — Bottega majordomo helper
   create <proj> <title> <body|@file>   WRITE: create task -> id
   kickoff <id> [agentType]             WRITE: start the loop (default planification)
   watch <id> [maxPolls] [interval]     poll transitions until PR or block  (DELEGATE-ONLY: blocks the caller; run inside a subagent)
+  phase run <file> | tick/status/cancel <slug>  shepherd a phase sequence
 env: BOTTEGA_BASE=$BOTTEGA_BASE  BOTTEGA_KEY_FILE=$BOTTEGA_KEY_FILE
 EOF
     ;;

@@ -222,6 +222,11 @@ phase_advance_prs() {
     verdict="${verdict##*$'\n'}"          # operative token = last line; tolerates chatty container-gate stdout leaked through phase_gate
     if [ "$grc" -eq 0 ] && [ "$verdict" = "pass" ]; then
       local pr; pr="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].pr')" || return $?
+      if ! [[ "$pr" =~ ^[0-9]+$ ]]; then
+        phase_task_set "$slug" "$key" '.state="parked"'; phase_task_set_str "$slug" "$key" reason "bad-pr-number" || return $?
+        phase_log "$slug" "parked $key: bad-pr-number ($pr)" || return $?
+        continue
+      fi
       if "${PHASE_MERGE_FN:-_phase_merge_live}" "$pr"; then
         phase_task_set "$slug" "$key" '.state="merged"' || return $?
         phase_log "$slug" "merged $key (pr $pr)" || return $?
