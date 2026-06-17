@@ -28,13 +28,19 @@ phase_parse() {
 
 PHASE_DIR="${PHASE_DIR:-$HOME/.bottega/phases}"   # overridable for tests
 
-phase_state_path() { echo "$PHASE_DIR/$1.json"; }
+phase_state_path() {
+  if ! printf '%s' "$1" | grep -qE '^[a-z0-9_-]+$'; then
+    echo "phase_state_path: invalid slug \"$1\" (must match [a-z0-9_-]+)" >&2
+    return 2
+  fi
+  echo "$PHASE_DIR/$1.json"
+}
 
 # phase_state_init <slug> <parsed-json> <scheduleId> -> writes initial state, all tasks pending
 phase_state_init() {
   local slug="$1" parsed="$2" sched="${3:-}"
   mkdir -p "$PHASE_DIR"
-  local p; p="$(phase_state_path "$slug")"
+  local p; p="$(phase_state_path "$slug")" || return $?
   echo "$parsed" | jq --arg sid "$sched" '{
     phase, project, autonomous, scheduleId: $sid,
     tasks: (.tasks | map_values({key, after, taskId: null, state: "pending", pr: null, reason: null})),
@@ -43,27 +49,43 @@ phase_state_init() {
   echo "$p"
 }
 
-phase_state_read() { cat "$(phase_state_path "$1")"; }
+phase_state_read() {
+  local p; p="$(phase_state_path "$1")" || return $?
+  cat "$p"
+}
 
 # phase_state_write <slug> <json> — atomic (tmp+mv) so a crash mid-write never corrupts SSOT
 phase_state_write() {
   local slug="$1" json="$2" p t
-  p="$(phase_state_path "$slug")"; t="$(mktemp "${p}.XXXX")"
-  echo "$json" | jq '.' > "$t" && mv "$t" "$p"
+  # Refuse empty/null — a failed upstream read must never fabricate or clobber state (see phase_log/phase_task_set).
+  if [ -z "$json" ] || [ "$json" = "null" ]; then
+    echo "phase_state_write: refusing empty/null state for slug \"$slug\"" >&2
+    return 6
+  fi
+  p="$(phase_state_path "$slug")" || return $?
+  t="$(mktemp "${p}.XXXX")" || return $?
+  if printf '%s' "$json" | jq '.' > "$t"; then
+    mv "$t" "$p"
+  else
+    rm -f "$t"
+    return 5
+  fi
 }
 
 # ponytail: read-compute-write is not pair-atomic; safe because one cron owns one slug (serialized ticks). phase_state_write itself IS atomic (tmp+mv).
 # phase_log <slug> <msg> — append-only audit line with timestamp
 phase_log() {
-  local slug="$1" msg="$2" j
-  j="$(phase_state_read "$slug" | jq --arg m "$(date -Is): $msg" '.log += [$m]')"
+  local slug="$1" msg="$2" cur j
+  cur="$(phase_state_read "$slug")" || return $?
+  j="$(printf '%s' "$cur" | jq --arg m "$(date -Is): $msg" '.log += [$m]')" || return $?
   phase_state_write "$slug" "$j"
 }
 
 # ponytail: read-compute-write is not pair-atomic; safe because one cron owns one slug (serialized ticks). phase_state_write itself IS atomic (tmp+mv).
 # phase_task_set <slug> <key> <jq-assignment> — mutate one task, atomic
 phase_task_set() {
-  local slug="$1" key="$2" assign="$3" j
-  j="$(phase_state_read "$slug" | jq --arg k "$key" ".tasks[\$k] |= ($assign)")"
+  local slug="$1" key="$2" assign="$3" cur j
+  cur="$(phase_state_read "$slug")" || return $?
+  j="$(printf '%s' "$cur" | jq --arg k "$key" ".tasks[\$k] |= ($assign)")" || return $?
   phase_state_write "$slug" "$j"
 }

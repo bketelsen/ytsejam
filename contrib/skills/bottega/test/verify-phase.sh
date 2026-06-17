@@ -48,4 +48,31 @@ check "state: log appends"         '[ "$(phase_state_read teststate | jq -r ".lo
 check "state: write atomic (valid json)" 'phase_state_read teststate | jq -e . >/dev/null'
 rm -rf "$PHASE_DIR"; unset PHASE_DIR
 
+# Task 2 hardening: missing-slug must NOT fabricate state; slug guard; tmp cleanup
+export PHASE_DIR="$(mktemp -d)"
+# missing slug → task_set fails non-zero AND creates no file
+( phase_task_set ghost schema '.state="x"' ) ; gc=$?
+check "state: missing-slug task_set fails non-zero" '[ "'"$gc"'" -ne 0 ]'
+check "state: missing-slug creates no file"         '[ ! -e "$PHASE_DIR/ghost.json" ]'
+# missing slug → log fails non-zero AND creates no file
+( phase_log ghost2 "x" ) ; gc=$?
+check "state: missing-slug log fails non-zero"      '[ "'"$gc"'" -ne 0 ]'
+check "state: missing-slug log creates no file"     '[ ! -e "$PHASE_DIR/ghost2.json" ]'
+# empty/null write refused
+( phase_state_write demo3 "" ) ; gc=$?
+check "state: empty write refused (rc!=0)"          '[ "'"$gc"'" -ne 0 ]'
+( phase_state_write demo3 "null" ) ; gc=$?
+check "state: null write refused (rc!=0)"           '[ "'"$gc"'" -ne 0 ]'
+# slug guard: path-traversal slug rejected, nothing escapes
+( phase_state_init "../evil" "$J" sid ) ; gc=$?
+check "state: traversal slug rejected (rc!=0)"      '[ "'"$gc"'" -ne 0 ]'
+check "state: traversal slug wrote nothing outside" '[ ! -e "$(dirname "$PHASE_DIR")/evil.json" ]'
+# tmp-leak: a jq-error write leaves no orphaned tmp
+phase_state_init leak "$J" sid >/dev/null
+( phase_state_write leak "NOT JSON" ) ; gc=$?
+check "state: bad-json write fails (rc!=0)"          '[ "'"$gc"'" -ne 0 ]'
+check "state: bad-json write leaves no tmp"          '[ "$(ls -1 "$PHASE_DIR"/leak.json.* 2>/dev/null | wc -l)" = "0" ]'
+check "state: bad-json write kept original intact"   'phase_state_read leak | jq -e . >/dev/null'
+rm -rf "$PHASE_DIR"; unset PHASE_DIR
+
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }
