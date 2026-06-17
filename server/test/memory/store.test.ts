@@ -31,6 +31,13 @@ async function seed(rel: string, content: string) {
   await writeFile(abs, content, "utf8");
 }
 async function slurp(rel: string) { return readFile(join(root, ...rel.split("/")), "utf8"); }
+function appendBytes(bytesWritten: number, totalBytes: number) {
+  return {
+    ok: true,
+    bytes_written: bytesWritten,
+    total_bytes: totalBytes,
+  };
+}
 async function seedManifest() {
   await seed("domains.yml", `version: 1
 domains:
@@ -117,27 +124,50 @@ describe("memory primitive store", () => {
   test("append EOF, creates file, newline handling, obs enforcement, id-as-path", async () => {
     await seedManifest();
     await seed("log.md", "line1\n");
-    await append("log.md", "line2\n");
+    await expect(append("log.md", "line2\n")).resolves.toEqual(
+      appendBytes(Buffer.byteLength("line2\n"), Buffer.byteLength("line1\nline2\n")),
+    );
     expect(await slurp("log.md")).toBe("line1\nline2\n");
-    await append("new.md", "hello");
+    await expect(append("new.md", "hello")).resolves.toEqual(
+      appendBytes(Buffer.byteLength("hello\n"), Buffer.byteLength("hello\n")),
+    );
     expect((await read("new.md")).content).toBe("hello\n");
     await seed("noeol.md", "line1");
-    await append("noeol.md", "line2");
+    await expect(append("noeol.md", "line2")).resolves.toEqual(
+      appendBytes(Buffer.byteLength("\nline2\n"), Buffer.byteLength("line1\nline2\n")),
+    );
     expect(await slurp("noeol.md")).toBe("line1\nline2\n");
     await seed("already.md", "line1");
-    await append("already.md", "\nline2");
+    await expect(append("already.md", "\nline2")).resolves.toEqual(
+      appendBytes(Buffer.byteLength("\nline2\n"), Buffer.byteLength("line1\nline2\n")),
+    );
     expect(await slurp("already.md")).toBe("line1\nline2\n");
-    await expect(append("domain/observations.md", "- 2025-01-01 [insight]: valid observation\n")).resolves.toEqual({ ok: true });
-    await expect(append("observations.md", "- 2025-06-15 [work]: bare path test\n")).resolves.toEqual({ ok: true });
+    const observation = "- 2025-01-01 [insight]: valid observation\n";
+    await expect(append("domain/observations.md", observation)).resolves.toEqual(
+      appendBytes(Buffer.byteLength(observation), Buffer.byteLength(observation)),
+    );
+    const bareObservation = "- 2025-06-15 [work]: bare path test\n";
+    await expect(append("observations.md", bareObservation)).resolves.toEqual(
+      appendBytes(Buffer.byteLength(bareObservation), Buffer.byteLength(bareObservation)),
+    );
     await expect(append("domain/observations.md", "this is not an observation\n")).rejects.toThrow(/observation format/);
-    await expect(append("notes.md", "anything goes here\n")).resolves.toEqual({ ok: true });
+    await expect(append("notes.md", "anything goes here\n")).resolves.toEqual(
+      appendBytes(Buffer.byteLength("anything goes here\n"), Buffer.byteLength("anything goes here\n")),
+    );
     await expect(append("dakota/observations.md", "- 2026-06-10 [test]: stray append\n")).rejects.toThrow(/projects\/dakota/);
   });
 
   test("append section semantics", async () => {
     await seed("ai.md", "# Title\n\n## Open\n- existing\n\n## Completed\n- done\n");
-    await append("ai.md", "- new item", { section: "## Open" });
-    expect(await slurp("ai.md")).toBe("# Title\n\n## Open\n- existing\n- new item\n\n## Completed\n- done\n");
+    const aiResult = await append("ai.md", "- new item", { section: "## Open" });
+    const aiFinal = "# Title\n\n## Open\n- existing\n- new item\n\n## Completed\n- done\n";
+    expect(aiResult).toEqual(
+      appendBytes(
+        Buffer.byteLength(aiFinal) - Buffer.byteLength("# Title\n\n## Open\n- existing\n\n## Completed\n- done\n"),
+        Buffer.byteLength(aiFinal),
+      ),
+    );
+    expect(await slurp("ai.md")).toBe(aiFinal);
     await seed("bare.md", "## Open\n- existing\n\n## Completed\n- done\n");
     await append("bare.md", "- new", { section: "Open" });
     expect(await slurp("bare.md")).toContain("- existing\n- new\n\n## Completed");

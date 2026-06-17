@@ -134,11 +134,16 @@ vocabulary so skill playbooks port verbatim.
 
 **Setup-only RPCs:** `init_canonical_file` and `skill_write` are deliberately narrow surfaces used by the rewritten `/cog` skill. `init_canonical_file` creates a registered-domain markdown file from daemon-owned templates and is idempotent on existing files; `skill_write` renders a generated routing skill at `<dataDir>/skills/<id>.md` from an id/description/triggers/body payload. They avoid giving setup playbooks arbitrary file-write reach. See [`memory-bridge.md`](memory-bridge.md) § Setup RPCs used by `/cog`.
 
+**`cog_append` returns `{ ok: true, bytes_written, total_bytes }`**, where `bytes_written` is the
+UTF-8 byte growth caused by that append and `total_bytes` is the final UTF-8 file size. This
+response shape is uniform for normal appends and observation writes.
+
 **`cog_append` to a `*/observations.md` path** is intercepted: each line is parsed, then
 `memory.recordObservation()` is called per line, which writes the cog SSOT line **and** best-
 effort mirrors it to LTM as a `kind: "observation"` record. All lines are validated before any
-write so a malformed line in the middle of a batch aborts before partial cog/LTM divergence.
-See [`memory-bridge.md`](memory-bridge.md).
+write so a malformed line in the middle of a batch aborts before partial cog/LTM divergence. The
+intercepted response aggregates `bytes_written` across the per-line writes and reports
+`total_bytes` from the final write. See [`memory-bridge.md`](memory-bridge.md).
 
 **`cog_rpc({method:"reconcile_now"})`** force-ticks the LTM reconciler. Useful right after a bulk
 external edit to `observations.md` files (so the back-fill doesn't wait the full

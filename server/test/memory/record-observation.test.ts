@@ -49,7 +49,13 @@ describe("memory.recordObservation", () => {
         tags: ["mood"],
         timestamp: new Date("2026-06-13T12:00:00Z"),
       });
-      expect(r.cog).toEqual({ ok: true, line: "- 2026-06-13 [mood]: feeling great" });
+      const line = "- 2026-06-13 [mood]: feeling great";
+      expect(r.cog).toEqual({
+        ok: true,
+        line,
+        bytes_written: Buffer.byteLength(line + "\n"),
+        total_bytes: Buffer.byteLength(line + "\n"),
+      });
       expect(r.ltm).toEqual({ ok: true });
       const file = await readFile(join(memRoot, "personal", "observations.md"), "utf8");
       expect(file).toContain("- 2026-06-13 [mood]: feeling great");

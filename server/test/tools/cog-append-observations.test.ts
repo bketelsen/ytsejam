@@ -31,6 +31,14 @@ function recalledTexts(recalled: Awaited<ReturnType<MemorySystem["retrieve"]>>):
   return recalled.items.map((e) => e.record.text);
 }
 
+function text(r: { content: { type: string }[] }): string {
+  return (r.content[0] as any).text;
+}
+
+function json(r: { content: { type: string }[] }) {
+  return JSON.parse(text(r));
+}
+
 beforeEach(async () => {
   attachLtm(null);
   memRoot = await setupMemRoot();
@@ -50,11 +58,17 @@ afterEach(async () => {
 describe("cog_append → recordObservation routing for observations.md", () => {
   it("routes a single-line observation through recordObservation and mirrors to LTM", async () => {
     const cog_append = findTool(createCogTools(), "cog_append");
-    await cog_append.execute("call-1", {
+    const result = json(await cog_append.execute("call-1", {
       path: "personal/observations.md",
       text: "- 2026-06-13 [mood]: feeling great\n",
-    });
+    }));
     const file = await readFile(join(memRoot, "personal", "observations.md"), "utf8");
+    const expectedBytes = Buffer.byteLength(file);
+    expect(result).toEqual({
+      ok: true,
+      bytes_written: expectedBytes,
+      total_bytes: expectedBytes,
+    });
     expect(file).toContain("- 2026-06-13 [mood]: feeling great");
     // LTM mirror happened
     const recalled = await ltm!.retrieve("mood", { k: 5 });
@@ -64,11 +78,17 @@ describe("cog_append → recordObservation routing for observations.md", () => {
 
   it("routes a multi-line text by splitting + per-line recordObservation", async () => {
     const cog_append = findTool(createCogTools(), "cog_append");
-    await cog_append.execute("call-2", {
+    const result = json(await cog_append.execute("call-2", {
       path: "personal/observations.md",
       text: "- 2026-06-13 [a]: first\n- 2026-06-13 [b]: second\n",
-    });
+    }));
     const file = await readFile(join(memRoot, "personal", "observations.md"), "utf8");
+    const expectedBytes = Buffer.byteLength(file);
+    expect(result).toEqual({
+      ok: true,
+      bytes_written: expectedBytes,
+      total_bytes: expectedBytes,
+    });
     expect(file).toContain("- 2026-06-13 [a]: first");
     expect(file).toContain("- 2026-06-13 [b]: second");
     const recalledA = await ltm!.retrieve("first", { k: 5 });
