@@ -41,10 +41,10 @@ case "$cmd" in
   models)   api GET /api/copilot-auth/models | jq -r '(.models // .data // .) | (if type=="array" then .[] else . end) | (.id // .name // .)' ;;
 
   create) # create <projectId> <title> <body|@file>  -> prints new task id
-    proj="$1"; title="$2"; body="$3"
-    case "$body" in @*) body="$(cat "${body#@}")";; esac
-    payload=$(jq -n --arg t "$title" --arg b "$body" '{title:$t, description:$b}')
-    api POST "/api/projects/$proj/tasks" "$payload" | jq -r '"created task id=\((.task // .).id)  title=\((.task // .).title)"' ;;
+    project_id="$1"; title="$2"; description="$3"
+    case "$description" in @*) description="$(cat "${description#@}")";; esac
+    payload=$(jq -n --arg title "$title" --arg description "$description" '{title:$title, description:$description}')
+    api POST "/api/projects/$project_id/tasks" "$payload" | jq -r '"created task id=\((.task // .).id)  title=\((.task // .).title)"' ;;
 
   kickoff) # kickoff <taskId> [agentType=planification] -> starts the loop
     tid="$1"; at="${2:-planification}"
