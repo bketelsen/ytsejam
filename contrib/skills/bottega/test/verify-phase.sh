@@ -173,6 +173,25 @@ export PHASE_PR_META_FN=_t_meta_ok
 # no-pr task -> park:no-pr
 phase_task_set g docs '.taskId=9 | .state="running" | .pr=null'
 check "gate: no PR -> park:no-pr" '[ "$(phase_gate g docs)" = "park:no-pr" ]'
+
+# Task 4 hardening: hostile branch names and strict meta parsing must fail closed.
+export PHASE_PR_META_FN=_t_meta_ok; export PHASE_STALE_BASE_FN=_t_stale_no; export PHASE_CONTAINER_GATE_FN=_t_gate_ok
+export PHASE_PR_BRANCH_FN=_t_br_evil; _t_br_evil() { echo 'x"; touch /tmp/pwn_$$; echo "'; }; export -f _t_br_evil
+check "gate: injection branch name -> park" '[ "$(phase_gate g schema)" = "park:bad-branch-name" ]'
+export PHASE_PR_BRANCH_FN=_t_br_cmdsub; _t_br_cmdsub() { echo 'main$(touch /tmp/pwn2)'; }; export -f _t_br_cmdsub
+check "gate: cmd-sub branch name -> park" '[ "$(phase_gate g schema)" = "park:bad-branch-name" ]'
+export PHASE_PR_BRANCH_FN=_t_br_dash; _t_br_dash() { echo '-rf'; }; export -f _t_br_dash
+check "gate: leading-dash branch -> park" '[ "$(phase_gate g schema)" = "park:bad-branch-name" ]'
+export PHASE_PR_BRANCH_FN=_t_branch
+
+export PHASE_PR_META_FN=_t_meta_extra; _t_meta_extra() { echo "pass MERGEABLE 1 extra"; }; export -f _t_meta_extra
+check "gate: meta extra token -> park (not pass)" '[ "$(phase_gate g schema)" = "park:meta-malformed" ]'
+export PHASE_PR_META_FN=_t_meta_cr; _t_meta_cr() { printf 'pass MERGEABLE 1\r\n'; }; export -f _t_meta_cr
+check "gate: meta trailing CR -> park (not pass)" '[ "$(phase_gate g schema)" = "park:meta-malformed" ]'
+export PHASE_PR_META_FN=_t_meta_ok
+# F4: gate keys are phase_parse-constrained (^[a-z0-9_-]+$); --arg k is defense-in-depth.
+# A raw-interpolation regression is caught by code review, not this harness.
+rm -f /tmp/pwn_* /tmp/pwn2
 rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN
 
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }

@@ -136,6 +136,7 @@ phase_reconcile() {
 # Intent-match note: autonomous v1 has no human allowlist; it trusts only the mechanical backstops below.
 phase_gate() {
   local slug="$1" key="$2" j tid pr br ci mergeable blocked clash meta
+  local -a mf
   j="$(phase_state_read "$slug")" || { echo "park:state-read-failed"; return 1; }
   tid="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].taskId')" || { echo "park:tid-read-failed"; return 1; }
   pr="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].pr')" || { echo "park:pr-read-failed"; return 1; }
@@ -143,10 +144,15 @@ phase_gate() {
 
   br="$("${PHASE_PR_BRANCH_FN:-_phase_pr_branch_live}" "$pr")" || { echo "park:branch-resolve-failed"; return 0; }
   [ -z "$br" ] && { echo "park:branch-empty"; return 0; }
+  case "$br" in
+    -*|*[!A-Za-z0-9._/-]*) echo "park:bad-branch-name"; return 0 ;;
+  esac
 
   meta="$("${PHASE_PR_META_FN:-_phase_pr_meta_live}" "$pr" "$tid")" || { echo "park:meta-check-failed"; return 0; }
-  read -r ci mergeable blocked <<< "$meta"
-  { [ -n "$ci" ] && [ -n "$mergeable" ] && [ -n "$blocked" ]; } || { echo "park:meta-malformed"; return 0; }
+  read -r -a mf <<< "$meta"
+  [ "${#mf[@]}" -eq 3 ] || { echo "park:meta-malformed"; return 0; }
+  ci="${mf[0]}"; mergeable="${mf[1]}"; blocked="${mf[2]}"
+  [[ "$blocked" =~ ^[01]$ ]] || { echo "park:meta-malformed"; return 0; }
   [ "$blocked" = "1" ] && { echo "park:workflow_blocked"; return 0; }
   [ "$ci" = "pass" ] || { echo "park:ci-$ci"; return 0; }
   [ "$mergeable" = "MERGEABLE" ] || { echo "park:not-mergeable($mergeable)"; return 0; }
@@ -175,7 +181,9 @@ _phase_stale_base_live() {  # <pr-branch> -> stdout = intersecting files (empty=
   incus exec bottega -- su - code -c "
     set -e; cd ~/projects/ytsejam; git fetch origin --quiet 2>/dev/null
     base=\$(git merge-base origin/main \"origin/$br\") || exit 3
-    comm -12 <(git diff --name-only \"\$base\" \"origin/$br\" | sort -u) <(git diff --name-only \"\$base\" origin/main | sort -u)
+    a=\$(git diff --name-only \"\$base\" \"origin/$br\") || exit 4
+    b=\$(git diff --name-only \"\$base\" origin/main) || exit 5
+    comm -12 <(printf '%s\n' \"\$a\" | sort -u) <(printf '%s\n' \"\$b\" | sort -u)
   "
 }
 
