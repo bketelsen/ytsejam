@@ -76,3 +76,9 @@ _Added: 2026-06-17 | Task: Task 1 phase-file parse — key-shape guard | Direct-
 In a shell pipeline without `set -o pipefail`, a failed `cat`/read (rc≠0, empty stdout) feeds the next tool empty input — `jq` on empty stdin emits nothing at rc=0 — so the pipeline "succeeds" and a writer downstream fabricates empty/garbage state. Capture the read on its own line and guard its rc (`x="$(read)" || return $?`; a combined `local x="$(...)"` masks rc behind `local`'s zero exit) and/or have the writer refuse empty/null. (seen in: phase-lib.sh:phase_task_set — missing slug fabricates 0-byte state file at rc=0)
 
 _Added: 2026-06-17 | Task: Task 2 state file — missing-slug fix | Direct-publish_
+
+## A Captured Status Token Is Poisoned By A Child's Stdout
+
+When you capture a function's stdout as a status token (`v="$(fn)"; [ "$v" = "ok" ]`), any stdout an inner command writes without redirection is inherited and prepended to your token — exact-equality then silently fails (and a substring match silently passes). Match the operative LAST line (`"${v##*$'\n'}"`) and have the producer capture/redirect its children; never trust `[ "$v" = … ]` on a multi-source capture. Silent test stubs mask this — every double must exercise the chatty path.
+
+_Added: 2026-06-17 | Task: Task 5 — phase_advance_prs verdict (chatty container-gate stdout false-parked every autonomous merge) | Direct-publish_
