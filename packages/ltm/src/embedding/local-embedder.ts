@@ -17,7 +17,7 @@
  *   const embedder = new CachedEmbedder(local, cacheDir, "local:" + local.modelName);
  */
 
-import type { Embedder } from "./embedder.ts";
+import { normalizeUnit, type Embedder } from "./embedder.ts";
 
 /** Minimal surface of a transformers.js feature-extraction pipeline. */
 export type FeatureExtractionPipeline = (
@@ -79,9 +79,6 @@ export class LocalEmbedder implements Embedder {
     const out = await this.pipe(text, { pooling: "mean", normalize: true });
     const vector = Array.from(out.data);
     // Defensive re-normalization: the index assumes unit vectors.
-    let norm = 0;
-    for (const x of vector) norm += x * x;
-    norm = Math.sqrt(norm) || 1;
-    return vector.map((x) => x / norm);
+    return normalizeUnit(vector);
   }
 }

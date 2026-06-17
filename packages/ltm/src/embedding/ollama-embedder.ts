@@ -14,7 +14,7 @@
  *   const embedder = new CachedEmbedder(ollama, cacheDir, "ollama:" + ollama.modelName);
  */
 
-import type { Embedder } from "./embedder.ts";
+import { normalizeUnit, type Embedder } from "./embedder.ts";
 
 export interface OllamaEmbedderOptions {
   /** Ollama model name, e.g. "nomic-embed-text:latest". */
@@ -96,9 +96,6 @@ export class OllamaEmbedder implements Embedder {
       );
     }
     // Defensive re-normalization: the index assumes unit vectors.
-    let norm = 0;
-    for (const x of vector) norm += x * x;
-    norm = Math.sqrt(norm) || 1;
-    return vector.map((x) => x / norm);
+    return normalizeUnit(vector);
   }
 }
