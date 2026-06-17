@@ -36,15 +36,33 @@ case "$cmd" in
   task)     api GET "/api/tasks/$1" | task_obj | jq -r '"[\(.id)] \(.title)\n  status=\(.status)  runs=\(.workflow_run_count)\n  plan=\(.planification_complete) wf_complete=\(.workflow_complete) blocked=\(.workflow_blocked) refine=\(.refinement_complete) pr=\(.pr_agent_complete)\n  updated=\(.updated_at)"' ;;
   runs)     api GET "/api/tasks/$1/agent-runs" | runs_arr | jq -r 'sort_by(.id)[] | "  run#\(.id)  type=\(.agent_type)  status=\(.status)  model=\(.model // "-")  created=\(.created_at)  done=\(.completed_at // "RUNNING")"' ;;
   doc)      api GET "/api/tasks/$1/documentation" | jq -r '.content // .documentation // .doc // .markdown // .' ;;
+  doc-set)  # doc-set <taskId> <body|@file>  -> overwrite the task brief (PUT documentation)
+    tid="$1"; body="$2"
+    case "$body" in @*) body="$(cat "${body#@}")";; esac
+    api PUT "/api/tasks/$tid/documentation" "$(jq -n --arg c "$body" '{content:$c}')" | jq -r '. as $r | if .success then "doc-set OK: task '"$tid"' brief now \($r|tostring|length) chars sent" else ($r|tostring) end' ;;
   pr)       api GET "/api/tasks/$1/pull-request" | jq -r 'if .exists==false then "no live PR (none opened yet, or merged/closed + branch deleted)" else "url=\(.url)\nstate=\(.state)  mergeable=\(.mergeable)  ci=\(.ciStatus.status // "?")" end' ;;
   copilot)  api GET /api/copilot-auth/status | jq -r '"authenticated=\(.authenticated)  status=\(.status)  login=\(.login // .username // "-")"' ;;
   models)   api GET /api/copilot-auth/models | jq -r '(.models // .data // .) | (if type=="array" then .[] else . end) | (.id // .name // .)' ;;
 
   create) # create <projectId> <title> <body|@file>  -> prints new task id
+    # The task brief MUST go in the "description" field — that is what the server
+    # writes to task-<id>.md (the planner's {{taskDocPath}}). "documentation" is
+    # NOT a create field and is silently dropped, leaving a 0-byte brief.
     proj="$1"; title="$2"; body="$3"
     case "$body" in @*) body="$(cat "${body#@}")";; esac
     payload=$(jq -n --arg t "$title" --arg b "$body" '{title:$t, description:$b}')
-    api POST "/api/projects/$proj/tasks" "$payload" | jq -r '"created task id=\((.task // .).id)  title=\((.task // .).title)"' ;;
+    resp=$(api POST "/api/projects/$proj/tasks" "$payload")
+    tid=$(printf '%s' "$resp" | jq -r '(.task // .).id // empty')
+    if [ -z "$tid" ]; then echo "create FAILED: $resp" >&2; exit 1; fi
+    echo "created task id=$tid  title=$(printf '%s' "$resp" | jq -r '(.task // .).title')"
+    # GUARD: read the brief back and assert it landed. A 0-byte doc means the
+    # planner will run on the title alone (see "documentation" pitfall above).
+    doclen=$("$0" doc "$tid" | wc -c)
+    if [ "$doclen" -le 1 ]; then
+      echo "WARNING: task $tid documentation is EMPTY ($doclen bytes) — the planner will have NO brief, only the title. If you passed a body, you likely used the wrong field/endpoint. Fix with: $0 doc-set $tid @<file>" >&2
+    else
+      echo "doc OK: task $tid brief is $doclen bytes"
+    fi ;;
 
   kickoff) # kickoff <taskId> [agentType=planification] -> starts the loop
     tid="$1"; at="${2:-planification}"
