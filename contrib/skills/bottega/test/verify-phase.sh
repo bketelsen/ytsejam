@@ -224,15 +224,34 @@ phase_advance_prs z || true
 check "inj: conflict parks (not merged)" '[ "$(phase_state_read z | jq -r .tasks.schema.state)" = "parked" ]'
 check "inj: reason is the literal verdict" '[ "$(phase_state_read z | jq -r .tasks.schema.reason)" = "park:not-mergeable(CONFLICTING)" ]'
 # Direct jq-injection probe on phase_task_set_str: a value with quotes/jq-meta is stored as DATA, never executed
-phase_task_set_str z schema reason 'x")|.state="merged"|(.x="'
-check "inj: malicious reason stored literally" '[ "$(phase_state_read z | jq -r .tasks.schema.reason)" = "x\")|.state=\"merged\"|(.x=\"" ]'
+phase_task_set_str z schema reason 'x" | .tasks.schema.state="merged" | .reason="x'
+check "inj: malicious reason stored literally" '[ "$(phase_state_read z | jq -r .tasks.schema.reason)" = "x\" | .tasks.schema.state=\"merged\" | .reason=\"x" ]'
 check "inj: malicious reason did NOT flip state to merged" '[ "$(phase_state_read z | jq -r .tasks.schema.state)" = "parked" ]'
-# Task 5: default/non-autonomous mode never merges, even with a green gate and merge function available.
+# Task 5: chatty container-gate stdout is reduced to the operative last-line verdict before autonomous merge/park.
+phase_state_init cgpass "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_task_set cgpass schema '.taskId=9 | .state="pr_open" | .pr=231'
+_t_cg_chatty_ok(){ echo "=== gate: typecheck ==="; echo "=== gate: PASSED ==="; return 0; }; export -f _t_cg_chatty_ok; export PHASE_CONTAINER_GATE_FN=_t_cg_chatty_ok
+_t_merge_mark(){ : > "$PHASE_DIR/chatty-merge-fired"; return 0; }; export -f _t_merge_mark; export PHASE_MERGE_FN=_t_merge_mark
+export PHASE_PR_META_FN=_t_meta
+phase_advance_prs cgpass || true
+check "tick: chatty passing gate merges" '[ "$(phase_state_read cgpass | jq -r .tasks.schema.state)" = "merged" ]'
+check "tick: chatty passing gate fired merge fn" '[ -f "$PHASE_DIR/chatty-merge-fired" ]'
+phase_state_init cgpark "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_task_set cgpark schema '.taskId=9 | .state="pr_open" | .pr=231'
+_t_cg_chatty_red(){ echo "=== gate: typecheck ==="; echo "=== gate: FAILED ==="; return 1; }; export -f _t_cg_chatty_red; export PHASE_CONTAINER_GATE_FN=_t_cg_chatty_red
+rm -f "$PHASE_DIR/chatty-merge-fired"
+phase_advance_prs cgpark || true
+check "tick: chatty failing gate parks" '[ "$(phase_state_read cgpark | jq -r .tasks.schema.state)" = "parked" ]'
+check "tick: chatty failing gate reason is clean token" '[ "$(phase_state_read cgpark | jq -r .tasks.schema.reason)" = "park:gate-red" ]'
+check "tick: chatty failing gate did not fire merge fn" '[ ! -f "$PHASE_DIR/chatty-merge-fired" ]'
+# Task 5: default/non-autonomous mode never merges, even with a chatty green gate and merge function available.
 phase_state_init na "$(printf '%s' "$J" | jq '.autonomous=false')" "" >/dev/null
 phase_task_set na schema '.taskId=9 | .state="pr_open" | .pr=231'
-export PHASE_PR_META_FN=_t_meta; export PHASE_MERGE_FN=_t_merge
+export PHASE_PR_META_FN=_t_meta; export PHASE_CONTAINER_GATE_FN=_t_cg_chatty_ok; export PHASE_MERGE_FN=_t_merge_mark
+rm -f "$PHASE_DIR/chatty-merge-fired"
 phase_advance_prs na || true
 check "tick: non-autonomous leaves pr_open (no merge)" '[ "$(phase_state_read na | jq -r .tasks.schema.state)" = "pr_open" ]'
+check "tick: non-autonomous did not fire merge fn" '[ ! -f "$PHASE_DIR/chatty-merge-fired" ]'
 # A gate helper can emit a park verdict with rc=1; advance_prs must still record it fail-closed instead of aborting.
 phase_state_init grc "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
 phase_task_set grc schema '.taskId=9 | .state="pr_open" | .pr=231'
@@ -242,9 +261,21 @@ check "tick: gate rc1 still parks" '[ "$(phase_state_read grc | jq -r .tasks.sch
 check "tick: gate rc1 reason preserved" '[ "$(phase_state_read grc | jq -r .tasks.schema.reason)" = "park:synthetic-failed" ]'
 rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_CREATE_FN PHASE_KICKOFF_FN PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN PHASE_MERGE_FN ID
 
-# Task 5: F3 regression lock — real _phase_stale_base_live body must fail-closed on a git error (lesson: Adversarially Probe Stubbed-Out Helper Bodies)
-( incus() { local p="${*: -1}"; git() { case "$1" in diff) echo "fatal: bad object" >&2; return 128;; merge-base) echo abc;; fetch|worktree) return 0;; *) command git "$@";; esac; }; export -f git; bash -c "$p"; }; export -f incus
-  out="$(_phase_stale_base_live somebranch 2>/dev/null)"; rc=$?
-  [ "$rc" -ne 0 ] ) && echo "  ok: stale-base live body fails closed on git error" || { echo "  FAIL: stale-base live body did not fail closed"; fails=$((fails+1)); }
+# Task 5: F3 regression lock — real _phase_stale_base_live body must fail-closed on git errors.
+# F3 teeth: pin the SPECIFIC exit code of each rc-guard so deleting an individual `|| exit N` flips the test.
+f3_branch_rc="$( ( incus() { local p="${*: -1}"; git() { case "$*" in
+      "fetch origin --quiet") return 0;;
+      "merge-base origin/main origin/somebranch") echo abc;;
+      "diff --name-only abc origin/somebranch") echo "fatal: bad object" >&2; return 128;; # branch-diff fails -> || exit 4
+      "diff --name-only abc origin/main") echo file.ts;;
+      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git; bash -c "$p"; }; export -f incus
+    _phase_stale_base_live somebranch >/dev/null 2>&1; echo "$?" ) )"
+check "stale-base live branch-diff failure -> exit 4 (rc-guard pinned)" '[ "$f3_branch_rc" = "4" ]'
+f3_merge_base_rc="$( ( incus() { local p="${*: -1}"; git() { case "$*" in
+      "fetch origin --quiet") return 0;;
+      "merge-base origin/main origin/somebranch") echo "fatal: no merge base" >&2; return 128;; # merge-base fails -> || exit 3
+      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git; bash -c "$p"; }; export -f incus
+    _phase_stale_base_live somebranch >/dev/null 2>&1; echo "$?" ) )"
+check "stale-base live merge-base failure -> exit 3 (rc-guard pinned)" '[ "$f3_merge_base_rc" = "3" ]'
 
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }

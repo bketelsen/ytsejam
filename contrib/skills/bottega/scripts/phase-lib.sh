@@ -201,6 +201,7 @@ phase_launch_ready() {
       phase_task_set_str "$slug" "$key" reason "create-failed" || return $?
       continue
     fi
+    # ponytail: kickoff is fire-and-forget — a created task is marked running even if kickoff fails (recovered by reconcile), never stranded.
     "${PHASE_KICKOFF_FN:-_phase_kickoff_live}" "$newid" >/dev/null 2>&1 || true
     phase_task_set "$slug" "$key" ".taskId=$newid | .state=\"running\"" || return $?
     phase_log "$slug" "launched $key as task $newid" || return $?
@@ -216,12 +217,11 @@ phase_advance_prs() {
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     [ "$auto" = "true" ] || continue
-    local verdict
-    verdict="$(phase_gate "$slug" "$key")"
-    if [ "$verdict" = "pass" ]; then
-      local pr cur
-      cur="$(phase_state_read "$slug")" || return $?
-      pr="$(printf '%s' "$cur" | jq -r --arg k "$key" '.tasks[$k].pr')" || return $?
+    local verdict grc
+    verdict="$(phase_gate "$slug" "$key")"; grc=$?
+    verdict="${verdict##*$'\n'}"          # operative token = last line; tolerates chatty container-gate stdout leaked through phase_gate
+    if [ "$grc" -eq 0 ] && [ "$verdict" = "pass" ]; then
+      local pr; pr="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].pr')" || return $?
       if "${PHASE_MERGE_FN:-_phase_merge_live}" "$pr"; then
         phase_task_set "$slug" "$key" '.state="merged"' || return $?
         phase_log "$slug" "merged $key (pr $pr)" || return $?
