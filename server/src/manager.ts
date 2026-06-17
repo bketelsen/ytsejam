@@ -972,12 +972,22 @@ export class AgentManager {
 
   private async maybeGenerateTitle(opened: OpenSession): Promise<void> {
     try {
-      if (this.open.get(opened.id) !== opened) return; // closed or deleted
+      const logSkip = (level: "debug" | "warn", reason: string): void => {
+        console[level](`maybeGenerateTitle skipped for ${opened.id}: ${reason}`);
+      };
+
+      if (this.open.get(opened.id) !== opened) {
+        logSkip("debug", "session closed before title generation");
+        return; // closed or deleted
+      }
       if (this.opts.indexer.getSession(opened.id)?.title) return;
       if (opened.pendingTitle !== undefined) return; // a user rename is pending; don't override
       const messages = (await opened.session.buildContext()).messages;
       const firstUser = messages.find((m: any) => m.role === "user");
-      if (!firstUser) return;
+      if (!firstUser) {
+        logSkip("warn", "no user message yet");
+        return;
+      }
       const model = this.opts.resolveModel(this.opts.defaultModel);
       // Same auth path the harness uses (commit 1850785 introduced OAuth via
       // PiAuthStore for the harness but missed this call site). Without an
@@ -1003,7 +1013,10 @@ export class AgentManager {
         },
         apiKey ? { apiKey } : undefined,
       );
-      if (this.open.get(opened.id) !== opened) return; // deleted/closed while completing
+      if (this.open.get(opened.id) !== opened) {
+        logSkip("warn", "session closed during completion");
+        return; // deleted/closed while completing
+      }
       // Defensive: provider errors (auth, rate limit, network) come back as
       // stopReason:"error" with empty content rather than a thrown exception.
       // Don't write garbage titles and don't fail silently — log instead so the
@@ -1015,14 +1028,23 @@ export class AgentManager {
         return;
       }
       const title = previewOf(result).split("\n")[0]?.trim().slice(0, 80);
-      if (!title) return;
+      if (!title) {
+        logSkip("warn", "model returned empty title");
+        return;
+      }
       // Re-check user-rename invariants at the WRITE point, not just at the
       // start. Between the early-return at the top of this function and here,
       // a user can land a rename() (which sets pendingTitle synchronously when
       // running, or writes title + setTitle directly when idle). User rename
       // ALWAYS wins over auto-generation.
-      if (this.opts.indexer.getSession(opened.id)?.title) return;
-      if (opened.pendingTitle !== undefined) return;
+      if (this.opts.indexer.getSession(opened.id)?.title) {
+        logSkip("debug", "title set during completion (user rename won)");
+        return;
+      }
+      if (opened.pendingTitle !== undefined) {
+        logSkip("debug", "user rename pending at write point");
+        return;
+      }
       // Mirror rename()'s shape: when running, defer the JSONL append to the
       // agent_end pendingTitle flush; index + emit immediately so the UI sees
       // the title in the next list/meta event. When idle, write through.

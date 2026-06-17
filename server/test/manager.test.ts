@@ -276,6 +276,41 @@ describe("AgentManager", () => {
     expect(existsSync(join(chatDir, remaining[0]))).toBe(true);
   });
 
+  test("maybeGenerateTitle warns when the session closes during title completion", async () => {
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      const { manager, indexer } = makeManager(faux, { generateTitles: false });
+      faux.setResponses([fauxAssistantMessage("normal reply")]);
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "hi");
+      await manager.waitForIdle(row.id);
+      const opened = (manager as any).open.get(row.id);
+
+      faux.setResponses([
+        async () => {
+          (manager as any).open.delete(row.id);
+          return fauxAssistantMessage("Late Title");
+        },
+      ]);
+      await (manager as any).maybeGenerateTitle(opened);
+
+      expect(indexer.getSession(row.id)!.title).toBeNull();
+      expect(
+        warnings.some((args) =>
+          args.some(
+            (a) =>
+              typeof a === "string" &&
+              a === `maybeGenerateTitle skipped for ${row.id}: session closed during completion`,
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test("maybeGenerateTitle writes the title when the provider returns a clean stop", async () => {
     // Regression: commit 1850785 (Copilot OAuth) updated the harness call path
     // but left maybeGenerateTitle calling completeSimple without an apiKey; for
@@ -283,17 +318,32 @@ describe("AgentManager", () => {
     // stopReason:"error" and the title was silently dropped. Faux doesn't gate
     // on apiKey but DOES honor stopReason, so this test pins the happy path
     // (no prior test covered the success branch).
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
     const { manager, indexer } = makeManager(faux, { generateTitles: true });
-    faux.setResponses([
-      fauxAssistantMessage("normal reply"),
-      fauxAssistantMessage("A Crisp Six Word Title"),
-    ]);
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("normal reply"),
+        fauxAssistantMessage("A Crisp Six Word Title"),
+      ]);
 
-    const row = await manager.createSession();
-    await manager.sendMessage(row.id, "hi there");
-    await manager.waitForIdle(row.id);
-    await waitFor(() => indexer.getSession(row.id)?.title === "A Crisp Six Word Title");
-    expect(indexer.getSession(row.id)!.title).toBe("A Crisp Six Word Title");
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "hi there");
+      await manager.waitForIdle(row.id);
+      await waitFor(() => indexer.getSession(row.id)?.title === "A Crisp Six Word Title");
+      expect(indexer.getSession(row.id)!.title).toBe("A Crisp Six Word Title");
+      expect(
+        warnings.some((args) =>
+          args.some(
+            (a) =>
+              typeof a === "string" && a.startsWith(`maybeGenerateTitle skipped for ${row.id}:`),
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   test("maybeGenerateTitle does not write a title when the provider returns stopReason:error", async () => {
@@ -330,17 +380,33 @@ describe("AgentManager", () => {
   test("maybeGenerateTitle does not write an empty title when the provider returns clean-stop empty content", async () => {
     // Edge case: a well-behaved provider can return zero content blocks with
     // stopReason:"stop" (rare, but possible). Don't write "" as a title.
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
     const { manager, indexer } = makeManager(faux, { generateTitles: true });
-    faux.setResponses([
-      fauxAssistantMessage("normal reply"),
-      fauxAssistantMessage([], { stopReason: "stop" }),
-    ]);
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("normal reply"),
+        fauxAssistantMessage([], { stopReason: "stop" }),
+      ]);
 
-    const row = await manager.createSession();
-    await manager.sendMessage(row.id, "hi");
-    await manager.waitForIdle(row.id);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(indexer.getSession(row.id)!.title).toBeNull();
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "hi");
+      await manager.waitForIdle(row.id);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(indexer.getSession(row.id)!.title).toBeNull();
+      expect(
+        warnings.some((args) =>
+          args.some(
+            (a) =>
+              typeof a === "string" &&
+              a === `maybeGenerateTitle skipped for ${row.id}: model returned empty title`,
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   test("maybeGenerateTitle queues to pendingTitle when a new turn races ahead", async () => {
@@ -381,6 +447,7 @@ describe("AgentManager", () => {
     // agent_end. Wait for the second turn to finish so the flush runs.
     await manager.waitForIdle(row.id);
     expect(indexer.getSession(row.id)!.title).toBe("Generated Title");
+    await new Promise((r) => setTimeout(r, 50));
 
     // Survive rebuild from JSONL — proves the pendingTitle flush actually
     // wrote, rather than just leaving the title in the indexer
@@ -392,39 +459,46 @@ describe("AgentManager", () => {
     // Race B/C: between the early-return check and the write, a rename
     // arrives. The re-check at the write point must catch it. User rename
     // always wins over auto-generation.
+    const debugMessages: unknown[][] = [];
+    const originalDebug = console.debug;
+    console.debug = (...args: unknown[]) => debugMessages.push(args);
     const { manager, indexer } = makeManager(faux, { generateTitles: true });
 
-    let renameCalled = false;
-    let renameDone = false;
-    faux.setResponses([
-      fauxAssistantMessage("reply"),
-      // title gen: long enough to call rename mid-flight
-      async () => {
-        // give the early-return checks time to pass, then trigger rename
-        await new Promise((r) => setTimeout(r, 20));
-        if (!renameCalled) {
-          renameCalled = true;
-          // rename the session — must win over the about-to-arrive title
-          void manager.rename(row.id, "User Chose This").then(() => {
-            renameDone = true;
-          });
-        }
-        // keep the title-gen pending until rename has settled
-        await waitFor(() => renameDone);
-        return fauxAssistantMessage("Auto Title Loses");
-      },
-    ]);
+    try {
+      let renameCalled = false;
+      let renameDone = false;
+      faux.setResponses([
+        fauxAssistantMessage("reply"),
+        // title gen: long enough to call rename mid-flight
+        async () => {
+          // give the early-return checks time to pass, then trigger rename
+          await new Promise((r) => setTimeout(r, 20));
+          if (!renameCalled) {
+            renameCalled = true;
+            // rename the session — must win over the about-to-arrive title
+            void manager.rename(row.id, "User Chose This").then(() => {
+              renameDone = true;
+            });
+          }
+          // keep the title-gen pending until rename has settled
+          await waitFor(() => renameDone);
+          return fauxAssistantMessage("Auto Title Loses");
+        },
+      ]);
 
-    const row = await manager.createSession();
-    await manager.sendMessage(row.id, "hi");
-    await manager.waitForIdle(row.id);
-    // wait for the title-gen Promise + the pendingTitle flush to settle
-    await new Promise((r) => setTimeout(r, 150));
-    expect(indexer.getSession(row.id)!.title).toBe("User Chose This");
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "hi");
+      await manager.waitForIdle(row.id);
+      // wait for the title-gen Promise + the pendingTitle flush to settle
+      await new Promise((r) => setTimeout(r, 150));
+      expect(indexer.getSession(row.id)!.title).toBe("User Chose This");
 
-    // Confirm via JSONL too — the rename's session_info is the last one
-    await manager.rebuildIndex();
-    expect(indexer.getSession(row.id)!.title).toBe("User Chose This");
+      // Confirm via JSONL too — the rename's session_info is the last one
+      await manager.rebuildIndex();
+      expect(indexer.getSession(row.id)!.title).toBe("User Chose This");
+    } finally {
+      console.debug = originalDebug;
+    }
   });
 
   test("regenerateTitle backfills a NULL title on an existing session", async () => {
