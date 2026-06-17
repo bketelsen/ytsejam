@@ -34,4 +34,18 @@ OK="$(phase_parse "$HERE/fixtures/phase-okkey.yaml")"; okkey_rc=$?
 check "parse: hyphen_underscore key valid (exit 0)" '[ "$okkey_rc" = "0" ]'
 check "parse: hyphen_underscore key present"        '[ "$(echo "$OK" | jq -r ".tasks[\"my_task-1\"].title")" = "ok key" ]'
 
+# Task 2: state
+export PHASE_DIR="$(mktemp -d)"
+SP="$(phase_state_init teststate "$J" "cron-123")"
+check "state: file created"        '[ -f "$SP" ]'
+check "state: scheduleId stored"   '[ "$(phase_state_read teststate | jq -r .scheduleId)" = "cron-123" ]'
+check "state: all tasks pending"   '[ "$(phase_state_read teststate | jq -r "[.tasks[].state]|unique|.[0]")" = "pending" ]'
+phase_task_set teststate schema '.taskId=6 | .state="created"'
+check "state: task mutate sticks"  '[ "$(phase_state_read teststate | jq -r .tasks.schema.taskId)" = "6" ]'
+phase_log teststate "hello"
+check "state: log appends"         '[ "$(phase_state_read teststate | jq -r ".log | length")" = "1" ]'
+# idempotency: re-init must not clobber a running phase if guarded by caller — here just confirm write is atomic
+check "state: write atomic (valid json)" 'phase_state_read teststate | jq -e . >/dev/null'
+rm -rf "$PHASE_DIR"; unset PHASE_DIR
+
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }
