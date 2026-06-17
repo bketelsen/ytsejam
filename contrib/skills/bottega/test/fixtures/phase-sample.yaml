@@ -1,0 +1,15 @@
+phase: "Add rate limiting"
+project: 1
+autonomous: false
+tasks:
+  - key: schema
+    title: "Add rate_limit columns + migration"
+    brief: "Add columns"
+  - key: middleware
+    title: "Rate-limit middleware"
+    brief: "Middleware"
+    after: [schema]
+  - key: docs
+    title: "Document rate-limit config"
+    brief: "Docs"
+    after: [schema]
