@@ -124,6 +124,23 @@ describe("TaskManager", () => {
     expect(messages.some((m: any) => m.role === "assistant")).toBe(true);
   });
 
+  test("delegate report joins all assistant text blocks", async () => {
+    const { tm, indexer, notified } = makeTaskManager();
+    faux.setResponses([
+      fauxAssistantMessage([
+        { type: "text", text: "REPORT: line one" },
+        { type: "thinking", thinking: "hidden" },
+        { type: "text", text: "line two" },
+      ] as any),
+    ]);
+
+    const row = await tm.delegate({ parentSessionId: "parent-1", task: "report", label: "report" });
+
+    await waitFor(() => indexer.getTask(row.id)?.status === "completed");
+    expect(indexer.getTask(row.id)!.resultSummary).toBe("REPORT: line one\nline two");
+    expect(notified[0]!.text).toContain("REPORT: line one\nline two");
+  });
+
   test("concurrency cap queues excess tasks", async () => {
     const { tm, indexer } = makeTaskManager({ concurrency: 1 });
     let releaseFirst!: () => void;

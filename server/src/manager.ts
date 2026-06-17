@@ -29,6 +29,7 @@ import type { PiAuthStore } from "./pi-auth.ts";
 import type { PersonaStore } from "./persona.ts";
 import { composeSystemPrompt } from "./persona.ts";
 import { memoryRoot } from "./memory/index.ts";
+import { textBlocksOf } from "./messages.ts";
 import type { LtmIngestSink } from "./memory/ltm-ingest-sink.ts";
 import { createSessionCwdTools } from "./tools/index.ts";
 import {
@@ -138,13 +139,7 @@ interface OpenSession {
 }
 
 export function previewOf(message: AgentMessage): string {
-  const content = (message as any).content;
-  if (typeof content === "string") return content.slice(0, 200);
-  if (Array.isArray(content)) {
-    const text = content.find((c: any) => c.type === "text")?.text;
-    if (text) return String(text).slice(0, 200);
-  }
-  return "";
+  return (textBlocksOf(message)[0] ?? "").slice(0, 200);
 }
 
 const TITLE_QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [
