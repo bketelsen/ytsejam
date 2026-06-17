@@ -146,3 +146,49 @@ harmlessly — Bottega's own merge-cleanup tears the worktree down.)
 gate as proof of intent (read the diff) · re-kick a blocked task without fixing the cause ·
 echo the API key · author a task without the open-PR-only ceiling · treat a `refinement` run
 as reviewed.
+
+## Phase sequences (multi-task dependency runner)
+
+Use `bottega-api.sh phase ...` when a larger effort can be split into independently mergeable PRs with explicit dependencies.
+
+Phase file shape:
+```yaml
+phase: "Short phase name"
+project: 1
+advance: park      # park (default), auto, or yolo
+tasks:
+  - key: schema
+    title: "Add DB schema"
+    brief: "Implement the schema change and open a PR only."
+    after: []
+  - key: api
+    title: "Wire API"
+    brief: "Build on the merged schema PR and open a PR only."
+    after: [schema]
+```
+(`tasks:` entries use `key`, `title`, `brief`, and optional `after`; keys must be safe slugs.)
+
+Commands:
+- `bash scripts/bottega-api.sh phase run <file.yaml>` derives the slug from the file basename, registers the scheduling seam, initializes phase state, runs one immediate tick, and prints status.
+- `bash scripts/bottega-api.sh phase tick <slug>` runs one reconcile/advance/launch tick and prints status.
+- `bash scripts/bottega-api.sh phase status <slug>` prints the local phase state.
+- `bash scripts/bottega-api.sh phase cancel <slug>` emits the cancel directive for the recorded schedule and clears it from state.
+
+Advance policy (`advance:`):
+- `park` (default): stop at both human-judgment seams. After planification completes, log `awaiting-plan-review` and wait for a human to edit/re-plan/kick implementation. At a green PR gate, log `awaiting-merge` and leave the PR open for the user.
+- `auto`: after planification completes, automatically kick `implementation`; after a green PR gate, merge via Bottega's merge-cleanup path.
+- `yolo`: create Bottega tasks with `yolo_mode:1` **and kick them with `agentType=yolo`** (Bottega does not auto-start a yolo run on create), so Bottega's single yolo agent drives plan+implementation+PR end-to-end in one run; after a green PR gate, merge via merge-cleanup. Use only for low-risk single-file fixes (e.g. weed pulls) — yolo has no separate review/refinement pass; the merge gate is its only safety net.
+
+The gate remains the irreversible-edge guard under all three modes. Even `yolo` parks on a red gate, and the shepherd never merges on any non-`pass` verdict. Legacy phase files with `autonomous: true` are read as `advance: auto`; new files should use `advance:`.
+
+Merge gate (fail-closed):
+1. Resolve the PR head branch.
+2. Read PR metadata and task blocked status.
+3. Require CI status `pass`.
+4. Require GitHub mergeability `MERGEABLE`.
+5. Run stale-base overlap protection so a PR is parked if `origin/main` changed the same files since its merge-base.
+6. Run the Bottega container gate (`incus exec ... bash scripts/gate.sh`). This is the final protection, including the stale-base lesson from the #230 incident.
+
+Scheduling is agent-owned. The bash helper cannot call the assistant's `schedule` tool, so `_phase_schedule_register` writes `PENDING-AGENT-SCHEDULE`. After `phase run`, the agent MUST register a real schedule: cron `*/5 * * * *`, target `new_session`, prompt to run `bottega-api.sh phase tick <slug>` and report COMPLETE/parked. Then write the real schedule id into the phase state. On COMPLETE, cancel the schedule; `phase cancel` emits the cancel directive if manual cleanup is needed.
+
+Escape hatch: when the chain is tightly coupled (later steps need earlier steps' code in the same branch), use ONE big Bottega task with a 'do A then B then C' brief instead — the shepherd is for independently-mergeable PRs.

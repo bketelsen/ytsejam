@@ -64,3 +64,21 @@ _Added: 2026-06-13 | Task: Bridge 1 lessons batching (no clobber)_
 When a helper's type is deliberately widened to swallow generic inputs (e.g. `deriveApprovalMode` in `server/src/approval/session-entry.ts` typed as `ReadonlyArray<{ type: string; mode?: unknown }>` to accept pi-agent-core's `SessionTreeEntry[]` without casts), never trust that signature with a non-null assertion like `entries[i]!`; a permissive type cannot exclude sparse arrays, so index access on a `null`/`undefined` hole throws `TypeError: Cannot read properties of null`. Instead read into a local and guard with optional chaining: `const entry = entries[i]; if (entry?.type === "set_approval_mode" && ...)`. Also test the real contract you claimed to support, not just convenient object literals: add a case feeding actual `import("@earendil-works/pi-agent-core").SessionTreeEntry[]` so a future dependency bump that breaks assignability fails the build, and a case with trailing `null`/`undefined` elements to lock in the no-throw behavior. The rule: if a type is intentionally loose to accept "anything," the implementation and its tests must actually handle that "anything."
 
 _Added: 2026-06-14 | Task: Task 2 — JSONL session entry `set_approval_mode`_
+
+## Count List Members Not String Emptiness
+
+When a shell guard infers "was anything found?" from a captured list, test the element count (e.g. jq `[…]|length`), never the emptiness of the joined string, because `$(...)` strips the trailing newline and a lone empty-string member collapses to "" — silently passing the check it should fail. (seen in: contrib/skills/bottega/scripts/phase-lib.sh:16 — empty-string task key slips past guard)
+
+_Added: 2026-06-17 | Task: Task 1 phase-file parse — key-shape guard | Direct-publish_
+
+## Guard A Failed Read Before Its Empty Output Flows Onward
+
+In a shell pipeline without `set -o pipefail`, a failed `cat`/read (rc≠0, empty stdout) feeds the next tool empty input — `jq` on empty stdin emits nothing at rc=0 — so the pipeline "succeeds" and a writer downstream fabricates empty/garbage state. Capture the read on its own line and guard its rc (`x="$(read)" || return $?`; a combined `local x="$(...)"` masks rc behind `local`'s zero exit) and/or have the writer refuse empty/null. (seen in: phase-lib.sh:phase_task_set — missing slug fabricates 0-byte state file at rc=0)
+
+_Added: 2026-06-17 | Task: Task 2 state file — missing-slug fix | Direct-publish_
+
+## A Captured Status Token Is Poisoned By A Child's Stdout
+
+When you capture a function's stdout as a status token (`v="$(fn)"; [ "$v" = "ok" ]`), any stdout an inner command writes without redirection is inherited and prepended to your token — exact-equality then silently fails (and a substring match silently passes). Match the operative LAST line (`"${v##*$'\n'}"`) and have the producer capture/redirect its children; never trust `[ "$v" = … ]` on a multi-source capture. Silent test stubs mask this — every double must exercise the chatty path.
+
+_Added: 2026-06-17 | Task: Task 5 — phase_advance_prs verdict (chatty container-gate stdout false-parked every autonomous merge) | Direct-publish_
