@@ -150,13 +150,13 @@ phase_gate() {
   pr="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].pr')" || { echo "park:pr-read-failed"; return 1; }
   [ "$pr" = "null" ] && { echo "park:no-pr"; return 0; }
 
-  br="$("${PHASE_PR_BRANCH_FN:-_phase_pr_branch_live}" "$pr")" || { echo "park:branch-resolve-failed"; return 0; }
+  br="$("${PHASE_PR_BRANCH_FN:-_phase_pr_branch_live}" "$tid")" || { echo "park:branch-resolve-failed"; return 0; }
   [ -z "$br" ] && { echo "park:branch-empty"; return 0; }
   case "$br" in
     -*|*[!A-Za-z0-9._/-]*) echo "park:bad-branch-name"; return 0 ;;
   esac
 
-  meta="$("${PHASE_PR_META_FN:-_phase_pr_meta_live}" "$pr" "$tid")" || { echo "park:meta-check-failed"; return 0; }
+  meta="$("${PHASE_PR_META_FN:-_phase_pr_meta_live}" "$tid")" || { echo "park:meta-check-failed"; return 0; }
   read -r -a mf <<< "$meta"
   [ "${#mf[@]}" -eq 3 ] || { echo "park:meta-malformed"; return 0; }
   ci="${mf[0]}"; mergeable="${mf[1]}"; blocked="${mf[2]}"
@@ -222,15 +222,22 @@ phase_advance_prs() {
     verdict="$(phase_gate "$slug" "$key")"; grc=$?
     verdict="${verdict##*$'\n'}"          # operative token = last line; tolerates chatty container-gate stdout leaked through phase_gate
     if [ "$grc" -eq 0 ] && [ "$verdict" = "pass" ]; then
-      local pr; pr="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].pr')" || return $?
+      local pr mtid
+      pr="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].pr')" || return $?
+      mtid="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].taskId')" || return $?
       if ! [[ "$pr" =~ ^[0-9]+$ ]]; then
         phase_task_set "$slug" "$key" '.state="parked"'; phase_task_set_str "$slug" "$key" reason "bad-pr-number" || return $?
         phase_log "$slug" "parked $key: bad-pr-number ($pr)" || return $?
         continue
       fi
-      if "${PHASE_MERGE_FN:-_phase_merge_live}" "$pr"; then
+      if ! [[ "$mtid" =~ ^[0-9]+$ ]]; then
+        phase_task_set "$slug" "$key" '.state="parked"'; phase_task_set_str "$slug" "$key" reason "bad-taskid" || return $?
+        phase_log "$slug" "parked $key: bad-taskid ($mtid)" || return $?
+        continue
+      fi
+      if "${PHASE_MERGE_FN:-_phase_merge_live}" "$mtid"; then
         phase_task_set "$slug" "$key" '.state="merged"' || return $?
-        phase_log "$slug" "merged $key (pr $pr)" || return $?
+        phase_log "$slug" "merged $key (task $mtid, pr $pr)" || return $?
       else
         phase_task_set "$slug" "$key" '.state="parked"' || return $?
         phase_task_set_str "$slug" "$key" reason "merge-failed" || return $?
@@ -279,11 +286,11 @@ _phase_stale_base_live() {  # <pr-branch> -> stdout = intersecting files (empty=
   "
 }
 
-_phase_pr_branch_live() {  # <pr> -> branch name (Task 6 will wire gh; placeholder errors so live use before Task-6 fails closed)
+_phase_pr_branch_live() {  # <tid> -> branch name (Task 6 will wire gh; placeholder errors so live use before Task-6 fails closed)
   echo "_phase_pr_branch_live: not wired until Task 6" >&2; return 1
 }
 
-_phase_pr_meta_live() {  # <pr> <tid> -> "ci mergeable blocked" (Task 6 wires bottega-api.sh); placeholder errors closed
+_phase_pr_meta_live() {  # <tid> -> "ci mergeable blocked" (Task 6 wires bottega-api.sh); placeholder errors closed
   echo "_phase_pr_meta_live: not wired until Task 6" >&2; return 1
 }
 
@@ -296,6 +303,6 @@ _phase_kickoff_live() {  # <task-id> -> start task (Task 6 will wire bottega-api
   echo "_phase_kickoff_live: not wired until Task 6" >&2; return 1
 }
 
-_phase_merge_live() {  # <pr> -> merge PR (Task 6 will wire gh/API)
+_phase_merge_live() {  # <tid> -> merge PR (Task 6 will wire gh/API)
   echo "_phase_merge_live: not wired until Task 6" >&2; return 1
 }

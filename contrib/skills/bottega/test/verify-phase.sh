@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091,SC2016,SC2030,SC2031,SC2034,SC2155,SC2329,SC2028,SC2015
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/../scripts/phase-lib.sh"
@@ -222,6 +223,19 @@ export PHASE_PR_META_FN=_t_meta_ok
 # no-pr task -> park:no-pr
 phase_task_set g docs '.taskId=9 | .state="running" | .pr=null'
 check "gate: no PR -> park:no-pr" '[ "$(phase_gate g docs)" = "park:no-pr" ]'
+# Regression teeth: gate resolvers are task-id-first; PR remains only the existence sentinel.
+phase_task_set g schema '.taskId=42 | .state="pr_open" | .pr=242'
+export PHASE_PR_BRANCH_FN=_t_capture_branch_arg; _t_capture_branch_arg() { echo "$1" > "$PHASE_DIR/branch-arg"; echo feat/x; }; export -f _t_capture_branch_arg
+export PHASE_PR_META_FN=_t_meta_ok; export PHASE_STALE_BASE_FN=_t_stale_no; export PHASE_CONTAINER_GATE_FN=_t_gate_ok
+phase_gate g schema >/dev/null || true
+check "gate: branch resolver receives task id" '[ "$(cat "$PHASE_DIR/branch-arg")" = "42" ]'
+check "gate: branch resolver did not receive PR number" '[ "$(cat "$PHASE_DIR/branch-arg")" != "242" ]'
+export PHASE_PR_BRANCH_FN=_t_branch
+export PHASE_PR_META_FN=_t_capture_meta_arg; _t_capture_meta_arg() { echo "$1" > "$PHASE_DIR/meta-arg"; echo "pass MERGEABLE 0"; }; export -f _t_capture_meta_arg
+phase_gate g schema >/dev/null || true
+check "gate: meta resolver receives task id" '[ "$(cat "$PHASE_DIR/meta-arg")" = "42" ]'
+check "gate: meta resolver did not receive PR number" '[ "$(cat "$PHASE_DIR/meta-arg")" != "242" ]'
+export PHASE_PR_META_FN=_t_meta_ok
 
 # Task 4 hardening: hostile branch names and strict meta parsing must fail closed.
 export PHASE_PR_META_FN=_t_meta_ok; export PHASE_STALE_BASE_FN=_t_stale_no; export PHASE_CONTAINER_GATE_FN=_t_gate_ok
@@ -347,6 +361,15 @@ rm -f "$PHASE_DIR/sink-merge-fired"
 phase_advance_prs sinkok || true
 check "sink: numeric PR merges" '[ "$(phase_state_read sinkok | jq -r .tasks.schema.state)" = "merged" ]'
 check "sink: numeric PR fired merge" '[ -f "$PHASE_DIR/sink-merge-fired" ]'
+# Regression teeth: autonomous merge calls the task-id-first Bottega merge-cleanup helper, not raw PR merge.
+phase_state_init mergearg "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_task_set mergearg schema '.taskId=99 | .state="pr_open" | .pr=242'
+rm -f "$PHASE_DIR/merge-arg"
+_t_merge_capture(){ echo "$1" > "$PHASE_DIR/merge-arg"; return 0; }; export -f _t_merge_capture; export PHASE_MERGE_FN=_t_merge_capture
+phase_advance_prs mergearg || true
+check "merge: merge fn receives task id" '[ "$(cat "$PHASE_DIR/merge-arg")" = "99" ]'
+check "merge: merge fn did not receive PR number" '[ "$(cat "$PHASE_DIR/merge-arg")" != "242" ]'
+check "api: no dead pr->task resolver" '! grep -q _phase_taskid_for_pr "$HERE/../scripts/bottega-api.sh"'
 rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN PHASE_MERGE_FN
 
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }

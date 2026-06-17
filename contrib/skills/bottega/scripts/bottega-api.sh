@@ -50,27 +50,31 @@ _phase_create_live() { # <project> <key> <title> <brief> -> task id
 
 _phase_kickoff_live() { api POST "/api/tasks/$1/agent-runs" "$(jq -n '{agentType:"planification"}')" >/dev/null; }
 
-_phase_merge_live() { gh pr merge "$1" --repo bketelsen/ytsejam --squash --delete-branch; }
-
-_phase_taskid_for_pr() {  # <pr-number> -> task id whose PR matches, or empty
-  api GET /api/tasks | jq -r --arg pr "$1" '(.tasks // .) | (if type=="array" then . else [.] end) | map(select((.pr_number // .pr | tostring) == $pr)) | .[0].id // empty'
+_phase_pr_branch_live() {  # <tid> -> head branch name
+  local prj exists prnum
+  prj="$(api GET "/api/tasks/$1/pull-request")" || return 1
+  exists="$(printf '%s' "$prj" | jq -r '.exists // false')" || return 1
+  [ "$exists" = "true" ] || return 1
+  prnum="$(printf '%s' "$prj" | jq -r '.url // ""' | sed -nE 's#.*/pull/([0-9]+).*#\1#p')" || return 1
+  [ -n "$prnum" ] || return 1
+  gh pr view "$prnum" --repo bketelsen/ytsejam --json headRefName --jq '.headRefName // empty'
 }
 
-_phase_pr_branch_live() {  # <pr> -> head branch name
-  local tid
-  tid="$(_phase_taskid_for_pr "$1")" || return 1
-  [ -n "$tid" ] || return 1
-  api GET "/api/tasks/$tid/pull-request" | jq -r '.headRefName // .branch // .head.ref // empty'
-}
-
-_phase_pr_meta_live() {  # <pr> <tid> -> "ci mergeable blocked"
-  local tid="$2" prj tj ci mrg blk
-  prj="$(api GET "/api/tasks/$tid/pull-request")" || return 1
-  tj="$(api GET "/api/tasks/$tid" | task_obj)" || return 1
+_phase_pr_meta_live() {  # <tid> -> "ci mergeable blocked"
+  local prj tj ci mrg blk
+  prj="$(api GET "/api/tasks/$1/pull-request")" || return 1
+  tj="$(api GET "/api/tasks/$1" | task_obj)" || return 1
   ci="$(printf '%s' "$prj" | jq -r '.ciStatus.status // "unknown"')" || return 1
   mrg="$(printf '%s' "$prj" | jq -r '.mergeable // "UNKNOWN"')" || return 1
   blk="$(printf '%s' "$tj" | jq -r '(.workflow_blocked // false) | if . == true or . == 1 then 1 else 0 end')" || return 1
   printf '%s %s %s\n' "$ci" "$mrg" "$blk"
+}
+
+_phase_merge_live() {  # <tid> -> merge via Bottega merge-cleanup (reaps worktree)
+  # ponytail: merge-cleanup is merge-THEN-clean (non-idempotent) and deliberately replaces raw gh so Bottega reaps worktrees.
+  local r
+  r="$(api POST "/api/tasks/$1/merge-cleanup" '{}')" || return 1
+  [ "$(printf '%s' "$r" | jq -r '.success // false')" = "true" ] || return 1
 }
 
 _phase_schedule_register() { echo "PENDING-AGENT-SCHEDULE"; }   # agent replaces with a real cron id
