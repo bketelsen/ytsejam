@@ -14,4 +14,11 @@ check "parse: 3 tasks"         '[ "$(echo "$J" | jq -r ".tasks | length")" = "3"
 check "parse: middleware after schema" '[ "$(echo "$J" | jq -r ".tasks.middleware.after[0]")" = "schema" ]'
 check "parse: schema after empty"      '[ "$(echo "$J" | jq -r ".tasks.schema.after | length")" = "0" ]'
 
+J_EMPTY="$(phase_parse "$HERE/fixtures/phase-empty.yaml")"
+check "parse: tasks-less YAML yields empty tasks map" '[ "$(echo "$J_EMPTY" | jq -r ".tasks | length")" = "0" ]'
+
+phase_parse "$HERE/fixtures/does-not-exist.yaml" >/dev/null 2>&1
+missing_rc=$?
+check "parse: missing file exits 2" '[ "$missing_rc" = "2" ]'
+
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }
