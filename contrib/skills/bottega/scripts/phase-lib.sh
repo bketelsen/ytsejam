@@ -16,7 +16,7 @@ phase_parse() {
   local nbad
   nbad="$(printf '%s' "$json" | jq '[.tasks | keys[]? | select(test("^[a-z0-9_-]+$") | not)] | length')"
   if [ "${nbad:-0}" -gt 0 ]; then
-    # Emit one stderr line per offending key. Read via jq -c so each key (even ""/embedded-newline) is one JSON-quoted token.
+    # Emit one stderr line per offending key. `jq -r ... | @json` makes each key (even ""/embedded-newline) one JSON-quoted token.
     local k
     while IFS= read -r k; do
       echo "phase: invalid task key $k (keys must match [a-z0-9_-]+)" >&2

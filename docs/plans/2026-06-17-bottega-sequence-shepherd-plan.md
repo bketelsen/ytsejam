@@ -80,6 +80,8 @@ phase_parse() {
 ```
 > Decision: require `yq` (mikefarah) rather than hand-rolling a YAML parser — the design's "~15-line parser" fallback is YAGNI if `yq` is present; we assert its presence with a clear error. (Confirm yq availability in Step 4; if absent on the host, the fallback becomes its own follow-up task, not v1 scope.)
 
+> **Amendment (2026-06-17, during develop):** the two-stage review of this task surfaced a latent foot-gun — `phase_parse` accepts any task `key` and emits it as a JSON object key, but downstream tick logic uses dot-literal jq paths (`.tasks.<key>.after[0]`) that silently resolve to `null` for a non-identifier key. Closed at the parse boundary: **task keys must match `^[a-z0-9_-]+$`**; any violation → exit **4**, one stderr line per offending key, no stdout JSON. Crucially, detection is **count-based** (`jq '[…|select(test(…)|not)]|length' > 0`), NOT shell string-emptiness of a newline-joined list — an empty-string key (`key: ""`) collapses such a list to `""` and slips a `[ -n "$bad" ]` test (a confirmed false-negative). Full exit-code contract: `0` ok · `2` missing file · `3` yq absent · `4` invalid key. Tests added: `phase-badkey.yaml` (dotted→4), `phase-emptykey.yaml` (empty→4), `phase-okkey.yaml` (`my_task-1`→0). Final commits: `70ef659` (guard) + `c2ad4f6` (empty-key/count-based). Good-path output byte-identical throughout.
+
 #### Step 3: Write the verification harness `test/verify-phase.sh` with the first assertion
 ```bash
 #!/usr/bin/env bash
