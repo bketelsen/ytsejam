@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { ServerEvent } from "../src/events.ts";
+import { previewOf } from "../src/manager.ts";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import {
   fauxAssistantMessage,
@@ -25,6 +27,21 @@ function readDevLog(dataDir: string): string {
   const path = join(dataDir, "memory", "projects", "ytsejam", "dev-log.md");
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
+
+describe("previewOf", () => {
+  test("uses the first text block and caps the preview at 200 characters", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        { type: "toolCall", tool: "bash", arguments: { command: "pwd" } },
+        { type: "text", text: "x".repeat(250) },
+        { type: "text", text: "later" },
+      ],
+    } as unknown as AgentMessage;
+
+    expect(previewOf(message)).toBe("x".repeat(200));
+  });
+});
 
 describe("AgentManager", () => {
   test("createSession indexes a row and lists it", async () => {
