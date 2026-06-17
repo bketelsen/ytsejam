@@ -70,3 +70,9 @@ _Added: 2026-06-14 | Task: Task 2 — JSONL session entry `set_approval_mode`_
 When a shell guard infers "was anything found?" from a captured list, test the element count (e.g. jq `[…]|length`), never the emptiness of the joined string, because `$(...)` strips the trailing newline and a lone empty-string member collapses to "" — silently passing the check it should fail. (seen in: contrib/skills/bottega/scripts/phase-lib.sh:16 — empty-string task key slips past guard)
 
 _Added: 2026-06-17 | Task: Task 1 phase-file parse — key-shape guard | Direct-publish_
+
+## Guard A Failed Read Before Its Empty Output Flows Onward
+
+In a shell pipeline without `set -o pipefail`, a failed `cat`/read (rc≠0, empty stdout) feeds the next tool empty input — `jq` on empty stdin emits nothing at rc=0 — so the pipeline "succeeds" and a writer downstream fabricates empty/garbage state. Capture the read on its own line and guard its rc (`x="$(read)" || return $?`; a combined `local x="$(...)"` masks rc behind `local`'s zero exit) and/or have the writer refuse empty/null. (seen in: phase-lib.sh:phase_task_set — missing slug fabricates 0-byte state file at rc=0)
+
+_Added: 2026-06-17 | Task: Task 2 state file — missing-slug fix | Direct-publish_
