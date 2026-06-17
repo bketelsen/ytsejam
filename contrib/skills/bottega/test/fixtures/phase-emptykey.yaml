@@ -1,0 +1,6 @@
+phase: "Empty key phase"
+project: 1
+tasks:
+  - key: ""
+    title: "ek"
+    brief: "x"
