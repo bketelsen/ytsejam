@@ -49,7 +49,7 @@ export function parseOpenActionItem(domain: string, path: string, line: number, 
 
 export async function scanOpenActions(targets: { domain: string; path: string }[]): Promise<OpenActionItem[]> {
   const items: OpenActionItem[] = [];
-  for (const t of [...targets].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+  for (const t of targets) {
     const file = await store.read(t.path);
     if (!file.found) continue;
     const state = { inComment: false, inFence: false };
