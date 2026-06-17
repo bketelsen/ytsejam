@@ -90,6 +90,21 @@ for (const [selector, label] of [
   });
 }
 
+test("warning rail has non-text contrast against sidebar", () => {
+  for (const [selector, label] of [
+    [":root", "light"],
+    [".dark", "dark"],
+  ]) {
+    const vars = parseVars(selector);
+    assert.ok(vars.warning, `${label} theme missing --warning`);
+    assert.ok(vars.sidebar, `${label} theme missing --sidebar`);
+    assert.ok(
+      contrast(vars.warning, vars.sidebar) >= 3,
+      `${label} warning on sidebar is below 3:1`
+    );
+  }
+});
+
 function appComponentFiles(dir) {
   return readdirSync(dir).flatMap((entry) => {
     const path = join(dir, entry);
