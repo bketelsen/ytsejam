@@ -5,8 +5,8 @@
 # All endpoints are /api-prefixed on $BOTTEGA_BASE. Requires: curl, jq, (gh for diff verify).
 set -euo pipefail
 
-BOTTEGA_BASE="${BOTTEGA_BASE:-http://localhost:3001}"
-BOTTEGA_KEY_FILE="${BOTTEGA_KEY_FILE:-$HOME/.ytsejam/data/secrets/bottega-api-key}"
+BOTTEGA_BASE="${BOTTEGA_BASE:-http://10.161.72.31:3001}"   # container Bottega (host instance retired); set BOTTEGA_BASE to override
+BOTTEGA_KEY_FILE="${BOTTEGA_KEY_FILE:-$HOME/.ytsejam/data/secrets/bottega-api-key-container}"
 
 key() {
   [ -f "$BOTTEGA_KEY_FILE" ] || { echo "no key file at $BOTTEGA_KEY_FILE (mint one in the Bottega UI, persist mode 600)" >&2; exit 2; }
