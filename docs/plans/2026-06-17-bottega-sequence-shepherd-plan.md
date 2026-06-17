@@ -556,3 +556,21 @@ git commit -m "feat(shepherd): live wiring (phase run/tick/status/cancel) + agen
 - Scheduling lives in the agent (harness `schedule` tool), not the bash script — `phase run` emits the directive; the agent registers/cancels the cron. This is the honest seam between a bash skill and an agent-owned tool.
 - `yq` (mikefarah) is required for phase-file parsing; absence is a clear error, not a silent fallback (the ~15-line YAML parser is a follow-up only if a yq-less host appears).
 - The phase brief's `@file` resolution reuses the existing doc-verify guard; per-task briefs are read from the phase file at launch.
+
+---
+
+## Amendment — what the build actually produced (2026-06-17)
+
+All 6 tasks shipped on branch `bottega-sequence-shepherd` (base→`38dcc6e`, 22 commits ahead of main). Deltas from the reference code above, recorded for the next reader:
+
+- **Task 4 lesson published** (`4cb58a1`, `docs/agents/testing.md` "Adversarially Probe Stubbed-Out Helper Bodies") — the 6-point gate's live-helper bodies were stub-injected for tests; the lesson is to adversarially probe such stubbed bodies. Task 4 also hardened the gate beyond the reference: F1 caller-side branch-name charset allowlist, F2 strict 3-token meta parse (`^[01]$` on blocked), F3 capture-each-diff-then-`comm` in `_phase_stale_base_live`.
+- **Task 5 jq-injection fix** — `phase_task_set_str <slug> <key> <field> <value>` binds values via `--arg` (never weaves a verdict/reason/upstream string into a jq PROGRAM); the reference's `.reason="$verdict"` was injectable. Reads are rc-guarded; `phase_tick_once` guards the final read against an integer-expr crash; vestigial `created` state dropped.
+- **Task 5 chatty-gate fix** (`a438f7f`, lesson `4755c32` `docs/agents/tooling.md` "A Captured Status Token Is Poisoned By A Child's Stdout") — `phase_gate` runs the container gate WITHOUT capturing its stdout, so a chatty-but-passing `gate.sh` leaked its `=== gate: PASSED ===` lines into `phase_gate`'s stdout, and `phase_advance_prs`'s exact-equality `[ "$verdict" = "pass" ]` would false-park EVERY autonomous merge. Fix: reduce verdict to its LAST line + require gate rc==0. Without this the autonomous feature was dead-on-arrival.
+- **Task 6 corrections to the reference** — the plan's `_phase_pr_branch_live` called an UNDEFINED `_phase_taskid_for_pr`; the build defines a real pr→tid resolver (scan `/api/tasks` for matching `.pr_number`). `_phase_pr_meta_live` guards every api/jq read (reference left them unguarded) and emits exactly 3 tokens, fail-closed. A PR-number sink guard (`^[0-9]+$`) was added to `phase_advance_prs` before the live `gh pr merge` (defense-in-depth; the only phase-lib.sh edit in Task 6). `create)` was refactored DRY into `create_task` (emits id only; CLI messaging preserved). Per-task `brief` could NOT thread through the frozen `(proj,key,title)` create signature → v1 seeds brief from title (`# ponytail:`); richer `@file` briefs are a follow-up.
+- **Scheduling seam** — the bash layer cannot call the harness `schedule` tool; `phase run` emits `PENDING-AGENT-SCHEDULE` and SKILL.md instructs the AGENT to register a `*/5` cron (new_session) running `phase tick <slug>` and cancel it on COMPLETE.
+- **Harness** grew to 84 checks; runs clean-env (`env -i`) with `gh`/`incus`/`curl` shadowable — a leak-sentinel run confirmed ZERO live calls fire during tests.
+
+### NOT YET DONE (post-build, operator-gated)
+- **Live smoke-test** — one real `phase` tick against the container culminating in a real `gh pr merge` of a throwaway PR. Deliberately NOT run by any subagent; operator + assistant run it together. Container `origin/main` has moved (4+ real Bottega PRs merged) — re-read the live main head at smoke-test time; gate #6 (stale-base) compares against current main.
+- **Skill sync** — after merge, re-sync the runtime copy `~/.ytsejam/data/skills/bottega/` from `contrib/` (else the `phase` verbs aren't live).
+- **Merge of this branch** — ALWAYS the operator's call.
