@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createCogTools } from "../src/tools/cog.ts";
 import * as memory from "../src/memory/index.ts";
@@ -10,6 +13,23 @@ function tool(tools: ReturnType<typeof createCogTools>, name: string) {
 
 function text(r: { content: { type: string }[] }): string {
   return (r.content[0] as any).text;
+}
+
+function json(r: { content: { type: string }[] }) {
+  return JSON.parse(text(r));
+}
+
+async function withMemoryRoot<T>(fn: (root: string) => Promise<T>): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), "ytsejam-cog-tool-bytes-"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  process.env.YTSEJAM_MEMORY_DIR = root;
+  try {
+    return await fn(root);
+  } finally {
+    delete process.env.YTSEJAM_MEMORY_DIR;
+    warn.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 describe("createCogTools", () => {
@@ -68,6 +88,48 @@ describe("createCogTools", () => {
       path: "hot-memory.md",
     });
     expect(text(r)).toBe("# Hot\nstate");
+  });
+
+  test("cog_append returns byte counts for a brand-new file", async () => {
+    await withMemoryRoot(async () => {
+      const r = await tool(createCogTools(), "cog_append").execute("t1", {
+        path: "scratch.md",
+        text: "héllo",
+      });
+      const parsed = json(r);
+      const expected = Buffer.byteLength("héllo\n");
+      expect(parsed).toEqual({
+        ok: true,
+        bytes_written: expected,
+        total_bytes: expected,
+      });
+    });
+  });
+
+  test("cog_append returns growth and final size for existing-file duplicate appends", async () => {
+    await withMemoryRoot(async (root) => {
+      await writeFile(join(root, "scratch.md"), "alpha\n", "utf8");
+      const appendTool = tool(createCogTools(), "cog_append");
+      const first = json(await appendTool.execute("t1", {
+        path: "scratch.md",
+        text: "beta",
+      }));
+      const second = json(await appendTool.execute("t2", {
+        path: "scratch.md",
+        text: "beta",
+      }));
+      const growth = Buffer.byteLength("beta\n");
+      expect(first).toEqual({
+        ok: true,
+        bytes_written: growth,
+        total_bytes: Buffer.byteLength("alpha\nbeta\n"),
+      });
+      expect(second).toEqual({
+        ok: true,
+        bytes_written: growth,
+        total_bytes: Buffer.byteLength("alpha\nbeta\nbeta\n"),
+      });
+    });
   });
 
   test("envelope results render as pretty JSON", async () => {
