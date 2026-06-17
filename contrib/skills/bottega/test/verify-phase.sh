@@ -21,4 +21,13 @@ phase_parse "$HERE/fixtures/does-not-exist.yaml" >/dev/null 2>&1
 missing_rc=$?
 check "parse: missing file exits 2" '[ "$missing_rc" = "2" ]'
 
+# negative: invalid (non-identifier) task key -> exit 4
+phase_parse "$HERE/fixtures/phase-badkey.yaml" >/dev/null 2>&1; badkey_rc=$?
+check "parse: invalid task key exits 4" '[ "$badkey_rc" = "4" ]'
+
+# positive: hyphen+underscore key is valid
+OK="$(phase_parse "$HERE/fixtures/phase-okkey.yaml")"; okkey_rc=$?
+check "parse: hyphen_underscore key valid (exit 0)" '[ "$okkey_rc" = "0" ]'
+check "parse: hyphen_underscore key present"        '[ "$(echo "$OK" | jq -r ".tasks[\"my_task-1\"].title")" = "ok key" ]'
+
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }

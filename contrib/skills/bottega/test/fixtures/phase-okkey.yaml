@@ -1,0 +1,6 @@
+phase: "OK key phase"
+project: 1
+tasks:
+  - key: my_task-1
+    title: "ok key"
+    brief: "x"
