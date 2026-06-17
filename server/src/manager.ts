@@ -147,6 +147,37 @@ export function previewOf(message: AgentMessage): string {
   return "";
 }
 
+const TITLE_QUOTE_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['"', '"'],
+  ["'", "'"],
+  ["\u201C", "\u201D"],
+  ["\u2018", "\u2019"],
+];
+const TITLE_WORD_CAP = 12;
+
+function stripTrailingTitlePunctuation(s: string): string {
+  return s.replace(/[.,;:]$/, "");
+}
+
+function sanitizeTitle(s: string): string {
+  let title = s;
+  for (const [open, close] of TITLE_QUOTE_PAIRS) {
+    if (title.length >= open.length + close.length && title.startsWith(open) && title.endsWith(close)) {
+      title = title.slice(open.length, title.length - close.length).trim();
+      break;
+    }
+  }
+
+  title = stripTrailingTitlePunctuation(title);
+
+  const words = title.match(/\S+/g) ?? [];
+  if (words.length > TITLE_WORD_CAP) {
+    title = stripTrailingTitlePunctuation(words.slice(0, TITLE_WORD_CAP).join(" "));
+  }
+
+  return title;
+}
+
 export class AgentManager {
   private readonly opts: AgentManagerOptions;
   private readonly repo: JsonlSessionRepo;
@@ -1027,7 +1058,7 @@ export class AgentManager {
         );
         return;
       }
-      const title = previewOf(result).split("\n")[0]?.trim().slice(0, 80);
+      const title = sanitizeTitle(previewOf(result).split("\n")[0].trim()).slice(0, 80);
       if (!title) {
         logSkip("warn", "model returned empty title");
         return;

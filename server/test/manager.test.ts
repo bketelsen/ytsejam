@@ -346,6 +346,134 @@ describe("AgentManager", () => {
     }
   });
 
+  test("maybeGenerateTitle strips straight wrapping quotes from the generated title", async () => {
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage('"Fixing The Login Bug"'),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi there");
+    await manager.waitForIdle(row.id);
+    await waitFor(() => indexer.getSession(row.id)?.title === "Fixing The Login Bug");
+    expect(indexer.getSession(row.id)!.title).toBe("Fixing The Login Bug");
+  });
+
+  test("maybeGenerateTitle strips curly wrapping quotes from the generated title", async () => {
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage("\u201CDeploy The New Build\u201D"),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi there");
+    await manager.waitForIdle(row.id);
+    await waitFor(() => indexer.getSession(row.id)?.title === "Deploy The New Build");
+    expect(indexer.getSession(row.id)!.title).toBe("Deploy The New Build");
+  });
+
+  test("maybeGenerateTitle preserves an internal apostrophe in the generated title", async () => {
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage("Brian's Plan"),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi there");
+    await manager.waitForIdle(row.id);
+    await waitFor(() => indexer.getSession(row.id)?.title === "Brian's Plan");
+    expect(indexer.getSession(row.id)!.title).toBe("Brian's Plan");
+  });
+
+  test.each([
+    ["period", "Refactor The Title Logic.", "Refactor The Title Logic"],
+    ["comma", "Refactor The Title Logic,", "Refactor The Title Logic"],
+    ["semicolon", "Refactor The Title Logic;", "Refactor The Title Logic"],
+    ["colon", "Refactor The Title Logic:", "Refactor The Title Logic"],
+  ])("maybeGenerateTitle strips a trailing %s from the generated title", async (_name, reply, expected) => {
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage(reply),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi there");
+    await manager.waitForIdle(row.id);
+    await waitFor(() => indexer.getSession(row.id)?.title === expected);
+    expect(indexer.getSession(row.id)!.title).toBe(expected);
+  });
+
+  test.each([
+    ["question mark", "Why Did The Build Fail?"],
+    ["exclamation point", "Ship The Fix Now!"],
+  ])("maybeGenerateTitle preserves a trailing %s in the generated title", async (_name, reply) => {
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage(reply),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi there");
+    await manager.waitForIdle(row.id);
+    await waitFor(() => indexer.getSession(row.id)?.title === reply);
+    expect(indexer.getSession(row.id)!.title).toBe(reply);
+  });
+
+  test("maybeGenerateTitle treats a title sanitized to empty as an empty title", async () => {
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    try {
+      faux.setResponses([
+        fauxAssistantMessage("normal reply"),
+        fauxAssistantMessage('"."'),
+      ]);
+
+      const row = await manager.createSession();
+      await manager.sendMessage(row.id, "hi");
+      await manager.waitForIdle(row.id);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(indexer.getSession(row.id)!.title).toBeNull();
+      expect(
+        warnings.some((args) =>
+          args.some(
+            (a) =>
+              typeof a === "string" &&
+              a === `maybeGenerateTitle skipped for ${row.id}: model returned empty title`,
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("maybeGenerateTitle caps egregiously long generated titles at twelve words", async () => {
+    const { manager, indexer } = makeManager(faux, { generateTitles: true });
+    faux.setResponses([
+      fauxAssistantMessage("normal reply"),
+      fauxAssistantMessage(
+        "One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve Thirteen Fourteen Fifteen.",
+      ),
+    ]);
+
+    const row = await manager.createSession();
+    await manager.sendMessage(row.id, "hi there");
+    await manager.waitForIdle(row.id);
+    await waitFor(() =>
+      indexer.getSession(row.id)?.title === "One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve",
+    );
+    expect(indexer.getSession(row.id)!.title).toBe(
+      "One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve",
+    );
+  });
+
   test("maybeGenerateTitle does not write a title when the provider returns stopReason:error", async () => {
     // Defense-in-depth: the original silent failure was an "error" stopReason
     // with empty content. Provider failures (auth, rate limit, network) all
