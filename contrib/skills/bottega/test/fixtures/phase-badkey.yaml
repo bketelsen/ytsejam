@@ -1,0 +1,6 @@
+phase: "Bad key phase"
+project: 1
+tasks:
+  - key: api.v2
+    title: "dotted key"
+    brief: "x"
