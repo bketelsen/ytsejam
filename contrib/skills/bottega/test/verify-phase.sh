@@ -113,6 +113,20 @@ check "reconcile: boolean-true blocked parks"   '[ "$(phase_state_read recon | j
 ( phase_reconcile nonexistent_slug ) ; rc=$?
 check "reconcile: missing slug non-zero"        '[ "$rc" -ne 0 ]'
 check "reconcile: missing slug no file made"    '[ ! -e "$PHASE_DIR/nonexistent_slug.json" ]'
+# Hostile pr_number must be rejected to null (not injected), task still opens
+phase_task_set recon docs '.state="running"'
+_phase_task_status_live() { case "$1" in 8) echo '{"pr_agent_complete":1,"pr_number":"5\n6; DROP","workflow_blocked":0}';; *) echo '{}';; esac; }
+export -f _phase_task_status_live
+phase_reconcile recon
+check "reconcile: hostile pr_number -> null"    '[ "$(phase_state_read recon | jq -r .tasks.docs.pr)" = "null" ]'
+check "reconcile: hostile pr_number still pr_open" '[ "$(phase_state_read recon | jq -r .tasks.docs.state)" = "pr_open" ]'
+check "reconcile: state valid after hostile pr" 'phase_state_read recon | jq -e . >/dev/null'
+# Corrupt .tasks must fail non-zero, instead of silently no-oping via process substitution
+CORRUPT_DIR="$(mktemp -d)"
+printf '%s' '{"phase":"x","project":1,"autonomous":false,"scheduleId":"","tasks":null,"log":[]}' > "$CORRUPT_DIR/corrupt.json"
+( PHASE_DIR="$CORRUPT_DIR" phase_reconcile corrupt ) 2>/dev/null ; rc=$?
+check "reconcile: corrupt .tasks fails non-zero" '[ "'"$rc"'" -ne 0 ]'
+rm -rf "$CORRUPT_DIR"
 rm -rf "$PHASE_DIR"; unset PHASE_DIR
 
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }

@@ -97,7 +97,11 @@ phase_reconcile() {
   j="$(phase_state_read "$slug")" || return $?
   status_fn="${PHASE_TASK_STATUS_FN:-_phase_task_status_live}"
 
+  printf '%s' "$j" | jq -e '.tasks | type == "object"' >/dev/null 2>&1 || { echo "phase_reconcile: state has no valid .tasks object for \"$slug\"" >&2; return 4; }
+  local keys
+  keys="$(printf '%s' "$j" | jq -r '.tasks | keys[]')" || return $?
   while IFS= read -r key; do
+    [ -z "$key" ] && continue
     tid="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].taskId')" || return $?
     state="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].state')" || return $?
 
@@ -117,12 +121,12 @@ phase_reconcile() {
 
     if [ "$pr_done" = "1" ]; then
       prnum="$(printf '%s' "$ts" | jq -r '.pr_number // .pr // empty')" || return $?
-      if printf '%s' "$prnum" | grep -qE '^[0-9]+$'; then
+      if [[ "$prnum" =~ ^[0-9]+$ ]]; then
         pr_value="$prnum"
       else
         pr_value="null"
       fi
       phase_task_set "$slug" "$key" ".state=\"pr_open\" | .pr=$pr_value" || return $?
     fi
-  done < <(printf '%s' "$j" | jq -r '.tasks | keys[]')
+  done <<< "$keys"
 }
