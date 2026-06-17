@@ -13,11 +13,16 @@ export async function clusterCheck(params: ClusterCheckParams = {}): Promise<Clu
   const sampleLimit = params.sample_limit && params.sample_limit > 0 ? params.sample_limit : 3;
   const since = parseSince(params.since);
   const c = controller();
-  const targets = params.domain
-    ? (c.resolveFile(params.domain, "observations"), c.observations(params.domain).map((t) => ({ domain: t.domain, path: t.path })))
-    : c.observations().map((t) => ({ domain: t.domain, path: t.path }));
+  let targets: { domain: string; path: string }[];
+  if (params.domain) {
+    const d = c.resolve(params.domain);
+    if (!d.files?.includes("observations")) throw new Error(`domain ${JSON.stringify(d.id)} does not declare file "observations"`);
+    targets = c.observations(d.id);
+  } else {
+    targets = c.observations();
+  }
   const all: Observation[] = [];
-  for (const t of targets.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+  for (const t of targets) {
     const data = await readRel(t.path);
     if (data == null) continue;
     let inComment = false, inFence = false;

@@ -10,15 +10,15 @@ export async function recentObservations(params: RecentObservationsParams = {}):
   const c = controller();
   let targets: { domain: string; path: string }[];
   if (params.domain) {
-    const d = c.get(params.domain);
+    const d = c.resolve(params.domain);
     if (!d.files?.includes("observations")) throw new Error(`domain ${JSON.stringify(d.id)} does not declare file "observations"`);
-    targets = c.observations(d.id).map(({ domain, path }) => ({ domain, path }));
+    targets = c.observations(d.id);
   } else {
-    targets = c.observations().map(({ domain, path }) => ({ domain, path }));
+    targets = c.observations();
   }
 
   const entries: RecentObservation[] = [];
-  for (const t of targets.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+  for (const t of targets) {
     const file = await store.read(t.path);
     if (!file.found) continue;
     for (const e of parseObservationFile(t.domain, t.path, file.content)) {

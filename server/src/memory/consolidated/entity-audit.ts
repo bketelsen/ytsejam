@@ -1,4 +1,4 @@
-import type { EntityAuditParams, EntityAuditResult } from "../types.ts";
+import type { DomainFileRef, EntityAuditParams, EntityAuditResult } from "../types.ts";
 import { controller, readRel, splitLines, stripParenSuffix, validateParams } from "./common.ts";
 
 const headingRE = /^###\s+(.+?)\s*$/;
@@ -8,9 +8,16 @@ const untilRE = /\(until\s+(\d{4}-\d{2})\)/g;
 export async function entityAudit(params: EntityAuditParams = {}): Promise<EntityAuditResult> {
   validateParams(params as Record<string, unknown>, ["domain"]);
   const c = controller();
-  const targets = params.domain ? (c.resolveFile(params.domain, "entities"), c.entities(params.domain)) : c.entities();
+  let targets: DomainFileRef[];
+  if (params.domain) {
+    const d = c.resolve(params.domain);
+    if (!d.files?.includes("entities")) throw new Error(`domain ${JSON.stringify(d.id)} does not declare file "entities"`);
+    targets = c.entities(d.id);
+  } else {
+    targets = c.entities();
+  }
   const res: EntityAuditResult = { format_violations: [], glacier_candidates: [], missing_metadata: [], temporal_violations: [], total_entries: 0, total_lines: 0 };
-  for (const t of targets.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
+  for (const t of targets) {
     const data = await readRel(t.path);
     if (data == null) continue;
     auditOne(res, t.domain, t.path, data, new Date());

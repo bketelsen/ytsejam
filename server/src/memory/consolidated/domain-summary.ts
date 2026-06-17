@@ -32,7 +32,7 @@ export async function domainSummary(params: DomainSummaryParams): Promise<Domain
   validateParams(params ?? {}, ["domain", "since"] as const);
   if (!params?.domain) throw new Error("domain required");
   const c = controller();
-  const d = c.get(params.domain);
+  const d = c.resolve(params.domain);
   const { since } = resolveSince(params.since ?? "");
   const result: DomainSummaryResult = {
     domain: d.id,
