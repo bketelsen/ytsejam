@@ -33,6 +33,7 @@ import type {
   JsonlSessionMetadata,
   JsonlSessionRepo,
   Session,
+  SessionTreeEntry,
 } from "@earendil-works/pi-agent-core";
 import {
   AgentHarness as AgentHarnessCtor,
@@ -46,6 +47,7 @@ import {
   buildSettings,
   decideCompaction,
   estimateKeptSetTokens,
+  buildPostCompactionMessages,
   classifyOverflow,
   CUSTOM_INSTRUCTIONS,
   buildSurrenderMessage,
@@ -57,6 +59,7 @@ import {
   appendDevLogLine,
   appendSessionCompactionJsonl,
   snapshotSessionJsonl,
+  restoreSessionFromBackup,
   pruneOldBackups,
   verifySessionLoadable,
   runCompactionIfPending,
@@ -331,6 +334,71 @@ describe("estimateKeptSetTokens", () => {
     ];
     const r = estimateKeptSetTokens(messages, 0);
     expect(r).toBe(100);
+  });
+});
+
+describe("buildPostCompactionMessages", () => {
+  const textOf = (msg: AgentMessage) => {
+    if ((msg as any).role === "compactionSummary") {
+      return (msg as any).summary;
+    }
+    const content = (msg as any).content;
+    if (typeof content === "string") return content;
+    const text = Array.isArray(content)
+      ? content.find((part) => part?.type === "text")?.text
+      : undefined;
+    return text;
+  };
+
+  const messageEntry = (
+    id: string,
+    parentId: string | null,
+    message: AgentMessage,
+  ): SessionTreeEntry => ({
+    type: "message",
+    id,
+    parentId,
+    timestamp: `2026-06-13T00:00:0${id.at(-1) ?? "0"}.000Z`,
+    message,
+  });
+
+  it("projects compaction summary before kept messages in root-to-leaf branch order", () => {
+    const rootMessage = {
+      role: "user",
+      content: [{ type: "text", text: "root before kept set" }],
+    } as AgentMessage;
+    const keptParentMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "kept parent" }],
+      stopReason: "stop",
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "test-model",
+    } as AgentMessage;
+    const keptLeafMessage = {
+      role: "user",
+      content: [{ type: "text", text: "kept leaf" }],
+    } as AgentMessage;
+    const branchEntries: SessionTreeEntry[] = [
+      messageEntry("entry-1", null, rootMessage),
+      messageEntry("entry-2", "entry-1", keptParentMessage),
+      messageEntry("entry-3", "entry-2", keptLeafMessage),
+    ];
+
+    const messages = buildPostCompactionMessages(
+      "summary after compaction",
+      branchEntries,
+      "entry-2",
+      1234,
+    );
+
+    expect(messages).toHaveLength(3);
+    expect(messages[0].role).toBe("compactionSummary");
+    expect(textOf(messages[0])).toBe("summary after compaction");
+    expect((messages[0] as any).tokensBefore).toBe(1234);
+    expect(textOf(messages[1])).toBe("kept parent");
+    expect(textOf(messages[2])).toBe("kept leaf");
+    expect(messages).not.toContain(rootMessage);
   });
 });
 
@@ -888,6 +956,26 @@ describe("snapshotSessionJsonl + pruneOldBackups", () => {
   it("rejects when source file is missing", async () => {
     const missing = join(tmp, "sessions", "--chat--", "nonexistent.jsonl");
     await expect(snapshotSessionJsonl(missing)).rejects.toThrow();
+  });
+
+  it("restoreSessionFromBackup idempotently overwrites the canonical session file", async () => {
+    const backupPath = `${sessionFilePath}.pre-compact-1718193600000`;
+    await writeFile(backupPath, "backup line 1\nbackup line 2\n");
+    await writeFile(sessionFilePath, "compacted bad state\n");
+
+    await restoreSessionFromBackup(sessionFilePath, backupPath);
+    expect(await readFile(sessionFilePath, "utf8")).toBe(
+      "backup line 1\nbackup line 2\n",
+    );
+
+    await writeFile(sessionFilePath, "different bad state\n");
+    await restoreSessionFromBackup(sessionFilePath, backupPath);
+    expect(await readFile(sessionFilePath, "utf8")).toBe(
+      "backup line 1\nbackup line 2\n",
+    );
+    expect(await readFile(backupPath, "utf8")).toBe(
+      "backup line 1\nbackup line 2\n",
+    );
   });
 
   it("pruneOldBackups keeps the N most recent", async () => {
