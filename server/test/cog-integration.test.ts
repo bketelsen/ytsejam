@@ -32,6 +32,10 @@ domains:
     label: Personal
     triggers: [home]
     files: [hot-memory, action-items, observations, entities]
+  - id: intuneme
+    path: projects/intuneme
+    label: Intuneme
+    files: [hot-memory, action-items, observations, entities]
 `);
   await seed("hot-memory.md", "<!-- L0: Global hot memory -->\n# Hot\nCurrent state\n");
   await seed("cog-meta/patterns.md", "<!-- L0: Pattern memory -->\n# Patterns\n- Keep it simple\n");
@@ -39,6 +43,10 @@ domains:
   await seed("personal/action-items.md", "- [ ] call Alice | due:2026-06-20 | pri:high | added:2026-06-01\n");
   await seed("personal/observations.md", "- 2026-06-01 [family]: Alice likes tea\n- 2026-06-02 [family]: Alice scheduled a visit\n- 2026-06-03 [family]: Alice prefers mornings\n");
   await seed("personal/entities.md", "### Alice (friend)\nlikes tea | status:active | last:2026-06-01\n");
+  await seed("projects/intuneme/hot-memory.md", "<!-- L0: Intuneme hot memory -->\n# Intuneme\n");
+  await seed("projects/intuneme/action-items.md", "- [ ] tune the prototype | due:2026-06-21 | pri:high | added:2026-06-04\n");
+  await seed("projects/intuneme/observations.md", "- 2026-06-04 [music]: Prototype captured take one\n- 2026-06-05 [music]: Prototype captured take two\n- 2026-06-06 [music]: Prototype captured take three\n");
+  await seed("projects/intuneme/entities.md", "### Intuneme prototype\nstatus:active | last:2026-06-06\n");
   await seed("wiki/alice.md", "---\ntitle: Alice\nentity_type: person\ntags: [family]\nsummary: Friend\n---\n# Alice\n");
   await seed("glacier/personal/archive.md", "---\ntype: observations\ndomain: personal\ntags: [family]\ndate_range: 2026-05-01..2026-05-31\nentries: 2\nsummary: Older family notes\n---\n# Archive\n");
   await seed("cog-meta/scenarios/check.md", "---\nstatus: active\ncheck-by: 2026-06-12\n---\n# Check\n");
@@ -119,6 +127,29 @@ describe("in-process cog tool integration", () => {
         expect(parsed.domains.length).toBeGreaterThan(0);
         expect(parsed.domains.map((d: { id: string }) => d.id)).toContain("personal");
       }
+    }
+  });
+
+  test("cog_rpc domain parameter accepts id or path for domain-scoped methods", async () => {
+    const cases: { method: string; params?: Record<string, unknown> }[] = [
+      { method: "domain_summary", params: { since: "2026-06-01" } },
+      { method: "open_actions" },
+      { method: "recent_observations", params: { since: "2026-06-01" } },
+      { method: "entity_audit" },
+      { method: "cluster_check", params: { since: "2026-06-01", min_cluster_size: 3 } },
+      { method: "l0index" },
+    ];
+
+    for (const c of cases) {
+      const byId = JSON.parse(await run("cog_rpc", {
+        method: c.method,
+        params: { ...c.params, domain: "intuneme" },
+      }));
+      const byPath = JSON.parse(await run("cog_rpc", {
+        method: c.method,
+        params: { ...c.params, domain: "projects/intuneme" },
+      }));
+      expect(byId, c.method).toEqual(byPath);
     }
   });
 

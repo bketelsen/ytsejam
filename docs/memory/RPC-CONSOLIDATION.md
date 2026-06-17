@@ -17,6 +17,11 @@ Step 4 is where the LLM earns its keep. Steps 1–3 are mechanical convention dr
 
 ## Catalog of Named Patterns
 
+**Domain parameter convention:** every RPC that exposes a `domain` parameter accepts either the
+domain id from `domains.yml` or the domain's canonical path. The RPC boundary resolves both forms to
+the registered domain before reading id-keyed files. `l0index` also keeps its historical raw folder
+prefix fallback when the value is not a registered id or path.
+
 For each pattern: where it lives in cog-prime today, what it does, the call count it replaces, the proposed RPC signature, and a sketch of the result envelope.
 
 ---
@@ -174,6 +179,9 @@ Plus every skill reads `domains.yml` to know what exists, and several read `cog-
 
 **Proposed RPC**: `domain_summary(role, domain, since?)`
 
+`domain` may be either a registered domain id or its path; the handler canonicalizes to the
+registered domain internally.
+
 **Result envelope**:
 ```json
 {
@@ -213,6 +221,8 @@ Plus every skill reads `domains.yml` to know what exists, and several read `cog-
 
 > Scope param naming: `domain` is canonical (consistent with open_actions, cluster_check, domain_summary, entity_audit, l0index). `by_domain` was the original name and is retained as a **DEPRECATED alias until 2026-07-12** — its lone divergence from the sibling RPCs was the muscle-memory trap behind PR #21. Note `by_domain` also names an *output* aggregate map below; that output field is unaffected.
 
+When present, `domain` may be either a registered domain id or its path.
+
 **Result envelope**:
 ```json
 {
@@ -243,7 +253,9 @@ Pre-computing `by_domain` / `by_tag` aggregates is the bit that matters — refl
 
 **Round-trips today**: N reads × deterministic regex over each entry block.
 
-**Proposed RPC**: `entity_audit(role)`
+**Proposed RPC**: `entity_audit(role, domain?)`
+
+When present, `domain` may be either a registered domain id or its path.
 
 **Result envelope**:
 ```json
@@ -282,7 +294,9 @@ Pre-computing `by_domain` / `by_tag` aggregates is the bit that matters — refl
 
 **Round-trips today**: N reads + N×M client-side clustering. The trigger thresholds ("3+ entries", "5+ observations in 7 days") are baked into the prompt.
 
-**Proposed RPC**: `cluster_check(role, min_cluster_size?, since?, span_days?)`
+**Proposed RPC**: `cluster_check(role, domain?, min_cluster_size?, since?, span_days?)`
+
+When present, `domain` may be either a registered domain id or its path.
 
 **Result envelope**:
 ```json

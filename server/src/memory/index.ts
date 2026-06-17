@@ -2,6 +2,7 @@ import type { MemorySystem } from "ltm";
 import type {
   Cluster,
   ClusterCheckParams,
+  AppendResult,
   Domain,
   DomainForPathResult,
   DomainSummaryParams,
@@ -84,7 +85,7 @@ export async function append(
   path: string,
   text: string,
   options: { section?: string } = {},
-): Promise<OkResult> {
+): Promise<AppendResult> {
   return store.append(path, text, options);
 }
 
@@ -193,7 +194,7 @@ export async function recordObservation(args: {
   tags: string[];
   timestamp?: Date;
 }): Promise<{
-  cog: { ok: true; line: string };
+  cog: { ok: true; line: string; bytes_written: number; total_bytes: number };
   ltm:
     | { ok: true }
     | { ok: true; skipped: "ltm-not-attached" }
@@ -216,8 +217,13 @@ export async function recordObservation(args: {
   const line = `- ${date} [${args.tags.join(",")}]: ${args.text}`;
 
   const path = `${args.domainPath}/observations.md`;
-  await store.append(path, line + "\n");
-  const cog = { ok: true as const, line };
+  const appendResult = await store.append(path, line + "\n");
+  const cog = {
+    ok: true as const,
+    line,
+    bytes_written: appendResult.bytes_written,
+    total_bytes: appendResult.total_bytes,
+  };
 
   if (!attachedLtm) {
     return { cog, ltm: { ok: true, skipped: "ltm-not-attached" } };

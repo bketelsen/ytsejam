@@ -59,7 +59,14 @@ export interface WriteResult {
   bytes: number;
 }
 
-/** Append, patch, and move success result. */
+/** Append success result with byte accounting. */
+export interface AppendResult {
+  ok: true;
+  bytes_written: number;
+  total_bytes: number;
+}
+
+/** Patch and move success result. */
 export interface OkResult {
   ok: boolean;
 }

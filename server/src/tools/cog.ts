@@ -201,7 +201,7 @@ export function createCogTools(): AgentTool<any>[] {
           // line aborts without partial commits across cog SSOT + LTM.
           // (Preserves the prior memory.append atomicity guarantee on
           // multi-line input — see issue notes for Task 5.)
-          const parsedAll: ReturnType<typeof parseObservationLine>[] = [];
+          const parsedAll: NonNullable<ReturnType<typeof parseObservationLine>>[] = [];
           for (const line of lines) {
             const parsed = parseObservationLine(line);
             if (!parsed) {
@@ -212,15 +212,23 @@ export function createCogTools(): AgentTool<any>[] {
             parsedAll.push(parsed);
           }
 
-          for (const parsed of parsedAll) {
-            await memory.recordObservation({
+          let bytesWritten = 0;
+          let totalBytes = 0;
+          for (const { text, tags, timestamp } of parsedAll) {
+            const result = await memory.recordObservation({
               domainPath,
-              text: parsed!.text,
-              tags: parsed!.tags,
-              timestamp: new Date(parsed!.timestamp),
+              text,
+              tags,
+              timestamp: new Date(timestamp),
             });
+            bytesWritten += result.cog.bytes_written;
+            totalBytes = result.cog.total_bytes;
           }
-          return jsonResult({ ok: true });
+          return jsonResult({
+            ok: true,
+            bytes_written: bytesWritten,
+            total_bytes: totalBytes,
+          });
         }
 
         const r = await memory.append(path, text, { section });

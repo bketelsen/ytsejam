@@ -2,14 +2,14 @@
 
 **Status:** design, awaiting plan
 **Scope:** [#200](https://github.com/bketelsen/ytsejam/issues/200), [#201](https://github.com/bketelsen/ytsejam/issues/201), [#202](https://github.com/bketelsen/ytsejam/issues/202), [#203](https://github.com/bketelsen/ytsejam/issues/203), [#206](https://github.com/bketelsen/ytsejam/issues/206)
-**Out of scope:** [#204](https://github.com/bketelsen/ytsejam/issues/204) (id-vs-path RPC param), [#205](https://github.com/bketelsen/ytsejam/issues/205) (cog_append response shape) — standalone daemon fixes, not part of this cleanup
+**Out of scope:** [#205](https://github.com/bketelsen/ytsejam/issues/205) (cog_append response shape) — standalone daemon fix, not part of this cleanup. [#204](https://github.com/bketelsen/ytsejam/issues/204) is handled separately by normalizing `cog_rpc` `domain` params to accept id or path.
 **Author:** Mentat (with Brian, 2026-06-15)
 
 ## Problem
 
 The `/cog` skill and the cog daemon's write-side guards have drifted. The skill instructs the agent to perform operations the daemon refuses, and the daemon's failure modes hide root causes from the agent that would let it recover.
 
-One `/cog` run for a new subdomain surfaced seven distinct friction points in under five minutes. Five of them are the same shape: *skill says X, daemon does Y*. The other two are standalone daemon bugs (#204, #205) and are deferred.
+One `/cog` run for a new subdomain surfaced seven distinct friction points in under five minutes. Five of them are the same shape: *skill says X, daemon does Y*. The other two were standalone daemon bugs: #204 is fixed separately by normalizing `domain` id/path handling, while #205 remains deferred.
 
 Concretely:
 
@@ -29,7 +29,7 @@ These are all the same root cause: the daemon's contract evolved (guards were ti
 - A `/cog` skill rewrite that uses the new RPCs and dedupes legacy grandfathered manifests on the agent's behalf.
 
 **Explicitly out of scope:**
-- #204 (`cog_rpc` `domain:` param accepts id at some methods, path at others). Standalone daemon API consistency bug.
+- #204 (`cog_rpc` `domain:` param accepts id at some methods, path at others) is fixed outside this cleanup by making domain-scoped RPCs accept either a registered domain id or path.
 - #205 (`cog_append` response shape uninformative). Standalone daemon response shape bug.
 - Moving the routing-skill directory into the cog memory root. Bigger architectural shift; the skills directory is consumed by the harness's skill loader, not the memory store, and changing that path is a separate brainstorm.
 - A unified atomic `domain_create` RPC that does manifest + files + skill in one call. Considered (Q2 Option 3); rejected as too coupled — `/cog`'s conversational shape (Phase 1 discovery, Phase 2 confirm) benefits from the skill orchestrating multiple calls, not handing one opaque envelope to the daemon.

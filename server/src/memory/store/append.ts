@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { OkResult } from "../types.ts";
+import type { AppendResult } from "../types.ts";
 import { atomicWrite } from "./fs.ts";
 import { maybeAutoCommit } from "./auto-commit.ts";
 import { rejectIDAsPath, resolveMemoryPath } from "./paths.ts";
@@ -7,25 +7,28 @@ import { rejectIDAsPath, resolveMemoryPath } from "./paths.ts";
 const obsLineRE = /^-\s+\d{4}-\d{2}-\d{2}\s+\[.+\]:\s*.+$/;
 const headingRE = /^(#{1,6})\s+(.+?)\s*$/;
 
-export async function append(path: string, text: string, options: { section?: string } = {}): Promise<OkResult> {
+export async function append(path: string, text: string, options: { section?: string } = {}): Promise<AppendResult> {
   const { abs, rel } = await resolveMemoryPath(path);
   await rejectIDAsPath(rel);
   if (rel.endsWith("observations.md")) validateObsLines(text);
-  if (options.section) await appendUnderSection(abs, rel, options.section, text);
-  else await appendAtEOF(abs, text);
+  const appendResult = options.section
+    ? await appendUnderSection(abs, rel, options.section, text)
+    : await appendAtEOF(abs, text);
   await maybeAutoCommit();
-  return { ok: true };
+  return appendResult;
 }
 
-async function appendAtEOF(abs: string, text: string): Promise<void> {
+async function appendAtEOF(abs: string, text: string): Promise<AppendResult> {
   let existing = "";
   try { existing = await readFile(abs, "utf8"); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
   const separator = existing && !existing.endsWith("\n") && !text.startsWith("\n") ? "\n" : "";
   const trailing = text.endsWith("\n") ? "" : "\n";
-  await atomicWrite(abs, existing + separator + text + trailing);
+  const final = existing + separator + text + trailing;
+  await atomicWrite(abs, final);
+  return appendResult(existing, final);
 }
 
-async function appendUnderSection(abs: string, rel: string, section: string, text: string): Promise<void> {
+async function appendUnderSection(abs: string, rel: string, section: string, text: string): Promise<AppendResult> {
   let existing: string;
   try { existing = await readFile(abs, "utf8"); } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`store: append section ${JSON.stringify(section)}: file ${JSON.stringify(rel)} does not exist (create it first)`);
@@ -56,6 +59,17 @@ async function appendUnderSection(abs: string, rel: string, section: string, tex
   let out = next.join("\n");
   if (!out.endsWith("\n")) out += "\n";
   await atomicWrite(abs, out);
+  return appendResult(existing, out);
+}
+
+function appendResult(before: string, after: string): AppendResult {
+  const priorBytes = Buffer.byteLength(before);
+  const totalBytes = Buffer.byteLength(after);
+  return {
+    ok: true,
+    bytes_written: totalBytes - priorBytes,
+    total_bytes: totalBytes,
+  };
 }
 
 function validateObsLines(text: string): void {

@@ -56,6 +56,23 @@ describe("l0index", () => {
     expect(result).not.toContain("work/hot-memory.md");
   });
 
+  test("declared domain id and path filters return the same index", async () => {
+    await seed("domains.yml", `version: 1
+domains:
+  - id: intuneme
+    path: projects/intuneme
+    files: [hot-memory]
+`);
+    await seed("projects/intuneme/hot-memory.md", "<!-- L0: Intuneme overview -->\n# Intuneme\n");
+    await seed("projects/other/hot-memory.md", "<!-- L0: Other overview -->\n# Other\n");
+
+    const byId = (await l0index({ domain: "intuneme" })).index;
+    const byPath = (await l0index({ domain: "projects/intuneme" })).index;
+    expect(byId).toBe(byPath);
+    expect(byId).toContain("projects/intuneme/hot-memory.md: Intuneme overview");
+    expect(byId).not.toContain("projects/other/hot-memory.md");
+  });
+
   test("TestL0IndexMissingDomainReturnsEmpty", async () => {
     await seed("projects/hot-memory.md", "<!-- L0: Projects overview -->\n# Projects\n");
     expect(await l0index({ domain: "nonexistent" })).toEqual({ index: "" });

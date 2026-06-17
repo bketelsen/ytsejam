@@ -70,11 +70,11 @@ export async function openActions(params: OpenActionsParams = {}): Promise<OpenA
   const c = controller();
   let targets: { domain: string; path: string }[];
   if (params.domain) {
-    const d = c.get(params.domain);
+    const d = c.resolve(params.domain);
     if (!d.files?.includes("action-items")) throw new Error(`domain ${JSON.stringify(d.id)} does not declare file "action-items"`);
-    targets = c.actionItems(d.id).map(({ domain, path }) => ({ domain, path }));
+    targets = c.actionItems(d.id);
   } else {
-    targets = c.actionItems().map(({ domain, path }) => ({ domain, path }));
+    targets = c.actionItems();
   }
   return { items: await scanOpenActions(targets) };
 }
