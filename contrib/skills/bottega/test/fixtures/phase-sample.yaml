@@ -1,6 +1,6 @@
 phase: "Add rate limiting"
 project: 1
-autonomous: false
+advance: park
 tasks:
   - key: schema
     title: "Add rate_limit columns + migration"

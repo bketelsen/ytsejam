@@ -2,14 +2,14 @@
 # phase-lib.sh — sequence shepherd: parse / state / gate / tick. Sourced by bottega-api.sh.
 # All functions are prefixed `phase_`. No global side effects on source.
 
-# phase_parse <file> -> normalized phase JSON {phase,project,autonomous,tasks:{key:{key,title,brief,after[]}}}
+# phase_parse <file> -> normalized phase JSON {phase,project,advance,tasks:{key:{key,title,brief,after[]}}}
 phase_parse() {
   local f="$1" json
   [ -f "$f" ] || { echo "phase file not found: $f" >&2; return 2; }
   command -v yq >/dev/null 2>&1 || { echo "yq not found — install mikefarah yq (phase YAML needs it)" >&2; return 3; }
   # yq (mikefarah) converts YAML->JSON; then jq normalizes tasks[] -> map keyed by .key
   json="$(yq -o=json '.' "$f" | jq '
-    {phase, project, autonomous: (.autonomous // false),
+    {phase, project, advance: (.advance // (if .autonomous == true then "auto" else "park" end)),
      tasks: ( (.tasks // []) | map({(.key): {key, title, brief, after: (.after // [])}}) | add // {} )}')" || return 1
   # key-shape guard: reject any task key that is not a safe identifier slug.
   # Detect by COUNT (not string-emptiness) so an empty-string key ("") is still caught.
@@ -23,6 +23,12 @@ phase_parse() {
     done < <(printf '%s' "$json" | jq -r '.tasks | keys[]? | select(test("^[a-z0-9_-]+$") | not) | @json')
     return 4
   fi
+  local adv
+  adv="$(printf '%s' "$json" | jq -r '(.advance // (if .autonomous == true then "auto" else "park" end))')" || return $?
+  case "$adv" in
+    park|auto|yolo) ;;
+    *) echo "phase: invalid advance '$adv' (must be park|auto|yolo)" >&2; return 5 ;;
+  esac
   printf '%s\n' "$json"
 }
 
@@ -42,7 +48,7 @@ phase_state_init() {
   mkdir -p "$PHASE_DIR"
   local p; p="$(phase_state_path "$slug")" || return $?
   echo "$parsed" | jq --arg sid "$sched" '{
-    phase, project, autonomous, scheduleId: $sid,
+    phase, project, advance, scheduleId: $sid,
     tasks: (.tasks | map_values({key, title, brief, after, taskId: null, state: "pending", pr: null, reason: null})),
     log: []
   }' > "$p"
@@ -101,9 +107,10 @@ phase_task_set_str() {
 # phase_reconcile <slug> — map Bottega task/PR status into local phase state.
 # Pure over injectable lookup function: PHASE_TASK_STATUS_FN or _phase_task_status_live.
 phase_reconcile() {
-  local slug="$1" j key tid state ts blocked pr_done prnum pr_value status_fn
+  local slug="$1" j key tid state ts blocked pr_done prnum pr_value status_fn adv
   j="$(phase_state_read "$slug")" || return $?
   status_fn="${PHASE_TASK_STATUS_FN:-_phase_task_status_live}"
+  adv="$(printf '%s' "$j" | jq -r '(.advance // (if .autonomous == true then "auto" else "park" end))')" || return $?
 
   printf '%s' "$j" | jq -e '.tasks | type == "object"' >/dev/null 2>&1 || { echo "phase_reconcile: state has no valid .tasks object for \"$slug\"" >&2; return 4; }
   local keys
@@ -135,13 +142,39 @@ phase_reconcile() {
         pr_value="null"
       fi
       phase_task_set "$slug" "$key" ".state=\"pr_open\" | .pr=$pr_value" || return $?
+      continue
     fi
+
+    local plan_done wf_done reason
+    plan_done="$(printf '%s' "$ts" | jq -r '(.planification_complete // false) | if . == true or . == 1 then "1" else "0" end')" || return $?
+    wf_done="$(printf '%s' "$ts" | jq -r '(.workflow_complete // false) | if . == true or . == 1 then "1" else "0" end')" || return $?
+    [ "$state" = "running" ] || continue
+    [ "$plan_done" = "1" ] || continue
+    [ "$wf_done" != "1" ] || continue
+
+    case "$adv" in
+      auto)
+        reason="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].reason // ""')" || return $?
+        [ "$reason" != "impl-kicked" ] || continue
+        "${PHASE_KICKOFF_FN:-_phase_kickoff_live}" "$tid" implementation || return $?
+        phase_task_set_str "$slug" "$key" reason "impl-kicked" || return $?
+        phase_log "$slug" "auto-advanced $key to implementation (task $tid)" || return $?
+        ;;
+      park)
+        reason="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].reason // ""')" || return $?
+        if [ "$reason" != "awaiting-plan-review" ]; then
+          phase_task_set_str "$slug" "$key" reason "awaiting-plan-review" || return $?
+          phase_log "$slug" "awaiting-plan-review $key (task $tid)" || return $?
+        fi
+        ;;
+      yolo) ;;
+    esac
   done <<< "$keys"
 }
 
 # phase_gate <slug> <key> -> stdout verdict: pass OR park:<reason>.
-# Fail-closed autonomous merge gate: any failed check OR check that cannot run parks.
-# Intent-match note: autonomous v1 has no human allowlist; it trusts only the mechanical backstops below.
+# Fail-closed merge gate: any failed check OR check that cannot run parks.
+# Intent-match note: auto/yolo merge has no human allowlist; it trusts only the mechanical backstops below.
 phase_gate() {
   local slug="$1" key="$2" j tid pr br ci mergeable blocked clash meta
   local -a mf
@@ -188,11 +221,13 @@ phase_launch_ready() {
       first(.tasks as $t | $t[$k].after[]? | select(($t[.].state // "pending") != "merged")) // empty')" || return $?
     [ -n "$unmet" ] && continue
 
-    local title brief proj newid
+    local title brief proj newid adv yolo
     title="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].title // $k')" || return $?
     brief="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].brief // ""')" || return $?
     proj="$(printf '%s' "$j" | jq -r '.project')" || return $?
-    if ! newid="$("${PHASE_CREATE_FN:-_phase_create_live}" "$proj" "$key" "$title" "$brief")"; then
+    adv="$(printf '%s' "$j" | jq -r '(.advance // (if .autonomous == true then "auto" else "park" end))')" || return $?
+    if [ "$adv" = "yolo" ]; then yolo=1; else yolo=0; fi
+    if ! newid="$("${PHASE_CREATE_FN:-_phase_create_live}" "$proj" "$key" "$title" "$brief" "$yolo")"; then
       phase_task_set "$slug" "$key" '.state="failed"' || return $?
       phase_task_set_str "$slug" "$key" reason "create-failed" || return $?
       continue
@@ -202,26 +237,36 @@ phase_launch_ready() {
       phase_task_set_str "$slug" "$key" reason "create-failed" || return $?
       continue
     fi
-    # ponytail: kickoff is fire-and-forget — a created task is marked running even if kickoff fails (recovered by reconcile), never stranded.
-    "${PHASE_KICKOFF_FN:-_phase_kickoff_live}" "$newid" >/dev/null 2>&1 || true
+    if [ "$adv" != "yolo" ]; then
+      # ponytail: kickoff is fire-and-forget — a created task is marked running even if kickoff fails (recovered by reconcile), never stranded.
+      "${PHASE_KICKOFF_FN:-_phase_kickoff_live}" "$newid" >/dev/null 2>&1 || true
+    fi
     phase_task_set "$slug" "$key" ".taskId=$newid | .state=\"running\"" || return $?
     phase_log "$slug" "launched $key as task $newid" || return $?
   done <<< "$keys"
 }
 
-# phase_advance_prs <slug> — gate open PRs and merge only in autonomous mode when the gate passes.
+# phase_advance_prs <slug> — gate open PRs and merge only in auto/yolo mode when the gate passes.
 phase_advance_prs() {
-  local slug="$1" j key auto keys
+  local slug="$1" j key adv keys
   j="$(phase_state_read "$slug")" || return $?
-  auto="$(printf '%s' "$j" | jq -r '.autonomous')" || return $?
+  adv="$(printf '%s' "$j" | jq -r '(.advance // (if .autonomous == true then "auto" else "park" end))')" || return $?
   keys="$(printf '%s' "$j" | jq -r '[.tasks|to_entries[]|select(.value.state=="pr_open")|.key][]')" || return $?
   while IFS= read -r key; do
     [ -n "$key" ] || continue
-    [ "$auto" = "true" ] || continue
     local verdict grc
     verdict="$(phase_gate "$slug" "$key")"; grc=$?
     verdict="${verdict##*$'\n'}"          # operative token = last line; tolerates chatty container-gate stdout leaked through phase_gate
     if [ "$grc" -eq 0 ] && [ "$verdict" = "pass" ]; then
+      if [ "$adv" = "park" ]; then
+        local cur_reason
+        cur_reason="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].reason // ""')" || return $?
+        if [ "$cur_reason" != "awaiting-merge" ]; then
+          phase_task_set_str "$slug" "$key" reason "awaiting-merge" || return $?
+          phase_log "$slug" "awaiting-merge $key" || return $?
+        fi
+        continue
+      fi
       local pr mtid
       pr="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].pr')" || return $?
       mtid="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].taskId')" || return $?

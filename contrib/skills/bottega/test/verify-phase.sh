@@ -17,7 +17,7 @@ test_create_brief_reaches_description() {
     api() { printf '%s' "$3" > "$td/payload"; printf '{"task":{"id":777}}'; }
     _test_kickoff_noop() { :; }
     PHASE_KICKOFF_FN=_test_kickoff_noop
-    parsed="$(jq -n --arg brief "BRIEF-BODY-XYZ" '{phase:"x",project:1,autonomous:false,tasks:{t1:{key:"t1",title:"Title One",brief:$brief,after:[]}}}')"
+    parsed="$(jq -n --arg brief "BRIEF-BODY-XYZ" '{phase:"x",project:1,advance:"park",tasks:{t1:{key:"t1",title:"Title One",brief:$brief,after:[]}}}')"
     phase_state_init cb "$parsed" "" >/dev/null
     phase_launch_ready cb >/dev/null
   ); rc=$?
@@ -27,6 +27,38 @@ test_create_brief_reaches_description() {
   desc="$(printf '%s' "$payload" | jq -r .description)" || { rm -rf "$td"; return 1; }
   rm -rf "$td"
   [ "$title" = "Title One" ] && [ "$desc" = "BRIEF-BODY-XYZ" ] && [ "$desc" != "t1" ]
+}
+
+
+test_create_yolo_payload() {
+  local td rc park_yolo auto_yolo yolo_yolo
+  td="$(mktemp -d)" || return $?
+  (
+    set -- __source_only
+    . "$HERE/../scripts/bottega-api.sh" >/dev/null 2>/dev/null
+    export PHASE_DIR="$td/phases"
+    api() { printf '%s' "$3" > "$td/payload"; printf '{"task":{"id":779}}'; }
+    _test_kickoff_noop() { :; }
+    PHASE_KICKOFF_FN=_test_kickoff_noop
+    parsed="$(jq -n '{phase:"x",project:1,advance:"park",tasks:{t1:{key:"t1",title:"Title One",brief:"Body",after:[]}}}')"
+    phase_state_init cypark "$parsed" "" >/dev/null
+    phase_launch_ready cypark >/dev/null
+    cp "$td/payload" "$td/payload-park"
+    parsed="$(jq -n '{phase:"x",project:1,advance:"auto",tasks:{t1:{key:"t1",title:"Title One",brief:"Body",after:[]}}}')"
+    phase_state_init cyauto "$parsed" "" >/dev/null
+    phase_launch_ready cyauto >/dev/null
+    cp "$td/payload" "$td/payload-auto"
+    parsed="$(jq -n '{phase:"x",project:1,advance:"yolo",tasks:{t1:{key:"t1",title:"Title One",brief:"Body",after:[]}}}')"
+    phase_state_init cyyolo "$parsed" "" >/dev/null
+    phase_launch_ready cyyolo >/dev/null
+    cp "$td/payload" "$td/payload-yolo"
+  ); rc=$?
+  if [ "$rc" -ne 0 ]; then rm -rf "$td"; return "$rc"; fi
+  park_yolo="$(jq -r .yolo_mode "$td/payload-park")" || { rm -rf "$td"; return 1; }
+  auto_yolo="$(jq -r .yolo_mode "$td/payload-auto")" || { rm -rf "$td"; return 1; }
+  yolo_yolo="$(jq -r .yolo_mode "$td/payload-yolo")" || { rm -rf "$td"; return 1; }
+  rm -rf "$td"
+  [ "$park_yolo" = "0" ] && [ "$auto_yolo" = "0" ] && [ "$yolo_yolo" = "1" ]
 }
 
 test_create_brief_falls_back_to_title() {
@@ -39,7 +71,7 @@ test_create_brief_falls_back_to_title() {
     api() { printf '%s' "$3" > "$td/payload"; printf '{"task":{"id":778}}'; }
     _test_kickoff_noop() { :; }
     PHASE_KICKOFF_FN=_test_kickoff_noop
-    parsed="$(jq -n '{phase:"x",project:1,autonomous:false,tasks:{t1:{key:"t1",title:"Title One",after:[]}}}')"
+    parsed="$(jq -n '{phase:"x",project:1,advance:"park",tasks:{t1:{key:"t1",title:"Title One",after:[]}}}')"
     phase_state_init cf "$parsed" "" >/dev/null
     phase_launch_ready cf >/dev/null
   ); rc=$?
@@ -51,17 +83,52 @@ test_create_brief_falls_back_to_title() {
   [ "$title" = "Title One" ] && [ "$desc" = "Title One" ] && [ "$desc" != "t1" ] && [ -n "$desc" ]
 }
 
+
+setup_green_gate() {
+  _t_branch(){ echo b; }; export -f _t_branch; export PHASE_PR_BRANCH_FN=_t_branch
+  _t_meta(){ echo "pass MERGEABLE 0"; }; export -f _t_meta; export PHASE_PR_META_FN=_t_meta
+  _t_sb(){ echo ""; }; export -f _t_sb; export PHASE_STALE_BASE_FN=_t_sb
+  _t_cg(){ return 0; }; export -f _t_cg; export PHASE_CONTAINER_GATE_FN=_t_cg
+}
+
+assert_pr_advance_mode() {
+  local mode="$1" slug="adv_${1}" expect_merge="$2"
+  phase_state_init "$slug" "$(printf '%s' "$J" | jq --arg a "$mode" '.advance=$a')" "" >/dev/null
+  phase_task_set "$slug" schema '.taskId=90 | .state="pr_open" | .pr=390'
+  rm -f "$PHASE_DIR/merge-$mode"
+  _t_merge_policy(){ echo "$1" > "$PHASE_DIR/merge-$mode"; return 0; }; export -f _t_merge_policy; export PHASE_MERGE_FN=_t_merge_policy
+  phase_advance_prs "$slug" || true
+  if [ "$expect_merge" = "yes" ]; then
+    [ "$(phase_state_read "$slug" | jq -r .tasks.schema.state)" = "merged" ] && [ "$(cat "$PHASE_DIR/merge-$mode")" = "90" ]
+  else
+    [ "$(phase_state_read "$slug" | jq -r .tasks.schema.state)" = "pr_open" ] && [ "$(phase_state_read "$slug" | jq -r .tasks.schema.reason)" = "awaiting-merge" ] && [ ! -f "$PHASE_DIR/merge-$mode" ]
+  fi
+}
+
 # Task 1: parse
 J="$(phase_parse "$HERE/fixtures/phase-sample.yaml")"
 check "parse: phase name"      '[ "$(echo "$J" | jq -r .phase)" = "Add rate limiting" ]'
 check "parse: project id"      '[ "$(echo "$J" | jq -r .project)" = "1" ]'
-check "parse: autonomous false" '[ "$(echo "$J" | jq -r .autonomous)" = "false" ]'
+check "parse: advance sample is park" '[ "$(echo "$J" | jq -r .advance)" = "park" ]'
 check "parse: 3 tasks"         '[ "$(echo "$J" | jq -r ".tasks | length")" = "3" ]'
 check "parse: middleware after schema" '[ "$(echo "$J" | jq -r ".tasks.middleware.after[0]")" = "schema" ]'
 check "parse: schema after empty"      '[ "$(echo "$J" | jq -r ".tasks.schema.after | length")" = "0" ]'
 
 J_EMPTY="$(phase_parse "$HERE/fixtures/phase-empty.yaml")"
 check "parse: tasks-less YAML yields empty tasks map" '[ "$(echo "$J_EMPTY" | jq -r ".tasks | length")" = "0" ]'
+check "parse: advance defaults to park" '[ "$(echo "$J_EMPTY" | jq -r .advance)" = "park" ]'
+
+PARSE_TMP="$(mktemp -d)"
+printf '%s\n' 'phase: "Legacy auto"' 'project: 1' 'autonomous: true' 'tasks: []' > "$PARSE_TMP/legacy-auto.yaml"
+J_LEGACY_AUTO="$(phase_parse "$PARSE_TMP/legacy-auto.yaml")"
+check "parse: legacy autonomous true maps to auto" '[ "$(echo "$J_LEGACY_AUTO" | jq -r .advance)" = "auto" ]'
+printf '%s\n' 'phase: "Explicit yolo"' 'project: 1' 'autonomous: true' 'advance: yolo' 'tasks: []' > "$PARSE_TMP/explicit-yolo.yaml"
+J_EXPLICIT_YOLO="$(phase_parse "$PARSE_TMP/explicit-yolo.yaml")"
+check "parse: explicit advance wins" '[ "$(echo "$J_EXPLICIT_YOLO" | jq -r .advance)" = "yolo" ]'
+printf '%s\n' 'phase: "Invalid advance"' 'project: 1' 'advance: bogus' 'tasks: []' > "$PARSE_TMP/invalid-advance.yaml"
+phase_parse "$PARSE_TMP/invalid-advance.yaml" >/dev/null 2>&1; badadv_rc=$?
+check "parse: invalid advance exits 5" '[ "$badadv_rc" = "5" ]'
+rm -rf "$PARSE_TMP"
 
 phase_parse "$HERE/fixtures/does-not-exist.yaml" >/dev/null 2>&1
 missing_rc=$?
@@ -123,6 +190,7 @@ check "state: bad-json write leaves no tmp"          '[ "$(ls -1 "$PHASE_DIR"/le
 check "state: bad-json write kept original intact"   'phase_state_read leak | jq -e . >/dev/null'
 check "create: brief reaches description" 'test_create_brief_reaches_description'
 check "create: brief falls back to title when absent" 'test_create_brief_falls_back_to_title'
+check "create yolo: create_task sends yolo_mode by advance" 'test_create_yolo_payload'
 rm -rf "$PHASE_DIR"; unset PHASE_DIR
 
 
@@ -173,12 +241,34 @@ check "reconcile: hostile pr_number still pr_open" '[ "$(phase_state_read recon 
 check "reconcile: state valid after hostile pr" 'phase_state_read recon | jq -e . >/dev/null'
 # Corrupt .tasks must fail non-zero, instead of silently no-oping via process substitution
 CORRUPT_DIR="$(mktemp -d)"
-printf '%s' '{"phase":"x","project":1,"autonomous":false,"scheduleId":"","tasks":null,"log":[]}' > "$CORRUPT_DIR/corrupt.json"
+printf '%s' '{"phase":"x","project":1,"advance":"park","scheduleId":"","tasks":null,"log":[]}' > "$CORRUPT_DIR/corrupt.json"
 ( PHASE_DIR="$CORRUPT_DIR" phase_reconcile corrupt ) 2>/dev/null ; rc=$?
 check "reconcile: corrupt .tasks fails non-zero" '[ "'"$rc"'" -ne 0 ]'
 rm -rf "$CORRUPT_DIR"
 rm -rf "$PHASE_DIR"; unset PHASE_DIR
 
+
+# Reconcile plan -> implementation seam by advance policy.
+export PHASE_DIR="$(mktemp -d)"
+_t_plan_done_status() { echo '{"planification_complete":1,"workflow_complete":0,"pr_agent_complete":0,"workflow_blocked":0}'; }; export -f _t_plan_done_status; export PHASE_TASK_STATUS_FN=_t_plan_done_status
+_t_kick_capture() { printf '%s %s\n' "$1" "${2:-}" >> "$PHASE_DIR/kicks"; }; export -f _t_kick_capture; export PHASE_KICKOFF_FN=_t_kick_capture
+phase_state_init implauto "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
+phase_task_set implauto schema '.taskId=77 | .state="running"'
+phase_reconcile implauto
+check "reconcile auto: planification_complete kicks implementation" '[ "$(cat "$PHASE_DIR/kicks")" = "77 implementation" ]'
+rm -f "$PHASE_DIR/kicks"
+phase_state_init implpark "$(printf '%s' "$J" | jq '.advance="park"')" "" >/dev/null
+phase_task_set implpark schema '.taskId=78 | .state="running"'
+phase_reconcile implpark
+check "reconcile park: planification_complete does NOT kick" '[ ! -f "$PHASE_DIR/kicks" ]'
+check "reconcile park: awaiting-plan-review marker" '[ "$(phase_state_read implpark | jq -r .tasks.schema.reason)" = "awaiting-plan-review" ]'
+phase_state_init implonce "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
+phase_task_set implonce schema '.taskId=79 | .state="running"'
+phase_reconcile implonce
+phase_reconcile implonce
+check "reconcile auto: does not double-kick" '[ "$(wc -l < "$PHASE_DIR/kicks")" = "1" ]'
+check "reconcile auto: impl-kicked marker" '[ "$(phase_state_read implonce | jq -r .tasks.schema.reason)" = "impl-kicked" ]'
+rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_TASK_STATUS_FN PHASE_KICKOFF_FN
 
 # Task 4: gate — exercise each rejection + the pass
 export PHASE_DIR="$(mktemp -d)"
@@ -258,9 +348,9 @@ rm -f /tmp/pwn_* /tmp/pwn2
 rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN
 
 
-# Task 5: full tick over stubs (autonomous run)
+# Task 5: full tick over stubs (auto run)
 export PHASE_DIR="$(mktemp -d)"
-phase_state_init t "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_state_init t "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 ID=10; _t_create() { echo $((ID++)); }; export -f _t_create; export PHASE_CREATE_FN=_t_create ID
 _t_kick() { :; }; export -f _t_kick; export PHASE_KICKOFF_FN=_t_kick
 phase_tick_once t || true
@@ -281,7 +371,7 @@ B="$(phase_state_read t)"; phase_tick_once t || true
 check "tick3: idempotent (no churn on merged schema)" '[ "$(phase_state_read t | jq -r .tasks.schema.taskId)" = "$(echo "$B" | jq -r .tasks.schema.taskId)" ]'
 # Task 5: injection-safety — a park VERDICT carrying jq-breakout chars must NOT flip state; reason stored literally
 unset PHASE_MERGE_FN; _t_meta_conf(){ echo "pass CONFLICTING 0"; }; export -f _t_meta_conf; export PHASE_PR_META_FN=_t_meta_conf
-phase_state_init z "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_state_init z "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 phase_task_set z schema '.taskId=9 | .state="pr_open" | .pr=231'
 phase_advance_prs z || true
 check "inj: conflict parks (not merged)" '[ "$(phase_state_read z | jq -r .tasks.schema.state)" = "parked" ]'
@@ -290,8 +380,8 @@ check "inj: reason is the literal verdict" '[ "$(phase_state_read z | jq -r .tas
 phase_task_set_str z schema reason 'x" | .tasks.schema.state="merged" | .reason="x'
 check "inj: malicious reason stored literally" '[ "$(phase_state_read z | jq -r .tasks.schema.reason)" = "x\" | .tasks.schema.state=\"merged\" | .reason=\"x" ]'
 check "inj: malicious reason did NOT flip state to merged" '[ "$(phase_state_read z | jq -r .tasks.schema.state)" = "parked" ]'
-# Task 5: chatty container-gate stdout is reduced to the operative last-line verdict before autonomous merge/park.
-phase_state_init cgpass "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+# Task 5: chatty container-gate stdout is reduced to the operative last-line verdict before auto merge/park.
+phase_state_init cgpass "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 phase_task_set cgpass schema '.taskId=9 | .state="pr_open" | .pr=231'
 _t_cg_chatty_ok(){ echo "=== gate: typecheck ==="; echo "=== gate: PASSED ==="; return 0; }; export -f _t_cg_chatty_ok; export PHASE_CONTAINER_GATE_FN=_t_cg_chatty_ok
 _t_merge_mark(){ : > "$PHASE_DIR/chatty-merge-fired"; return 0; }; export -f _t_merge_mark; export PHASE_MERGE_FN=_t_merge_mark
@@ -299,7 +389,7 @@ export PHASE_PR_META_FN=_t_meta
 phase_advance_prs cgpass || true
 check "tick: chatty passing gate merges" '[ "$(phase_state_read cgpass | jq -r .tasks.schema.state)" = "merged" ]'
 check "tick: chatty passing gate fired merge fn" '[ -f "$PHASE_DIR/chatty-merge-fired" ]'
-phase_state_init cgpark "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_state_init cgpark "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 phase_task_set cgpark schema '.taskId=9 | .state="pr_open" | .pr=231'
 _t_cg_chatty_red(){ echo "=== gate: typecheck ==="; echo "=== gate: FAILED ==="; return 1; }; export -f _t_cg_chatty_red; export PHASE_CONTAINER_GATE_FN=_t_cg_chatty_red
 rm -f "$PHASE_DIR/chatty-merge-fired"
@@ -307,16 +397,22 @@ phase_advance_prs cgpark || true
 check "tick: chatty failing gate parks" '[ "$(phase_state_read cgpark | jq -r .tasks.schema.state)" = "parked" ]'
 check "tick: chatty failing gate reason is clean token" '[ "$(phase_state_read cgpark | jq -r .tasks.schema.reason)" = "park:gate-red" ]'
 check "tick: chatty failing gate did not fire merge fn" '[ ! -f "$PHASE_DIR/chatty-merge-fired" ]'
-# Task 5: default/non-autonomous mode never merges, even with a chatty green gate and merge function available.
-phase_state_init na "$(printf '%s' "$J" | jq '.autonomous=false')" "" >/dev/null
+# Task 5: default/default park mode never merges, even with a chatty green gate and merge function available.
+phase_state_init na "$(printf '%s' "$J" | jq '.advance="park"')" "" >/dev/null
 phase_task_set na schema '.taskId=9 | .state="pr_open" | .pr=231'
 export PHASE_PR_META_FN=_t_meta; export PHASE_CONTAINER_GATE_FN=_t_cg_chatty_ok; export PHASE_MERGE_FN=_t_merge_mark
 rm -f "$PHASE_DIR/chatty-merge-fired"
 phase_advance_prs na || true
-check "tick: non-autonomous leaves pr_open (no merge)" '[ "$(phase_state_read na | jq -r .tasks.schema.state)" = "pr_open" ]'
-check "tick: non-autonomous did not fire merge fn" '[ ! -f "$PHASE_DIR/chatty-merge-fired" ]'
+check "tick: park leaves pr_open (no merge)" '[ "$(phase_state_read na | jq -r .tasks.schema.state)" = "pr_open" ]'
+check "tick: park did not fire merge fn" '[ ! -f "$PHASE_DIR/chatty-merge-fired" ]'
+
+# Explicit advance-policy teeth for the gate -> merge seam.
+setup_green_gate
+check "advance=park: gate pass does NOT merge" 'assert_pr_advance_mode park no'
+check "advance=auto: gate pass merges" 'assert_pr_advance_mode auto yes'
+check "advance=yolo: gate pass merges" 'assert_pr_advance_mode yolo yes'
 # A gate helper can emit a park verdict with rc=1; advance_prs must still record it fail-closed instead of aborting.
-phase_state_init grc "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_state_init grc "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 phase_task_set grc schema '.taskId=9 | .state="pr_open" | .pr=231'
 ( phase_gate() { echo "park:synthetic-failed"; return 1; }
   phase_advance_prs grc || true )
@@ -344,7 +440,7 @@ check "stale-base live merge-base failure -> exit 3 (rc-guard pinned)" '[ "$f3_m
 
 # Task 6: PR-number sink guard — even after an all-green gate, merge receives numeric PRs only.
 export PHASE_DIR="$(mktemp -d)"
-phase_state_init sink "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_state_init sink "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 phase_task_set sink schema '.taskId=9 | .state="pr_open" | .pr="abc"'
 _t_branch_num(){ echo b; }; export -f _t_branch_num; export PHASE_PR_BRANCH_FN=_t_branch_num
 _t_meta_num(){ echo "pass MERGEABLE 0"; }; export -f _t_meta_num; export PHASE_PR_META_FN=_t_meta_num
@@ -355,14 +451,14 @@ phase_advance_prs sink || true
 check "sink: bad PR number parks" '[ "$(phase_state_read sink | jq -r .tasks.schema.state)" = "parked" ]'
 check "sink: bad PR number reason" '[ "$(phase_state_read sink | jq -r .tasks.schema.reason)" = "bad-pr-number" ]'
 check "sink: bad PR number did not merge" '[ ! -f "$PHASE_DIR/sink-merge-fired" ]'
-phase_state_init sinkok "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+phase_state_init sinkok "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 phase_task_set sinkok schema '.taskId=9 | .state="pr_open" | .pr=231'
 rm -f "$PHASE_DIR/sink-merge-fired"
 phase_advance_prs sinkok || true
 check "sink: numeric PR merges" '[ "$(phase_state_read sinkok | jq -r .tasks.schema.state)" = "merged" ]'
 check "sink: numeric PR fired merge" '[ -f "$PHASE_DIR/sink-merge-fired" ]'
-# Regression teeth: autonomous merge calls the task-id-first Bottega merge-cleanup helper, not raw PR merge.
-phase_state_init mergearg "$(printf '%s' "$J" | jq '.autonomous=true')" "" >/dev/null
+# Regression teeth: auto merge calls the task-id-first Bottega merge-cleanup helper, not raw PR merge.
+phase_state_init mergearg "$(printf '%s' "$J" | jq '.advance="auto"')" "" >/dev/null
 phase_task_set mergearg schema '.taskId=99 | .state="pr_open" | .pr=242'
 rm -f "$PHASE_DIR/merge-arg"
 _t_merge_capture(){ echo "$1" > "$PHASE_DIR/merge-arg"; return 0; }; export -f _t_merge_capture; export PHASE_MERGE_FN=_t_merge_capture

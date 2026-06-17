@@ -24,13 +24,13 @@ api() { # api <method> <path> [data]
 runs_arr() { jq 'if type=="array" then . else (.agentRuns // .runs // .data // []) end'; }
 task_obj() { jq '(.task // .)'; } # task endpoints sometimes wrap in {task:...}
 
-create_task() { # create_task <projectId> <title> <body|@file> -> prints task id only
+create_task() { # create_task <projectId> <title> <body|@file> [yolo_mode=0] -> prints task id only
   # The task brief MUST go in the "description" field — that is what the server
   # writes to task-<id>.md (the planner's {{taskDocPath}}). "documentation" is
   # NOT a create field and is silently dropped, leaving a 0-byte brief.
   local proj="$1" title="$2" body="$3" payload tid
   case "$body" in @*) body="$(cat "${body#@}")";; esac
-  payload=$(jq -n --arg t "$title" --arg b "$body" '{title:$t, description:$b}')
+  payload=$(jq -n --arg t "$title" --arg b "$body" --argjson y "${4:-0}" '{title:$t, description:$b, yolo_mode:$y}')
   CREATE_TASK_RESP=$(api POST "/api/projects/$proj/tasks" "$payload")
   tid=$(printf '%s' "$CREATE_TASK_RESP" | jq -r '(.task // .).id // empty')
   if [ -z "$tid" ]; then echo "create FAILED: $CREATE_TASK_RESP" >&2; return 1; fi
@@ -42,13 +42,16 @@ create_task() { # create_task <projectId> <title> <body|@file> -> prints task id
 
 _phase_task_status_live() { api GET "/api/tasks/$1" | task_obj; }
 
-_phase_create_live() { # <project> <key> <title> <brief> -> task id
+_phase_create_live() { # <project> <key> <title> <brief> <yolo_mode> -> task id
   local body="$4"
   [ -n "$body" ] || body="$3"
-  create_task "$1" "$3" "$body"
+  create_task "$1" "$3" "$body" "${5:-0}"
 }
 
-_phase_kickoff_live() { api POST "/api/tasks/$1/agent-runs" "$(jq -n '{agentType:"planification"}')" >/dev/null; }
+_phase_kickoff_live() {
+  local at="${2:-planification}"
+  api POST "/api/tasks/$1/agent-runs" "$(jq -n --arg a "$at" '{agentType:$a}')" >/dev/null
+}
 
 _phase_pr_branch_live() {  # <tid> -> head branch name
   local prj exists prnum
@@ -83,7 +86,7 @@ _phase_schedule_cancel() { echo "AGENT: cancel schedule $1" >&2; }
 _phase_status_pretty() {
   local slug="$1"
   phase_state_read "$slug" | jq -r '
-    "phase: \(.phase)  project=\(.project)  autonomous=\(.autonomous)  scheduleId=\(.scheduleId // "")",
+    "phase: \(.phase)  project=\(.project)  advance=\(.advance // (if .autonomous == true then "auto" else "park" end))  scheduleId=\(.scheduleId // "")",
     (.tasks | to_entries[] | "  \(.key): \(.value.state) task=\(.value.taskId // "-") pr=\(.value.pr // "-") reason=\(.value.reason // "-") after=[\((.value.after // []) | join(","))]"),
     (if ((.log // []) | length) > 0 then "log:", ((.log // [])[] | "  \(.)") else empty end)'
 }

@@ -155,7 +155,7 @@ Phase file shape:
 ```yaml
 phase: "Short phase name"
 project: 1
-autonomous: false   # true enables auto-merge through the gate
+advance: park      # park (default), auto, or yolo
 tasks:
   - key: schema
     title: "Add DB schema"
@@ -174,11 +174,14 @@ Commands:
 - `bash scripts/bottega-api.sh phase status <slug>` prints the local phase state.
 - `bash scripts/bottega-api.sh phase cancel <slug>` emits the cancel directive for the recorded schedule and clears it from state.
 
-Modes:
-- Default (`autonomous: false`): launches tasks whose dependencies are merged, but parks at PR barriers for human/user merge.
-- Autonomous (`autonomous: true`): after a task reaches `pr_open`, the shepherd may merge it only if the full gate passes.
+Advance policy (`advance:`):
+- `park` (default): stop at both human-judgment seams. After planification completes, log `awaiting-plan-review` and wait for a human to edit/re-plan/kick implementation. At a green PR gate, log `awaiting-merge` and leave the PR open for the user.
+- `auto`: after planification completes, automatically kick `implementation`; after a green PR gate, merge via Bottega's merge-cleanup path.
+- `yolo`: create Bottega tasks with `yolo_mode:1` so Bottega's yolo agent drives plan+implementation+PR; after a green PR gate, merge via merge-cleanup.
 
-Autonomous gate (fail-closed):
+The gate remains the irreversible-edge guard under all three modes. Even `yolo` parks on a red gate, and the shepherd never merges on any non-`pass` verdict. Legacy phase files with `autonomous: true` are read as `advance: auto`; new files should use `advance:`.
+
+Merge gate (fail-closed):
 1. Resolve the PR head branch.
 2. Read PR metadata and task blocked status.
 3. Require CI status `pass`.
@@ -187,7 +190,5 @@ Autonomous gate (fail-closed):
 6. Run the Bottega container gate (`incus exec ... bash scripts/gate.sh`). This is the final protection, including the stale-base lesson from the #230 incident.
 
 Scheduling is agent-owned. The bash helper cannot call the assistant's `schedule` tool, so `_phase_schedule_register` writes `PENDING-AGENT-SCHEDULE`. After `phase run`, the agent MUST register a real schedule: cron `*/5 * * * *`, target `new_session`, prompt to run `bottega-api.sh phase tick <slug>` and report COMPLETE/parked. Then write the real schedule id into the phase state. On COMPLETE, cancel the schedule; `phase cancel` emits the cancel directive if manual cleanup is needed.
-
-Limit: v1 seeds new task briefs from the task title in live phase creation; richer per-task `brief:`/`@file` threading is a follow-up. For rich briefs today, create a normal single Bottega task with the full task document.
 
 Escape hatch: when the chain is tightly coupled (later steps need earlier steps' code in the same branch), use ONE big Bottega task with a 'do A then B then C' brief instead — the shepherd is for independently-mergeable PRs.
