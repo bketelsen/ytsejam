@@ -30,7 +30,8 @@ create_task() { # create_task <projectId> <title> <body|@file> [yolo_mode=0] -> 
   # NOT a create field and is silently dropped, leaving a 0-byte brief.
   local proj="$1" title="$2" body="$3" payload tid
   case "$body" in @*) body="$(cat "${body#@}")";; esac
-  payload=$(jq -n --arg t "$title" --arg b "$body" --argjson y "${4:-0}" '{title:$t, description:$b, yolo_mode:$y}')
+  local yolo_bool=false; [ "${4:-0}" != "0" ] && yolo_bool=true
+  payload=$(jq -n --arg t "$title" --arg b "$body" --argjson y "$yolo_bool" '{title:$t, description:$b, yolo_mode:$y}')
   CREATE_TASK_RESP=$(api POST "/api/projects/$proj/tasks" "$payload")
   tid=$(printf '%s' "$CREATE_TASK_RESP" | jq -r '(.task // .).id // empty')
   if [ -z "$tid" ]; then echo "create FAILED: $CREATE_TASK_RESP" >&2; return 1; fi

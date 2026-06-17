@@ -57,8 +57,11 @@ test_create_yolo_payload() {
   park_yolo="$(jq -r .yolo_mode "$td/payload-park")" || { rm -rf "$td"; return 1; }
   auto_yolo="$(jq -r .yolo_mode "$td/payload-auto")" || { rm -rf "$td"; return 1; }
   yolo_yolo="$(jq -r .yolo_mode "$td/payload-yolo")" || { rm -rf "$td"; return 1; }
+  local yolo_type
+  yolo_type="$(jq -r '.yolo_mode|type' "$td/payload-yolo" 2>/dev/null)" || yolo_type="?"
   rm -rf "$td"
-  [ "$park_yolo" = "0" ] && [ "$auto_yolo" = "0" ] && [ "$yolo_yolo" = "1" ]
+  # Bottega's create schema rejects a number; the payload yolo_mode MUST be a JSON boolean.
+  [ "$park_yolo" = "false" ] && [ "$auto_yolo" = "false" ] && [ "$yolo_yolo" = "true" ] && [ "$yolo_type" = "boolean" ]
 }
 
 # A yolo task MUST be kicked with agentType=yolo (Bottega does NOT auto-start a yolo run on create;
