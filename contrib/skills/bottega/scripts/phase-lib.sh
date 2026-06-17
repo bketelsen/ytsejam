@@ -130,3 +130,59 @@ phase_reconcile() {
     fi
   done <<< "$keys"
 }
+
+# phase_gate <slug> <key> -> stdout verdict: pass OR park:<reason>.
+# Fail-closed autonomous merge gate: any failed check OR check that cannot run parks.
+# Intent-match note: autonomous v1 has no human allowlist; it trusts only the mechanical backstops below.
+phase_gate() {
+  local slug="$1" key="$2" j tid pr br ci mergeable blocked clash meta
+  j="$(phase_state_read "$slug")" || { echo "park:state-read-failed"; return 1; }
+  tid="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].taskId')" || { echo "park:tid-read-failed"; return 1; }
+  pr="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].pr')" || { echo "park:pr-read-failed"; return 1; }
+  [ "$pr" = "null" ] && { echo "park:no-pr"; return 0; }
+
+  br="$("${PHASE_PR_BRANCH_FN:-_phase_pr_branch_live}" "$pr")" || { echo "park:branch-resolve-failed"; return 0; }
+  [ -z "$br" ] && { echo "park:branch-empty"; return 0; }
+
+  meta="$("${PHASE_PR_META_FN:-_phase_pr_meta_live}" "$pr" "$tid")" || { echo "park:meta-check-failed"; return 0; }
+  read -r ci mergeable blocked <<< "$meta"
+  { [ -n "$ci" ] && [ -n "$mergeable" ] && [ -n "$blocked" ]; } || { echo "park:meta-malformed"; return 0; }
+  [ "$blocked" = "1" ] && { echo "park:workflow_blocked"; return 0; }
+  [ "$ci" = "pass" ] || { echo "park:ci-$ci"; return 0; }
+  [ "$mergeable" = "MERGEABLE" ] || { echo "park:not-mergeable($mergeable)"; return 0; }
+
+  clash="$("${PHASE_STALE_BASE_FN:-_phase_stale_base_live}" "$br")" || { echo "park:stale-base-check-failed"; return 0; }
+  [ -n "$clash" ] && { echo "park:stale-base-overlap[$(printf '%s' "$clash" | tr '\n' ',')]"; return 0; }
+
+  if ! "${PHASE_CONTAINER_GATE_FN:-_phase_container_gate_live}" "$br"; then echo "park:gate-red"; return 0; fi
+  echo "pass"; return 0
+}
+
+# ponytail: live helpers shell into the bottega container; offline tests inject stubs via PHASE_*_FN.
+_phase_container_gate_live() {  # <pr-branch> -> exit 0 pass / non-zero fail (incl. can't-fetch=90)
+  local br="$1"
+  incus exec bottega -- su - code -c "
+    set -e; cd ~/projects/ytsejam
+    git fetch origin --quiet \"$br\" 2>/dev/null || git fetch origin --quiet
+    wt=\$(mktemp -d); git worktree add -q \"\$wt\" \"origin/$br\" 2>/dev/null || { rm -rf \"\$wt\"; exit 90; }
+    ( cd \"\$wt\" && bash scripts/gate.sh ); rc=\$?
+    git worktree remove --force \"\$wt\" 2>/dev/null; rm -rf \"\$wt\"; exit \$rc
+  "
+}
+
+_phase_stale_base_live() {  # <pr-branch> -> stdout = intersecting files (empty=safe); MUST exit non-zero if it cannot run
+  local br="$1"
+  incus exec bottega -- su - code -c "
+    set -e; cd ~/projects/ytsejam; git fetch origin --quiet 2>/dev/null
+    base=\$(git merge-base origin/main \"origin/$br\") || exit 3
+    comm -12 <(git diff --name-only \"\$base\" \"origin/$br\" | sort -u) <(git diff --name-only \"\$base\" origin/main | sort -u)
+  "
+}
+
+_phase_pr_branch_live() {  # <pr> -> branch name (Task 6 will wire gh; placeholder errors so live use before Task-6 fails closed)
+  echo "_phase_pr_branch_live: not wired until Task 6" >&2; return 1
+}
+
+_phase_pr_meta_live() {  # <pr> <tid> -> "ci mergeable blocked" (Task 6 wires bottega-api.sh); placeholder errors closed
+  echo "_phase_pr_meta_live: not wired until Task 6" >&2; return 1
+}

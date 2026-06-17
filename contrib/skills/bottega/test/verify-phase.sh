@@ -129,4 +129,50 @@ check "reconcile: corrupt .tasks fails non-zero" '[ "'"$rc"'" -ne 0 ]'
 rm -rf "$CORRUPT_DIR"
 rm -rf "$PHASE_DIR"; unset PHASE_DIR
 
+
+# Task 4: gate — exercise each rejection + the pass
+export PHASE_DIR="$(mktemp -d)"
+phase_state_init g "$J" "" >/dev/null
+phase_task_set g schema '.taskId=6 | .state="pr_open" | .pr=231'
+export PHASE_PR_BRANCH_FN=_t_branch;      _t_branch() { echo "feat/schema"; }; export -f _t_branch
+export PHASE_PR_META_FN=_t_meta_ok;       _t_meta_ok() { echo "pass MERGEABLE 0"; }; export -f _t_meta_ok
+export PHASE_STALE_BASE_FN=_t_stale_no;   _t_stale_no() { echo ""; }; export -f _t_stale_no
+export PHASE_CONTAINER_GATE_FN=_t_gate_ok; _t_gate_ok() { return 0; }; export -f _t_gate_ok
+check "gate: all green -> pass"           '[ "$(phase_gate g schema)" = "pass" ]'
+export PHASE_PR_META_FN=_t_meta_cired;    _t_meta_cired() { echo "fail MERGEABLE 0"; }; export -f _t_meta_cired
+check "gate: CI red -> park"              '[[ "$(phase_gate g schema)" == park:ci-* ]]'
+export PHASE_PR_META_FN=_t_meta_conf;     _t_meta_conf() { echo "pass CONFLICTING 0"; }; export -f _t_meta_conf
+check "gate: conflict -> park"            '[[ "$(phase_gate g schema)" == park:not-mergeable* ]]'
+export PHASE_PR_META_FN=_t_meta_blocked;  _t_meta_blocked() { echo "pass MERGEABLE 1"; }; export -f _t_meta_blocked
+check "gate: workflow_blocked -> park"    '[ "$(phase_gate g schema)" = "park:workflow_blocked" ]'
+export PHASE_PR_META_FN=_t_meta_ok
+export PHASE_STALE_BASE_FN=_t_stale_yes;  _t_stale_yes() { printf "server/src/x.ts\n"; }; export -f _t_stale_yes
+check "gate: stale-base overlap -> park"  '[[ "$(phase_gate g schema)" == park:stale-base-overlap* ]]'
+export PHASE_STALE_BASE_FN=_t_stale_no
+export PHASE_CONTAINER_GATE_FN=_t_gate_red; _t_gate_red() { return 1; }; export -f _t_gate_red
+check "gate: container gate red -> park"  '[ "$(phase_gate g schema)" = "park:gate-red" ]'
+
+# fail-closed: a check that CANNOT RUN must park, never proceed as pass
+export PHASE_CONTAINER_GATE_FN=_t_gate_ok
+# stale-base helper ERRORS (container down) -> must park, NOT treat empty as "no overlap"
+export PHASE_STALE_BASE_FN=_t_stale_err; _t_stale_err() { echo "incus down" >&2; return 1; }; export -f _t_stale_err
+check "gate: stale-base CANT RUN -> park (fail closed)" '[ "$(phase_gate g schema)" = "park:stale-base-check-failed" ]'
+export PHASE_STALE_BASE_FN=_t_stale_no
+# meta helper ERRORS -> park
+export PHASE_PR_META_FN=_t_meta_err; _t_meta_err() { echo "gh down" >&2; return 1; }; export -f _t_meta_err
+check "gate: meta CANT RUN -> park (fail closed)" '[ "$(phase_gate g schema)" = "park:meta-check-failed" ]'
+export PHASE_PR_META_FN=_t_meta_ok
+# branch resolve ERRORS -> park
+export PHASE_PR_BRANCH_FN=_t_branch_err; _t_branch_err() { return 1; }; export -f _t_branch_err
+check "gate: branch resolve CANT RUN -> park (fail closed)" '[ "$(phase_gate g schema)" = "park:branch-resolve-failed" ]'
+export PHASE_PR_BRANCH_FN=_t_branch
+# meta malformed (2 fields) -> park
+export PHASE_PR_META_FN=_t_meta_malf; _t_meta_malf() { echo "pass MERGEABLE"; }; export -f _t_meta_malf
+check "gate: meta malformed -> park (fail closed)" '[ "$(phase_gate g schema)" = "park:meta-malformed" ]'
+export PHASE_PR_META_FN=_t_meta_ok
+# no-pr task -> park:no-pr
+phase_task_set g docs '.taskId=9 | .state="running" | .pr=null'
+check "gate: no PR -> park:no-pr" '[ "$(phase_gate g docs)" = "park:no-pr" ]'
+rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN
+
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }
