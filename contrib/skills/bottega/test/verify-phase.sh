@@ -5,6 +5,51 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fails=0
 check() { if eval "$2"; then echo "  ok: $1"; else echo "  FAIL: $1"; fails=$((fails+1)); fi; }
 
+# create-payload regression helpers: source bottega-api in a subshell, shadow api(), and keep kickoff offline.
+test_create_brief_reaches_description() {
+  local td payload title desc rc
+  td="$(mktemp -d)" || return $?
+  (
+    set -- __source_only
+    . "$HERE/../scripts/bottega-api.sh" >/dev/null 2>/dev/null
+    export PHASE_DIR="$td/phases"
+    api() { printf '%s' "$3" > "$td/payload"; printf '{"task":{"id":777}}'; }
+    _test_kickoff_noop() { :; }
+    PHASE_KICKOFF_FN=_test_kickoff_noop
+    parsed="$(jq -n --arg brief "BRIEF-BODY-XYZ" '{phase:"x",project:1,autonomous:false,tasks:{t1:{key:"t1",title:"Title One",brief:$brief,after:[]}}}')"
+    phase_state_init cb "$parsed" "" >/dev/null
+    phase_launch_ready cb >/dev/null
+  ); rc=$?
+  if [ "$rc" -ne 0 ]; then rm -rf "$td"; return "$rc"; fi
+  payload="$(cat "$td/payload")" || { rm -rf "$td"; return 1; }
+  title="$(printf '%s' "$payload" | jq -r .title)" || { rm -rf "$td"; return 1; }
+  desc="$(printf '%s' "$payload" | jq -r .description)" || { rm -rf "$td"; return 1; }
+  rm -rf "$td"
+  [ "$title" = "Title One" ] && [ "$desc" = "BRIEF-BODY-XYZ" ] && [ "$desc" != "t1" ]
+}
+
+test_create_brief_falls_back_to_title() {
+  local td payload title desc rc
+  td="$(mktemp -d)" || return $?
+  (
+    set -- __source_only
+    . "$HERE/../scripts/bottega-api.sh" >/dev/null 2>/dev/null
+    export PHASE_DIR="$td/phases"
+    api() { printf '%s' "$3" > "$td/payload"; printf '{"task":{"id":778}}'; }
+    _test_kickoff_noop() { :; }
+    PHASE_KICKOFF_FN=_test_kickoff_noop
+    parsed="$(jq -n '{phase:"x",project:1,autonomous:false,tasks:{t1:{key:"t1",title:"Title One",after:[]}}}')"
+    phase_state_init cf "$parsed" "" >/dev/null
+    phase_launch_ready cf >/dev/null
+  ); rc=$?
+  if [ "$rc" -ne 0 ]; then rm -rf "$td"; return "$rc"; fi
+  payload="$(cat "$td/payload")" || { rm -rf "$td"; return 1; }
+  title="$(printf '%s' "$payload" | jq -r .title)" || { rm -rf "$td"; return 1; }
+  desc="$(printf '%s' "$payload" | jq -r .description)" || { rm -rf "$td"; return 1; }
+  rm -rf "$td"
+  [ "$title" = "Title One" ] && [ "$desc" = "Title One" ] && [ "$desc" != "t1" ] && [ -n "$desc" ]
+}
+
 # Task 1: parse
 J="$(phase_parse "$HERE/fixtures/phase-sample.yaml")"
 check "parse: phase name"      '[ "$(echo "$J" | jq -r .phase)" = "Add rate limiting" ]'
@@ -40,6 +85,8 @@ SP="$(phase_state_init teststate "$J" "cron-123")"
 check "state: file created"        '[ -f "$SP" ]'
 check "state: scheduleId stored"   '[ "$(phase_state_read teststate | jq -r .scheduleId)" = "cron-123" ]'
 check "state: all tasks pending"   '[ "$(phase_state_read teststate | jq -r "[.tasks[].state]|unique|.[0]")" = "pending" ]'
+check "state_init: title survives" '[ "$(phase_state_read teststate | jq -r .tasks.schema.title)" = "Add rate_limit columns + migration" ]'
+check "state_init: brief survives" '[ "$(phase_state_read teststate | jq -r .tasks.schema.brief)" = "Add columns" ]'
 phase_task_set teststate schema '.taskId=6 | .state="created"'
 check "state: task mutate sticks"  '[ "$(phase_state_read teststate | jq -r .tasks.schema.taskId)" = "6" ]'
 phase_log teststate "hello"
@@ -73,6 +120,8 @@ phase_state_init leak "$J" sid >/dev/null
 check "state: bad-json write fails (rc!=0)"          '[ "'"$gc"'" -ne 0 ]'
 check "state: bad-json write leaves no tmp"          '[ "$(ls -1 "$PHASE_DIR"/leak.json.* 2>/dev/null | wc -l)" = "0" ]'
 check "state: bad-json write kept original intact"   'phase_state_read leak | jq -e . >/dev/null'
+check "create: brief reaches description" 'test_create_brief_reaches_description'
+check "create: brief falls back to title when absent" 'test_create_brief_falls_back_to_title'
 rm -rf "$PHASE_DIR"; unset PHASE_DIR
 
 

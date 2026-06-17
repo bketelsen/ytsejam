@@ -42,9 +42,10 @@ create_task() { # create_task <projectId> <title> <body|@file> -> prints task id
 
 _phase_task_status_live() { api GET "/api/tasks/$1" | task_obj; }
 
-_phase_create_live() { # <project> <key> <title> -> task id
-  # ponytail: v1 seeds the brief from the title; richer @file briefs are a follow-up
-  create_task "$1" "$3" "$3"
+_phase_create_live() { # <project> <key> <title> <brief> -> task id
+  local body="$4"
+  [ -n "$body" ] || body="$3"
+  create_task "$1" "$3" "$body"
 }
 
 _phase_kickoff_live() { api POST "/api/tasks/$1/agent-runs" "$(jq -n '{agentType:"planification"}')" >/dev/null; }

@@ -43,7 +43,7 @@ phase_state_init() {
   local p; p="$(phase_state_path "$slug")" || return $?
   echo "$parsed" | jq --arg sid "$sched" '{
     phase, project, autonomous, scheduleId: $sid,
-    tasks: (.tasks | map_values({key, after, taskId: null, state: "pending", pr: null, reason: null})),
+    tasks: (.tasks | map_values({key, title, brief, after, taskId: null, state: "pending", pr: null, reason: null})),
     log: []
   }' > "$p"
   echo "$p"
@@ -188,10 +188,11 @@ phase_launch_ready() {
       first(.tasks as $t | $t[$k].after[]? | select(($t[.].state // "pending") != "merged")) // empty')" || return $?
     [ -n "$unmet" ] && continue
 
-    local title proj newid
+    local title brief proj newid
     title="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].title // $k')" || return $?
+    brief="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].brief // ""')" || return $?
     proj="$(printf '%s' "$j" | jq -r '.project')" || return $?
-    if ! newid="$("${PHASE_CREATE_FN:-_phase_create_live}" "$proj" "$key" "$title")"; then
+    if ! newid="$("${PHASE_CREATE_FN:-_phase_create_live}" "$proj" "$key" "$title" "$brief")"; then
       phase_task_set "$slug" "$key" '.state="failed"' || return $?
       phase_task_set_str "$slug" "$key" reason "create-failed" || return $?
       continue
