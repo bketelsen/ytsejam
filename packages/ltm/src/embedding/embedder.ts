@@ -83,6 +83,14 @@ export class HashEmbedder implements Embedder {
   }
 }
 
+/** L2-normalize a vector, falling back to norm 1 for all-zero inputs. */
+export function normalizeUnit(vector: number[]): number[] {
+  let norm = 0;
+  for (const x of vector) norm += x * x;
+  norm = Math.sqrt(norm) || 1;
+  return vector.map((x) => x / norm);
+}
+
 /** Cosine similarity of two unit-norm vectors (plain dot product). */
 export function cosine(a: number[], b: number[]): number {
   let dot = 0;

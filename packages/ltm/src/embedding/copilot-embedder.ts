@@ -12,7 +12,7 @@
  * refresh internally.
  */
 
-import type { Embedder } from "./embedder.ts";
+import { normalizeUnit, type Embedder } from "./embedder.ts";
 
 export interface CopilotEmbedderOptions {
   /** Resolves a GitHub Copilot API key/token. Called again for the one 401 retry. */
@@ -141,9 +141,6 @@ export class CopilotEmbedder implements Embedder {
       );
     }
     // Defensive re-normalization: the index assumes unit vectors.
-    let norm = 0;
-    for (const x of vector) norm += x * x;
-    norm = Math.sqrt(norm) || 1;
-    return vector.map((x) => x / norm);
+    return normalizeUnit(vector);
   }
 }
