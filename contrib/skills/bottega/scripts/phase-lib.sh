@@ -89,3 +89,40 @@ phase_task_set() {
   j="$(printf '%s' "$cur" | jq --arg k "$key" ".tasks[\$k] |= ($assign)")" || return $?
   phase_state_write "$slug" "$j"
 }
+
+# phase_reconcile <slug> — map Bottega task/PR status into local phase state.
+# Pure over injectable lookup function: PHASE_TASK_STATUS_FN or _phase_task_status_live.
+phase_reconcile() {
+  local slug="$1" j key tid state ts blocked pr_done prnum pr_value status_fn
+  j="$(phase_state_read "$slug")" || return $?
+  status_fn="${PHASE_TASK_STATUS_FN:-_phase_task_status_live}"
+
+  while IFS= read -r key; do
+    tid="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].taskId')" || return $?
+    state="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].state')" || return $?
+
+    case "$state" in
+      merged|parked|failed|pending|pr_open) continue ;;
+    esac
+    [ "$tid" != "null" ] || continue
+
+    ts="$($status_fn "$tid")" || return $?
+    blocked="$(printf '%s' "$ts" | jq -r '(.workflow_blocked // false) | if . == true or . == 1 then "1" else "0" end')" || return $?
+    pr_done="$(printf '%s' "$ts" | jq -r '(.pr_agent_complete // false) | if . == true or . == 1 then "1" else "0" end')" || return $?
+
+    if [ "$blocked" = "1" ]; then
+      phase_task_set "$slug" "$key" '.state="parked" | .reason="workflow_blocked"' || return $?
+      continue
+    fi
+
+    if [ "$pr_done" = "1" ]; then
+      prnum="$(printf '%s' "$ts" | jq -r '.pr_number // .pr // empty')" || return $?
+      if printf '%s' "$prnum" | grep -qE '^[0-9]+$'; then
+        pr_value="$prnum"
+      else
+        pr_value="null"
+      fi
+      phase_task_set "$slug" "$key" ".state=\"pr_open\" | .pr=$pr_value" || return $?
+    fi
+  done < <(printf '%s' "$j" | jq -r '.tasks | keys[]')
+}
