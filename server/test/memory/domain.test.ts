@@ -76,6 +76,21 @@ describe("memory domain controller", () => {
     expect(() => c.get("nope")).toThrow(/unknown id/);
   });
 
+  test("ControllerResolveFindByIdOrPath", () => {
+    const c = new Controller(tempRoot(goodManifest));
+    expect(c.resolve("work").path).toBe("work/acme");
+    expect(c.resolve("work/acme").id).toBe("work");
+    expect(c.resolve("./work/acme/").id).toBe("work");
+    expect(c.find("work/acme/team")?.id).toBe("work-sub");
+  });
+
+  test("ControllerResolveFindUnknowns", () => {
+    const c = new Controller(tempRoot(goodManifest));
+    expect(() => c.resolve("nope")).toThrow(/^domain: unknown id or path "nope"$/);
+    expect(c.find("nope")).toBeUndefined();
+    expect(c.find("../etc")).toBeUndefined();
+  });
+
   test("ControllerObservationsResolves", () => {
     const c = new Controller(tempRoot(goodManifest));
     expect(c.observations().map((t) => `${t.domain}:${t.path}`)).toEqual([
@@ -239,6 +254,30 @@ domains:
     try { c.get("nope"); } catch (err) { caught = err as Error; }
     expect(caught).not.toBeNull();
     expect(caught!.message).toMatch(/unknown id "nope"/);
+    expect(caught!.message).toMatch(/last manifest load failed:/);
+    expect(caught!.message).toMatch(/duplicate domain id "dup"/);
+  });
+
+  test("resolve() includes cached load error when one is present", () => {
+    const dir = tempRoot(goodManifest);
+    const c = new Controller(dir);
+    bumpManifest(dir, `version: 1
+domains:
+  - id: dup
+    path: a
+    files: [hot-memory]
+  - id: dup
+    path: b
+    files: [hot-memory]
+`);
+
+    expect(c.resolve("personal").id).toBe("personal");
+    expect(c.lastError?.message).toMatch(/duplicate domain id "dup"/);
+
+    let caught: Error | null = null;
+    try { c.resolve("nope"); } catch (err) { caught = err as Error; }
+    expect(caught).not.toBeNull();
+    expect(caught!.message).toMatch(/unknown id or path "nope"/);
     expect(caught!.message).toMatch(/last manifest load failed:/);
     expect(caught!.message).toMatch(/duplicate domain id "dup"/);
   });

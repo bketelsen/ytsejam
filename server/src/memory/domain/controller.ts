@@ -70,6 +70,37 @@ export class Controller {
     return structuredClone(domain);
   }
 
+  find(idOrPath: string): Domain | undefined {
+    this.maybeReload();
+    const byId = this.flat.get(idOrPath);
+    if (byId) return structuredClone(byId);
+
+    let path: string;
+    try {
+      path = cleanRel(idOrPath);
+    } catch {
+      return undefined;
+    }
+
+    let found: Domain | undefined;
+    walk(this.domains, (domain) => {
+      if (!found && cleanRel(domain.path) === path) found = domain;
+    });
+    return found ? structuredClone(found) : undefined;
+  }
+
+  resolve(idOrPath: string): Domain {
+    const domain = this.find(idOrPath);
+    if (!domain) {
+      const base = `domain: unknown id or path ${JSON.stringify(idOrPath)}`;
+      if (this.lastError) {
+        throw new Error(`${base} (last manifest load failed: ${this.lastError.message})`);
+      }
+      throw new Error(base);
+    }
+    return domain;
+  }
+
   actionItems(domain?: string): DomainFileRef[] {
     return this.enumerate("action-items", domain);
   }
