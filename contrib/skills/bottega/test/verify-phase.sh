@@ -25,6 +25,10 @@ check "parse: missing file exits 2" '[ "$missing_rc" = "2" ]'
 phase_parse "$HERE/fixtures/phase-badkey.yaml" >/dev/null 2>&1; badkey_rc=$?
 check "parse: invalid task key exits 4" '[ "$badkey_rc" = "4" ]'
 
+# negative: empty-string task key must ALSO be rejected (was a false-negative) -> exit 4
+phase_parse "$HERE/fixtures/phase-emptykey.yaml" >/dev/null 2>&1; emptykey_rc=$?
+check "parse: empty-string task key exits 4" '[ "$emptykey_rc" = "4" ]'
+
 # positive: hyphen+underscore key is valid
 OK="$(phase_parse "$HERE/fixtures/phase-okkey.yaml")"; okkey_rc=$?
 check "parse: hyphen_underscore key valid (exit 0)" '[ "$okkey_rc" = "0" ]'
