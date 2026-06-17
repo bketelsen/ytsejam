@@ -21,6 +21,7 @@ import {
   type Session,
   type SessionTreeEntry,
 } from "@earendil-works/pi-agent-core";
+import { textBlocksOf } from "./messages.ts";
 
 /**
  * Compute the per-model reserve token budget.
@@ -135,15 +136,8 @@ export function estimateKeptSetTokens(
 ): number {
   let chars = 0;
   for (const msg of messages) {
-    const content = (msg as any).content;
-    if (typeof content === "string") {
-      chars += content.length;
-    } else if (Array.isArray(content)) {
-      for (const part of content) {
-        if (part && part.type === "text" && typeof part.text === "string") {
-          chars += part.text.length;
-        }
-      }
+    for (const text of textBlocksOf(msg, { coerce: false })) {
+      chars += text.length;
     }
   }
   return summaryTokens + Math.ceil(chars / 4);

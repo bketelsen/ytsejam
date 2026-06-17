@@ -16,6 +16,7 @@ import type { EventBus } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { ModelResolver } from "./models.ts";
 import { makeApiKeyResolver } from "./pi-auth.ts";
+import { textBlocksOf } from "./messages.ts";
 import type { PiAuthStore } from "./pi-auth.ts";
 import { composeWorkerPrompt } from "./persona.ts";
 import type { PersonaStore } from "./persona.ts";
@@ -70,14 +71,7 @@ interface ActiveTaskHarness {
 
 /** Full text of an assistant message (all text blocks), capped for injection. */
 function fullTextOf(message: AgentMessage, cap = REPORT_MAX): string {
-  const content = (message as any).content;
-  if (typeof content === "string") return content.slice(0, cap);
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((c: any) => c.type === "text")
-    .map((c: any) => String(c.text ?? ""))
-    .join("\n")
-    .slice(0, cap);
+  return textBlocksOf(message).join("\n").slice(0, cap);
 }
 
 export interface DelegateInput {
