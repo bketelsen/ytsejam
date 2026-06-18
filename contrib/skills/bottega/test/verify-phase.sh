@@ -516,6 +516,7 @@ phase_advance_prs mergearg || true
 check "merge: merge fn receives task id" '[ "$(cat "$PHASE_DIR/merge-arg")" = "99" ]'
 check "merge: merge fn did not receive PR number" '[ "$(cat "$PHASE_DIR/merge-arg")" != "242" ]'
 check "api: no dead pr->task resolver" '! grep -q _phase_taskid_for_pr "$HERE/../scripts/bottega-api.sh"'
+check "api: container gate installs deps before gate" 'grep -q "npm ci && bash scripts/gate.sh" "$HERE/../scripts/phase-lib.sh"'
 rm -rf "$PHASE_DIR"; unset PHASE_DIR PHASE_PR_BRANCH_FN PHASE_PR_META_FN PHASE_STALE_BASE_FN PHASE_CONTAINER_GATE_FN PHASE_MERGE_FN
 
 echo "---"; [ "$fails" -eq 0 ] && echo "verify-phase: ALL PASS" || { echo "verify-phase: $fails FAILED"; exit 1; }
