@@ -124,6 +124,7 @@ setup_green_gate() {
   _t_meta(){ echo "pass MERGEABLE 0"; }; export -f _t_meta; export PHASE_PR_META_FN=_t_meta
   _t_sb(){ echo ""; }; export -f _t_sb; export PHASE_STALE_BASE_FN=_t_sb
   _t_cg(){ return 0; }; export -f _t_cg; export PHASE_CONTAINER_GATE_FN=_t_cg
+  _t_bh(){ echo "CLEAN"; }; export -f _t_bh; export PHASE_PR_BEHIND_FN=_t_bh
 }
 
 assert_pr_advance_mode() {
@@ -314,6 +315,7 @@ export PHASE_PR_BRANCH_FN=_t_branch;      _t_branch() { echo "feat/schema"; }; e
 export PHASE_PR_META_FN=_t_meta_ok;       _t_meta_ok() { echo "pass MERGEABLE 0"; }; export -f _t_meta_ok
 export PHASE_STALE_BASE_FN=_t_stale_no;   _t_stale_no() { echo ""; }; export -f _t_stale_no
 export PHASE_CONTAINER_GATE_FN=_t_gate_ok; _t_gate_ok() { return 0; }; export -f _t_gate_ok
+export PHASE_PR_BEHIND_FN=_t_behind_clean; _t_behind_clean() { echo "CLEAN"; }; export -f _t_behind_clean
 check "gate: all green -> pass"           '[ "$(phase_gate g schema)" = "pass" ]'
 export PHASE_PR_META_FN=_t_meta_cired;    _t_meta_cired() { echo "fail MERGEABLE 0"; }; export -f _t_meta_cired
 check "gate: CI red -> park"              '[[ "$(phase_gate g schema)" == park:ci-* ]]'
@@ -346,9 +348,11 @@ export PHASE_PR_BRANCH_FN=_t_branch
 export PHASE_PR_META_FN=_t_meta_malf; _t_meta_malf() { echo "pass MERGEABLE"; }; export -f _t_meta_malf
 check "gate: meta malformed -> park (fail closed)" '[ "$(phase_gate g schema)" = "park:meta-malformed" ]'
 export PHASE_PR_META_FN=_t_meta_ok
-# no-pr task -> park:no-pr
+# no-pr task -> retry:no-pr (bounded backoff), then park:no-pr-timeout at the cap
 phase_task_set g docs '.taskId=9 | .state="running" | .pr=null'
-check "gate: no PR -> park:no-pr" '[ "$(phase_gate g docs)" = "park:no-pr" ]'
+check "gate: no PR -> retry:no-pr (first tick)" '[ "$(phase_gate g docs)" = "retry:no-pr" ]'
+phase_task_set g docs '.nopr_attempts=3'
+check "gate: no PR at cap -> park:no-pr-timeout" '[ "$(phase_gate g docs)" = "park:no-pr-timeout" ]'
 # Regression teeth: gate resolvers are task-id-first; PR remains only the existence sentinel.
 phase_task_set g schema '.taskId=42 | .state="pr_open" | .pr=242'
 export PHASE_PR_BRANCH_FN=_t_capture_branch_arg; _t_capture_branch_arg() { echo "$1" > "$PHASE_DIR/branch-arg"; echo feat/x; }; export -f _t_capture_branch_arg

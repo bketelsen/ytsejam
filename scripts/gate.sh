@@ -12,6 +12,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "=== gate: contrib script tests ==="
 bash scripts/test/bottega-api.test.sh
 bash scripts/test/phase-yolo-update.test.sh
+bash contrib/skills/bottega/test/verify-phase.sh
 
 echo "=== gate: server typecheck (tsc --noEmit) ==="
 env -u NODE_ENV npm run check
