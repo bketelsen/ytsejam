@@ -269,6 +269,13 @@ export class SemanticStore {
     if ((c & (c - 1)) === 0) this.factLog.append(updated);
   }
 
+  /** Collapse semantic append-only logs to one latest-wins snapshot per id. */
+  compactLogs(): { facts: number; entities: number } {
+    this.factLog.compact(this.facts.values());
+    this.entityLog.compact(this.entities.values());
+    return { facts: this.facts.size, entities: this.entities.size };
+  }
+
   // -- redaction -------------------------------------------------------------
 
   /**

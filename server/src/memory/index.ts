@@ -117,7 +117,12 @@ export function getLtm(): MemorySystem | null {
  * into per-session summaries. Returns null when no LTM is attached
  * (best-effort, mirroring getLtm semantics). Called by /housekeeping.
  */
-export async function consolidateLtm(): Promise<{ created: number; folded: number } | null> {
+export async function consolidateLtm(): Promise<{
+  created: number;
+  folded: number;
+  factsCompacted: number;
+  entitiesCompacted: number;
+} | null> {
   if (!attachedLtm) return null;
   return attachedLtm.consolidate();
 }

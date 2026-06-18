@@ -5,7 +5,8 @@
  *
  * Lifecycle: open() loads the JSONL store and rebuilds derived state;
  * ingest*() pulls new session entries in; retrieve()/composeContext() serve
- * per-turn context; consolidate() runs the decay-driven maintenance pass.
+ * per-turn context; consolidate() runs the decay-driven maintenance pass
+ * and compacts semantic logs.
  */
 
 import crypto from "node:crypto";
@@ -457,7 +458,12 @@ export class MemorySystem {
 
   async consolidate(
     opts: { now?: string } = {},
-  ): Promise<{ created: number; folded: number }> {
+  ): Promise<{
+    created: number;
+    folded: number;
+    factsCompacted: number;
+    entitiesCompacted: number;
+  }> {
     const now = opts.now ?? this.clock();
     const result = await consolidate(
       this.episodic,
@@ -468,9 +474,12 @@ export class MemorySystem {
       this.summarizer,
     );
     if (result.created.length > 0) this.rebuildDerived();
+    const semanticCompacted = this.semantic.compactLogs();
     return {
       created: result.created.length,
       folded: result.consolidatedChildren,
+      factsCompacted: semanticCompacted.facts,
+      entitiesCompacted: semanticCompacted.entities,
     };
   }
 
