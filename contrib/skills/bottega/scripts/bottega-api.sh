@@ -68,7 +68,15 @@ _phase_pr_meta_live() {  # <tid> -> "ci mergeable blocked"
   local prj tj ci mrg blk
   prj="$(api GET "/api/tasks/$1/pull-request")" || return 1
   tj="$(api GET "/api/tasks/$1" | task_obj)" || return 1
-  ci="$(printf '%s' "$prj" | jq -r '.ciStatus.status // "unknown"')" || return 1
+  # Roll up CI from per-check buckets (stable: pass|fail|pending|skipping).
+  # .ciStatus.status is the past-tense rollup "passed"/"failed" — do NOT compare it to "pass".
+  ci="$(printf '%s' "$prj" | jq -r '
+    (.ciStatus.checks // []) as $c
+    | if   ($c|length)==0                 then "none"
+      elif any($c[]; .bucket=="fail")     then "fail"
+      elif any($c[]; .bucket=="pending")  then "pending"
+      elif all($c[]; .bucket=="pass")     then "pass"
+      else "unknown" end')" || return 1
   mrg="$(printf '%s' "$prj" | jq -r '.mergeable // "UNKNOWN"')" || return 1
   blk="$(printf '%s' "$tj" | jq -r '(.workflow_blocked // false) | if . == true or . == 1 then 1 else 0 end')" || return 1
   printf '%s %s %s\n' "$ci" "$mrg" "$blk"
