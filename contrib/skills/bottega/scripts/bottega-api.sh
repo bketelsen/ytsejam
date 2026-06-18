@@ -183,9 +183,9 @@ case "$cmd" in
     case "$verb" in
       run)
         file="$1"
-        slug="$(basename "$file" | sed 's/\.[^.]*$//')"
-        sched="$(_phase_schedule_register "$slug")"
         parsed="$(phase_parse "$file")"
+        slug="$(printf '%s' "$parsed" | jq -r '.phase' | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+        sched="$(_phase_schedule_register "$slug")"
         phase_state_init "$slug" "$parsed" "$sched" >/dev/null
         phase_tick_once "$slug" || true
         _phase_cancel_if_complete "$slug" || true
