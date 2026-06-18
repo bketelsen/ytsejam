@@ -26,13 +26,12 @@ interface LogScan {
   malformed: number[];
 }
 
-const LOG_FILES = ["episodic.jsonl", "facts.jsonl", "entities.jsonl", "redactions.jsonl"];
+const LOG_FILES = ["episodic.jsonl", "facts.jsonl", "redactions.jsonl"];
 
 /** Immutable per-id fields; two snapshots disagreeing on these = collision. */
 const IDENTITY_FIELDS: Record<string, string[]> = {
   "episodic.jsonl": ["kind", "sessionId", "entryId"],
   "facts.jsonl": ["kind", "predicate", "polarity"],
-  "entities.jsonl": ["norm"],
 };
 
 function scanLog(filePath: string): LogScan | undefined {

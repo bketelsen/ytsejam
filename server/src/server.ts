@@ -196,7 +196,6 @@ export function createApp(deps: AppDeps) {
         lexical: item.breakdown.lexical,
         recency: item.breakdown.recency,
         salience: item.breakdown.salience,
-        graph: item.breakdown.graph,
         retention: item.breakdown.retention,
       })),
     });

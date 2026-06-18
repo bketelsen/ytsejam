@@ -9,7 +9,6 @@ import { generateFixtures } from "../src/eval/synthetic.ts";
 import { promoteFacts } from "../src/retrieval/promote.ts";
 import { spreadNormalize, Retriever } from "../src/retrieval/retriever.ts";
 import { EpisodicStore } from "../src/episodic/store.ts";
-import { PreferenceGraph } from "../src/semantic/graph.ts";
 import { mergeConfig } from "../src/types.ts";
 import type { SemanticFact, EpisodicRecord } from "../src/types.ts";
 import type { Embedder } from "../src/embedding/embedder.ts";
@@ -232,7 +231,7 @@ function fact(partial: Partial<SemanticFact> & Pick<SemanticFact, "kind" | "pred
     ...partial,
   } as SemanticFact;
 }
-const emptyProfile = { identity: [], preferences: [], directives: [], attributes: [], dormant: [], topEntities: [] };
+const emptyProfile = { identity: [], preferences: [], directives: [], attributes: [], dormant: [] };
 
 describe("dormant promotion (RECALL 4)", () => {
   const sister = fact({ kind: "attribute", predicate: "rel_sister", object: "Alice" });
@@ -400,7 +399,7 @@ const stubEmbedder: Embedder = { dimension: 4, embed: () => Promise.resolve([1, 
 function buildRetriever(records: EpisodicRecord[]) {
   const store = EpisodicStore.open(fs.mkdtempSync(path.join(os.tmpdir(), "ltm-res-")));
   store.upsertMany(records);
-  return { store, retriever: new Retriever({ store, embedder: stubEmbedder, graph: PreferenceGraph.build([], []), config: mergeConfig() }) };
+  return { store, retriever: new Retriever({ store, embedder: stubEmbedder, config: mergeConfig() }) };
 }
 
 const NOW = "2026-06-01T00:00:00.000Z";

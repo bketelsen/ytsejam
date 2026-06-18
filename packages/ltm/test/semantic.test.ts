@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractEntities, extractFacts } from "../src/semantic/extract.ts";
+import { extractFacts } from "../src/semantic/extract.ts";
 import { effectiveStrength, SemanticStore } from "../src/semantic/store.ts";
 import type { SemanticFact, Turn } from "../src/types.ts";
 
@@ -88,43 +88,6 @@ describe("fact extraction heuristics", () => {
 
   it("does not hallucinate facts from plain task chatter", () => {
     expect(extractFacts("Can you help me debug a flaky integration test?")).toEqual([]);
-  });
-});
-
-describe("entity extraction heuristics", () => {
-  it("finds people via relationship phrases", () => {
-    const entities = extractEntities("My sister Alice is visiting next month.");
-    expect(entities).toContainEqual(expect.objectContaining({ name: "Alice", kind: "person" }));
-  });
-
-  it("finds tech, code spans, paths, urls, and emails", () => {
-    const entities = extractEntities(
-      "I use TypeScript; see `loadConfig()` in ./src/config.ts or https://example.com/docs — mail me at bjk@example.com",
-    );
-    const kinds = new Map(entities.map((e) => [e.kind, e.name]));
-    expect(kinds.get("tech")).toBeDefined();
-    expect(kinds.get("code")).toBe("loadConfig()");
-    expect(kinds.get("path")).toBe("./src/config.ts");
-    expect(kinds.get("url")).toContain("https://example.com");
-    expect(kinds.get("email")).toBe("bjk@example.com");
-  });
-
-  it("keys entities by normalized form, independent of surface-case order (PLAN 2.4)", () => {
-    for (const text of [
-      "TypeScript is great. i still write typescript every day.",
-      "i still write typescript every day. TypeScript is great.",
-    ]) {
-      const candidates = extractEntities(text).filter((e) => e.key === "typescript");
-      expect(candidates).toHaveLength(1);
-      expect(candidates[0].name).toBe("TypeScript");
-      expect(candidates[0].kind).toBe("tech");
-    }
-  });
-
-  it("skips sentence-starting stopwords", () => {
-    const entities = extractEntities("The Quick answer is yes. When I checked it worked.");
-    expect(entities.map((e) => e.name)).not.toContain("The");
-    expect(entities.map((e) => e.name)).not.toContain("When");
   });
 });
 

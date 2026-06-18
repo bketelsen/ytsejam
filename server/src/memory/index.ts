@@ -121,7 +121,6 @@ export async function consolidateLtm(): Promise<{
   created: number;
   folded: number;
   factsCompacted: number;
-  entitiesCompacted: number;
 } | null> {
   if (!attachedLtm) return null;
   return attachedLtm.consolidate();

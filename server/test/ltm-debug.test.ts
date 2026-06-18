@@ -15,7 +15,6 @@ const emptyProfile = {
   directives: [],
   attributes: [],
   dormant: [],
-  topEntities: [],
 };
 
 let tmpData: string;
@@ -85,7 +84,6 @@ function attachStubLtm() {
             lexical: 0.2,
             recency: 0.3,
             salience: 0.4,
-            graph: 0.5,
             retention: 0.6,
           },
         },
@@ -131,7 +129,6 @@ describe("GET /api/admin/ltm-debug/compose", () => {
           lexical: 0.2,
           recency: 0.3,
           salience: 0.4,
-          graph: 0.5,
           retention: 0.6,
         },
       ],

@@ -80,13 +80,6 @@ describe("fork provenance (PLAN 2.7)", () => {
     expect(fact!.sources[0].sessionId).toBe(CHILD_ID);
     expect(fact!.sources[0].rootSessionId).toBe(PARENT_ID);
 
-    // Entities associate with the parent session, not a phantom subagent.
-    const entity = mem.listEntities().find((e) => e.norm === "oat milk");
-    if (entity) {
-      expect(entity.sessionIds).toContain(PARENT_ID);
-      expect(entity.sessionIds).not.toContain(CHILD_ID);
-    }
-
     // Redaction by the subagent session still finds the fact via its source.
     await mem.redact({ sessionId: CHILD_ID });
     expect(mem.listFacts().find((f) => f.objectNorm.includes("oat milk"))).toBeUndefined();

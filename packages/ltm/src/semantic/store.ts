@@ -1,6 +1,6 @@
 /**
- * Semantic memory store: durable facts about the user plus an entity store,
- * persisted to facts.jsonl / entities.jsonl (latest-wins snapshots).
+ * Semantic memory store: durable facts about the user, persisted to
+ * facts.jsonl (latest-wins snapshots).
  *
  * Belief dynamics:
  * - Reinforcement: re-asserting a fact raises strength asymptotically toward
@@ -14,7 +14,6 @@
 
 import path from "node:path";
 import type {
-  EntityRecord,
   FactKind,
   ProfileFloors,
   ProfileSummary,
@@ -24,7 +23,6 @@ import type {
 } from "../types.ts";
 import { JsonlLog } from "../store/jsonl-log.ts";
 import {
-  extractEntities,
   extractFacts,
   factId,
   normalizeObject,
@@ -59,30 +57,22 @@ export function effectiveStrength(fact: SemanticFact, now: string): number {
 
 export class SemanticStore {
   private facts: Map<string, SemanticFact>;
-  private entities: Map<string, EntityRecord>;
   private factLog: JsonlLog<SemanticFact>;
-  private entityLog: JsonlLog<EntityRecord>;
 
-  private constructor(
-    factLog: JsonlLog<SemanticFact>,
-    entityLog: JsonlLog<EntityRecord>,
-  ) {
+  private constructor(factLog: JsonlLog<SemanticFact>) {
     this.factLog = factLog;
-    this.entityLog = entityLog;
     this.facts = factLog.load();
-    this.entities = entityLog.load();
   }
 
   static open(storeDir: string): SemanticStore {
     return new SemanticStore(
       new JsonlLog<SemanticFact>(path.join(storeDir, "facts.jsonl")),
-      new JsonlLog<EntityRecord>(path.join(storeDir, "entities.jsonl")),
     );
   }
 
   // -- ingestion -----------------------------------------------------------
 
-  /** Learn facts and entities from one turn. Facts come from user turns only. */
+  /** Learn facts from one turn. Facts come from user turns only. */
   ingestTurn(turn: Turn): void {
     const source: SourceRef = { sessionId: turn.sessionId, entryId: turn.entryId };
     if (turn.rootSessionId && turn.rootSessionId !== turn.sessionId) {
@@ -93,10 +83,6 @@ export class SemanticStore {
       for (const candidate of extractFacts(turn.text)) {
         this.assertFact(candidate.kind, candidate.predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp);
       }
-    }
-
-    for (const candidate of extractEntities(turn.text)) {
-      this.observeEntity(candidate.name, candidate.key, candidate.kind, source, turn.timestamp);
     }
   }
 
@@ -167,67 +153,14 @@ export class SemanticStore {
     }
   }
 
-  private observeEntity(
-    name: string,
-    norm: string,
-    kind: EntityRecord["kind"],
-    source: SourceRef,
-    at: string,
-  ): void {
-    const id = `ent-${slug(norm)}`;
-    const existing = this.entities.get(id);
-    if (existing && existing.state !== "redacted") {
-      const updated: EntityRecord = {
-        ...existing,
-        kind: existing.kind === "other" && kind !== "other" ? kind : existing.kind,
-        // Prefer a capitalized display form once one is observed.
-        name: existing.name === existing.norm && name !== norm ? name : existing.name,
-        mentionCount: existing.mentionCount + 1,
-        lastSeenAt: at,
-        sessionIds: existing.sessionIds.includes(source.rootSessionId ?? source.sessionId)
-          ? existing.sessionIds
-          : [...existing.sessionIds, source.rootSessionId ?? source.sessionId],
-        sources: dedupeSources([...existing.sources, source]),
-      };
-      this.entities.set(id, updated);
-      this.entityLog.append(updated);
-      return;
-    }
-    if (existing?.state === "redacted") return; // stays forgotten
-    const record: EntityRecord = {
-      id,
-      name,
-      norm,
-      kind,
-      mentionCount: 1,
-      firstSeenAt: at,
-      lastSeenAt: at,
-      // Entities associate with the fork ROOT's session — the user the
-      // knowledge belongs to — while sources keep the literal location.
-      sessionIds: [source.rootSessionId ?? source.sessionId],
-      sources: [source],
-      state: "active",
-    };
-    this.entities.set(id, record);
-    this.entityLog.append(record);
-  }
-
   // -- reads ----------------------------------------------------------------
 
   allFacts(): SemanticFact[] {
     return [...this.facts.values()];
   }
 
-  allEntities(): EntityRecord[] {
-    return [...this.entities.values()];
-  }
-
   activeFacts(): SemanticFact[] {
     return this.allFacts().filter((f) => f.state === "active" && !f.supersededBy);
-  }
-
-  activeEntities(): EntityRecord[] {
-    return this.allEntities().filter((e) => e.state === "active");
   }
 
   profile(
@@ -247,9 +180,6 @@ export class SemanticStore {
       directives: facts.filter((f) => f.kind === "directive"),
       attributes: facts.filter((f) => f.kind === "attribute"),
       dormant,
-      topEntities: this.activeEntities()
-        .sort((a, b) => b.mentionCount - a.mentionCount)
-        .slice(0, 12),
     };
   }
 
@@ -271,11 +201,10 @@ export class SemanticStore {
 
   // -- maintenance -----------------------------------------------------------
 
-  /** Collapse semantic append-only logs to one latest-wins snapshot per id. */
-  compactLogs(): { facts: number; entities: number } {
+  /** Collapse the semantic append-only log to one latest-wins snapshot per id. */
+  compactLogs(): { facts: number } {
     this.factLog.compact(this.facts.values());
-    this.entityLog.compact(this.entities.values());
-    return { facts: this.facts.size, entities: this.entities.size };
+    return { facts: this.facts.size };
   }
 
   /**
@@ -366,13 +295,12 @@ export class SemanticStore {
   // -- redaction -------------------------------------------------------------
 
   /**
-   * Remove knowledge derived from the given source turns. A fact or entity
-   * loses the matching sources; one with no remaining evidence is redacted
-   * outright. Logs are compacted so removed evidence doesn't linger on disk.
+   * Remove knowledge derived from the given source turns. A fact loses the
+   * matching sources; one with no remaining evidence is redacted outright.
+   * The log is compacted so removed evidence doesn't linger on disk.
    */
-  redactBySources(match: (s: SourceRef) => boolean): { facts: number; entities: number } {
+  redactBySources(match: (s: SourceRef) => boolean): { facts: number } {
     let factsRedacted = 0;
-    let entitiesRedacted = 0;
 
     for (const fact of this.facts.values()) {
       if (fact.state === "redacted") continue;
@@ -393,71 +321,8 @@ export class SemanticStore {
       }
     }
 
-    for (const entity of this.entities.values()) {
-      if (entity.state === "redacted") continue;
-      const remaining = entity.sources.filter((s) => !match(s));
-      if (remaining.length === entity.sources.length) continue;
-      if (remaining.length === 0) {
-        this.entities.set(entity.id, {
-          ...entity,
-          name: "",
-          norm: "",
-          sources: [],
-          sessionIds: [],
-          mentionCount: 0,
-          state: "redacted",
-        });
-        entitiesRedacted++;
-      } else {
-        this.entities.set(entity.id, {
-          ...entity,
-          sources: remaining,
-          mentionCount: remaining.length,
-          sessionIds: [...new Set(remaining.map((s) => s.rootSessionId ?? s.sessionId))],
-        });
-      }
-    }
-
     this.factLog.compact(this.facts.values());
-    this.entityLog.compact(this.entities.values());
-    return { facts: factsRedacted, entities: entitiesRedacted };
-  }
-
-  /** Redact a specific entity by name (and facts referencing it). */
-  redactEntity(name: string): { facts: number; entities: number } {
-    const norm = name.toLowerCase().trim();
-    let factsRedacted = 0;
-    let entitiesRedacted = 0;
-    for (const entity of this.entities.values()) {
-      if (entity.state === "redacted" || entity.norm !== norm) continue;
-      this.entities.set(entity.id, {
-        ...entity,
-        name: "",
-        norm: "",
-        sources: [],
-        sessionIds: [],
-        mentionCount: 0,
-        state: "redacted",
-      });
-      entitiesRedacted++;
-    }
-    for (const fact of this.facts.values()) {
-      if (fact.state === "redacted") continue;
-      if (fact.objectNorm === norm || fact.objectNorm.includes(norm)) {
-        this.facts.set(fact.id, {
-          ...fact,
-          object: "",
-          objectNorm: "",
-          sources: [],
-          strength: 0,
-          state: "redacted",
-        });
-        factsRedacted++;
-      }
-    }
-    this.factLog.compact(this.facts.values());
-    this.entityLog.compact(this.entities.values());
-    return { facts: factsRedacted, entities: entitiesRedacted };
+    return { facts: factsRedacted };
   }
 }
 

@@ -1,6 +1,6 @@
 /**
  * MemorySystem — the public facade. Owns the episodic and semantic stores,
- * the ingestion pipeline, the derived indexes/graph, and the user-control
+ * the ingestion pipeline, the derived indexes, and the user-control
  * surface (inspect / explain / redact / export).
  *
  * Lifecycle: open() loads the JSONL store and rebuilds derived state;
@@ -13,7 +13,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type {
-  EntityRecord,
   EpisodicRecord,
   LtmConfig,
   ProfileSummary,
@@ -39,7 +38,6 @@ import {
 } from "../episodic/consolidate.ts";
 import { retention } from "../episodic/decay.ts";
 import { SemanticStore } from "../semantic/store.ts";
-import { PreferenceGraph } from "../semantic/graph.ts";
 import { Retriever, packToBudget } from "../retrieval/retriever.ts";
 import { promoteFacts } from "../retrieval/promote.ts";
 import { IngestPipeline, type IngestReport } from "../pipeline/ingest.ts";
@@ -93,7 +91,6 @@ export class MemorySystem {
   private readonly pipeline: IngestPipeline;
   private readonly auditLog: JsonlLog<AuditRecord>;
   private retriever: Retriever;
-  private graph: PreferenceGraph;
   private readonly clock: () => string;
   private readonly retrievalLog?: string;
   private readonly readOptions?: ReadSessionOptions;
@@ -123,11 +120,9 @@ export class MemorySystem {
       config: this.config,
       readOptions: opts.readOptions,
     });
-    this.graph = this.rebuildGraph();
     this.retriever = new Retriever({
       store: this.episodic,
       embedder: this.embedder,
-      graph: this.graph,
       config: this.config,
     });
   }
@@ -182,21 +177,11 @@ export class MemorySystem {
     }
   }
 
-  private rebuildGraph(): PreferenceGraph {
-    this.graph = PreferenceGraph.build(
-      this.semantic.allFacts(),
-      this.episodic.all(),
-    );
-    return this.graph;
-  }
-
   /** Rebuild every derived structure after a mutation of the stores. */
   private rebuildDerived(): void {
-    this.rebuildGraph();
     this.retriever = new Retriever({
       store: this.episodic,
       embedder: this.embedder,
-      graph: this.graph,
       config: this.config,
     });
   }
@@ -381,7 +366,6 @@ export class MemorySystem {
           lexical: 0,
           recency: 0,
           salience: record.salience, // = fact.strength
-          graph: 0,
           retention: 1,
           total: 1,
         },
@@ -495,7 +479,6 @@ export class MemorySystem {
     created: number;
     folded: number;
     factsCompacted: number;
-    entitiesCompacted: number;
   }> {
     const now = opts.now ?? this.clock();
     const result = await consolidate(
@@ -512,7 +495,6 @@ export class MemorySystem {
       created: result.created.length,
       folded: result.consolidatedChildren,
       factsCompacted: semanticCompacted.facts,
-      entitiesCompacted: semanticCompacted.entities,
     };
   }
 
@@ -572,10 +554,6 @@ export class MemorySystem {
     return this.semantic.allFacts();
   }
 
-  listEntities(): EntityRecord[] {
-    return this.semantic.allEntities();
-  }
-
   getRecord(id: string): EpisodicRecord | undefined {
     return this.episodic.get(id);
   }
@@ -594,7 +572,6 @@ export class MemorySystem {
       meanRetention: number;
     };
     facts: { total: number; active: number };
-    entities: { total: number; active: number };
   } {
     const at = now ?? this.clock();
     const records = this.episodic.all();
@@ -617,10 +594,6 @@ export class MemorySystem {
         total: this.semantic.allFacts().length,
         active: this.semantic.activeFacts().length,
       },
-      entities: {
-        total: this.semantic.allEntities().length,
-        active: this.semantic.activeEntities().length,
-      },
     };
   }
 
@@ -628,14 +601,12 @@ export class MemorySystem {
   export(): {
     episodic: EpisodicRecord[];
     facts: SemanticFact[];
-    entities: EntityRecord[];
   } {
     return {
       episodic: this.episodic
         .all()
         .map((r) => ({ ...r, embedding: undefined })),
       facts: this.semantic.allFacts(),
-      entities: this.semantic.allEntities(),
     };
   }
 
@@ -671,7 +642,6 @@ export class MemorySystem {
     const result: RedactionResult = {
       episodicRedacted: 0,
       factsRedacted: 0,
-      entitiesRedacted: 0,
       consolidatedRebuilt: 0,
     };
 
@@ -689,12 +659,8 @@ export class MemorySystem {
       }
     }
 
-    // Propagate to semantic memory.
-    if ("entity" in selector) {
-      const r = this.semantic.redactEntity(selector.entity);
-      result.factsRedacted += r.facts;
-      result.entitiesRedacted += r.entities;
-    }
+    // Propagate to semantic memory: facts derived from the redacted source
+    // turns lose that evidence (and are tombstoned if no evidence remains).
     if (redactedSources.length > 0) {
       const keys = new Set(
         redactedSources.map((s) => `${s.sessionId}/${s.entryId}`),
@@ -703,7 +669,6 @@ export class MemorySystem {
         keys.has(`${s.sessionId}/${s.entryId}`),
       );
       result.factsRedacted += r.facts;
-      result.entitiesRedacted += r.entities;
     }
 
     // Rebuild consolidated summaries that included a redacted child.

@@ -3,7 +3,7 @@
  *
  * Persistence model mirrors ytsejam: JSONL event logs are the source of
  * truth, latest-wins per record id. Every record here is serialized as one
- * JSONL line; in-memory indexes (vectors, BM25, the preference graph) are
+ * JSONL line; in-memory indexes (vectors, BM25) are
  * derived and rebuilt on load.
  */
 
@@ -154,43 +154,6 @@ export interface SemanticFact {
   state: RecordState;
 }
 
-export type EntityKind =
-  | "person"
-  | "tech"
-  | "path"
-  | "url"
-  | "email"
-  | "code"
-  | "other";
-
-/** An entity observed in conversation; node of the preference graph. */
-export interface EntityRecord {
-  /** Stable id derived from the normalized name. */
-  id: string;
-  name: string;
-  norm: string;
-  kind: EntityKind;
-  mentionCount: number;
-  firstSeenAt: string;
-  lastSeenAt: string;
-  sessionIds: string[];
-  sources: SourceRef[];
-  state: RecordState;
-}
-
-/**
- * Derived (not persisted) edge of the preference graph. Fact edges connect
- * the user to entities; co-occurrence edges connect entities mentioned in
- * the same turn. Rebuilt from facts + active episodic text on load, so
- * redaction never leaves stale edges.
- */
-export interface GraphEdge {
-  from: string;
-  to: string;
-  relation: "prefers" | "dislikes" | "uses" | "works_on" | "interest" | "co_occurs";
-  weight: number;
-}
-
 // ---------------------------------------------------------------------------
 // Retrieval
 
@@ -236,7 +199,6 @@ export interface ScoreBreakdown {
   lexical: number;
   recency: number;
   salience: number;
-  graph: number;
   /** Decay multiplier applied to salience (see decay.ts). */
   retention: number;
   total: number;
@@ -263,7 +225,6 @@ export interface ProfileSummary {
    * slot question (strong-cue recall). Sorted by effective strength desc.
    */
   dormant: SemanticFact[];
-  topEntities: EntityRecord[];
 }
 
 export interface RetrievalResult {
@@ -310,7 +271,6 @@ export type RedactionSelector =
 export interface RedactionResult {
   episodicRedacted: number;
   factsRedacted: number;
-  entitiesRedacted: number;
   consolidatedRebuilt: number;
 }
 
@@ -369,7 +329,6 @@ export interface RetrievalWeights {
   lexical: number;
   recency: number;
   salience: number;
-  graph: number;
 }
 
 export interface LtmConfig {
@@ -425,8 +384,15 @@ export const DEFAULT_CONFIG: LtmConfig = {
   },
   consolidation: { olderThanDays: 45, retentionFloor: 0.35, maxSummaryChars: 1200 },
   // Content match (lexical + vector) must dominate; recency and salience are
-  // tie-breakers, not channels that can outvote an exact term match.
-  weights: { vector: 0.3, lexical: 0.4, recency: 0.08, salience: 0.07, graph: 0.15 },
+  // tie-breakers, not channels that can outvote an exact term match. (The
+  // preference-graph channel was removed — it contributed exactly zero to
+  // retrieval — so the surviving four weights are renormalized to sum 1.0.)
+  weights: {
+    vector: 0.35294117647058826,
+    lexical: 0.4705882352941177,
+    recency: 0.09411764705882353,
+    salience: 0.0823529411764706,
+  },
   profile: { floor: 0.3, identityFloor: 0.3, directiveFloor: 0.3 },
   mmrLambda: 0.7,
   maxChunkChars: 1500,

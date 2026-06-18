@@ -1,9 +1,8 @@
 /**
- * Hybrid retrieval: per query, candidates come from the vector index, the
- * BM25 index, and graph activation; each candidate is scored as a weighted
- * blend of
+ * Hybrid retrieval: per query, candidates come from the vector index and the
+ * BM25 index; each candidate is scored as a weighted blend of
  *
- *   vector cosine + BM25 (normalized) + recency + salience×retention + graph
+ *   vector cosine + BM25 (normalized) + recency + salience×retention
  *
  * then re-ranked with MMR for diversity and packed into a token budget.
  * Every returned item carries its full score breakdown — the same numbers
@@ -20,7 +19,6 @@ import type { Embedder } from "../embedding/embedder.ts";
 import { cosine } from "../embedding/embedder.ts";
 import { VectorIndex } from "../embedding/vector-index.ts";
 import { Bm25Index } from "./lexical.ts";
-import type { PreferenceGraph } from "../semantic/graph.ts";
 import { retention, ageDays } from "../episodic/decay.ts";
 import type { EpisodicStore } from "../episodic/store.ts";
 
@@ -79,7 +77,6 @@ interface RankedMemory extends RetrievedMemory {
 export interface RetrieverDeps {
   store: EpisodicStore;
   embedder: Embedder;
-  graph: PreferenceGraph;
   config: LtmConfig;
 }
 
@@ -128,12 +125,11 @@ export class Retriever {
     includeConsolidated = false,
     filterTags?: string[],
   ): Promise<RetrievedMemory[]> {
-    const { store, embedder, graph, config } = this.deps;
+    const { store, embedder, config } = this.deps;
     const queryVector = await embedder.embed(query);
 
     const vectorHits = this.vectors.search(queryVector, CANDIDATE_POOL);
     const lexicalHits = this.lexical.search(query, CANDIDATE_POOL);
-    const graphBoosts = graph.activate(query);
 
     // Both content channels are normalized so the configured weights compare
     // like with like (PLAN 2.2). Lexical normalizes to its pool max (BM25
@@ -174,7 +170,6 @@ export class Retriever {
     const candidateIds = new Set<string>([
       ...vectorById.keys(),
       ...lexicalById.keys(),
-      ...graphBoosts.keys(),
     ]);
 
     const scored: RankedMemory[] = [];
@@ -214,7 +209,6 @@ export class Retriever {
         lexical: lexicalById.get(id) ?? 0,
         recency: Math.pow(2, -ageDays(record.timestamp, now) / config.recencyHalfLifeDays),
         salience: record.salience,
-        graph: graphBoosts.get(id) ?? 0,
         retention: ret,
         total: 0,
       };
@@ -222,8 +216,7 @@ export class Retriever {
         w.vector * breakdown.vector +
         w.lexical * breakdown.lexical +
         w.recency * breakdown.recency +
-        w.salience * breakdown.salience * ret +
-        w.graph * breakdown.graph;
+        w.salience * breakdown.salience * ret;
       scored.push({ record, score: breakdown.total, breakdown, ...(stale ? { stale: true } : {}) });
     }
 

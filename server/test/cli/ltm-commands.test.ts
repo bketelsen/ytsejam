@@ -308,12 +308,12 @@ describe("ltmDoctor CLI", () => {
     if (ltmDir) await rm(ltmDir, { recursive: true, force: true });
   });
 
-  it("--fix compacts duplicate entity snapshots to one line when findings exist", async () => {
+  it("--fix compacts duplicate fact snapshots to one line when findings exist", async () => {
     await writeFile(
-      join(ltmDir, "entities.jsonl"),
-      JSON.stringify({ id: "e1", norm: "first", label: "first" }) +
+      join(ltmDir, "facts.jsonl"),
+      JSON.stringify({ id: "f1", kind: "preference", predicate: "likes", polarity: 1 }) +
         "\n" +
-        JSON.stringify({ id: "e1", norm: "second", label: "second" }) +
+        JSON.stringify({ id: "f1", kind: "preference", predicate: "dislikes", polarity: 1 }) +
         "\n",
     );
     const out: string[] = [];
@@ -329,13 +329,13 @@ describe("ltmDoctor CLI", () => {
     expect(code).toBe(0);
     expect(err).toEqual([]);
     expect(out.join("\n")).toContain(
-      "fixed: entities.jsonl compacted to 1 record(s)",
+      "fixed: facts.jsonl compacted to 1 record(s)",
     );
-    const lines = (await readFile(join(ltmDir, "entities.jsonl"), "utf8"))
+    const lines = (await readFile(join(ltmDir, "facts.jsonl"), "utf8"))
       .trim()
       .split("\n");
     expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!).label).toBe("second");
+    expect(JSON.parse(lines[0]!).predicate).toBe("dislikes");
   });
 });
 
