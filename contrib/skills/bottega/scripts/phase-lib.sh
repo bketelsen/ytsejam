@@ -181,7 +181,16 @@ phase_gate() {
   j="$(phase_state_read "$slug")" || { echo "park:state-read-failed"; return 1; }
   tid="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].taskId')" || { echo "park:tid-read-failed"; return 1; }
   pr="$(printf '%s' "$j" | jq -r --arg k "$key" '.tasks[$k].pr')" || { echo "park:pr-read-failed"; return 1; }
-  [ "$pr" = "null" ] && { echo "park:no-pr"; return 0; }
+  if [ "$pr" = "null" ]; then
+    local na
+    na="$(printf '%s' "$j" | jq -r --arg k "$key" '(.tasks[$k].nopr_attempts // 0)')"
+    case "$na" in ''|*[!0-9]*) na=0 ;; esac
+    if [ "$na" -ge "${PHASE_MAX_NOPR_ATTEMPTS:-3}" ]; then
+      echo "park:no-pr-timeout"; return 0
+    fi
+    phase_task_set "$slug" "$key" ".nopr_attempts = $((na + 1))" >/dev/null 2>&1 || true
+    echo "retry:no-pr"; return 0
+  fi
 
   br="$("${PHASE_PR_BRANCH_FN:-_phase_pr_branch_live}" "$tid")" || { echo "park:branch-resolve-failed"; return 0; }
   [ -z "$br" ] && { echo "park:branch-empty"; return 0; }
@@ -198,10 +207,33 @@ phase_gate() {
   [ "$ci" = "pass" ] || { echo "park:ci-$ci"; return 0; }
   [ "$mergeable" = "MERGEABLE" ] || { echo "park:not-mergeable($mergeable)"; return 0; }
 
+  # Branch protection on main is strict (require up-to-date) — a BEHIND PR cannot merge.
+  # Detect read-only via gh; fix via Bottega sync+push (keeps worktree+remote ref in lockstep), bounded.
+  local mss
+  mss="$("${PHASE_PR_BEHIND_FN:-_phase_pr_behind_live}" "$pr")" || { echo "park:behind-check-failed"; return 0; }
+  case "$mss" in
+    BEHIND)
+      local ua
+      ua="$(printf '%s' "$j" | jq -r --arg k "$key" '(.tasks[$k].update_attempts // 0)')"
+      case "$ua" in ''|*[!0-9]*) ua=0 ;; esac
+      if [ "$ua" -ge "${PHASE_MAX_UPDATE_ATTEMPTS:-3}" ]; then
+        echo "park:stuck-behind"; return 0
+      fi
+      phase_task_set "$slug" "$key" ".update_attempts = $((ua + 1))" >/dev/null 2>&1 || true
+      "${PHASE_SYNC_FN:-_phase_sync_live}" "$tid"  || { echo "park:sync-failed"; return 0; }
+      "${PHASE_PUSH_FN:-_phase_push_live}" "$tid"  || { echo "park:push-failed"; return 0; }
+      echo "retry:behind-updating"; return 0
+      ;;
+    CONFLICTING|DIRTY)
+      echo "park:merge-conflict($mss)"; return 0
+      ;;
+  esac
+
   clash="$("${PHASE_STALE_BASE_FN:-_phase_stale_base_live}" "$br")" || { echo "park:stale-base-check-failed"; return 0; }
   [ -n "$clash" ] && { echo "park:stale-base-overlap[$(printf '%s' "$clash" | tr '\n' ',')]"; return 0; }
 
   if ! "${PHASE_CONTAINER_GATE_FN:-_phase_container_gate_live}" "$br"; then echo "park:gate-red"; return 0; fi
+  phase_task_set "$slug" "$key" ".update_attempts = 0 | .nopr_attempts = 0" >/dev/null 2>&1 || true
   echo "pass"; return 0
 }
 
@@ -290,6 +322,14 @@ phase_advance_prs() {
         phase_task_set "$slug" "$key" '.state="parked"' || return $?
         phase_task_set_str "$slug" "$key" reason "merge-failed" || return $?
       fi
+    elif [ "$grc" -eq 0 ] && [ "${verdict#retry:}" != "$verdict" ]; then
+      # Non-terminal: leave state pr_open so the next tick re-gates. Log only if the reason changed.
+      local cur_reason
+      cur_reason="$(phase_state_read "$slug" | jq -r --arg k "$key" '.tasks[$k].reason // ""')" || return $?
+      if [ "$cur_reason" != "$verdict" ]; then
+        phase_task_set_str "$slug" "$key" reason "$verdict" || return $?
+        phase_log "$slug" "retry $key: $verdict" || return $?
+      fi
     else
       phase_task_set "$slug" "$key" '.state="parked"' || return $?
       phase_task_set_str "$slug" "$key" reason "$verdict" || return $?
@@ -332,6 +372,44 @@ _phase_stale_base_live() {  # <pr-branch> -> stdout = intersecting files (empty=
     b=\$(git diff --name-only \"\$base\" origin/main) || exit 5
     comm -12 <(printf '%s\n' \"\$a\" | sort -u) <(printf '%s\n' \"\$b\" | sort -u)
   "
+}
+
+# _phase_bottega_post <path> <json-body> -> raw response body. Uses api() if sourced, else curls with Bearer key.
+_phase_bottega_post() {
+  local path="$1" body="$2"
+  if declare -F api >/dev/null 2>&1; then
+    api POST "$path" "$body"
+  else
+    local base key
+    base="${BOTTEGA_BASE:?BOTTEGA_BASE unset}"
+    key="$(cat "${BOTTEGA_KEY_FILE:?BOTTEGA_KEY_FILE unset}")"
+    curl -fsS -X POST -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
+      -d "$body" "$base$path"
+  fi
+}
+
+# _phase_pr_behind_live <pr-number> -> stdout = mergeStateStatus (BEHIND|CLEAN|CONFLICTING|DIRTY|BLOCKED|UNKNOWN|...)
+# Read-only. MUST exit non-zero if it cannot run, so the caller parks behind-check-failed rather than mis-deciding.
+_phase_pr_behind_live() {
+  local pr="$1"
+  incus exec bottega -- su - code -c "
+    set -e; cd ~/projects/ytsejam
+    gh pr view \"$pr\" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null
+  "
+}
+
+# _phase_sync_live <taskId> -> POST /api/tasks/<id>/sync (git fetch origin + merge origin/main into worktree). exit 0 on {"success":true}.
+_phase_sync_live() {
+  local tid="$1" out
+  out="$(_phase_bottega_post "/api/tasks/$tid/sync" '{}')" || return 1
+  printf '%s' "$out" | jq -e '.success == true' >/dev/null 2>&1
+}
+
+# _phase_push_live <taskId> -> POST /api/tasks/<id>/push-changes (commit-if-dirty + push to PR branch). Idempotent. exit 0 on {"success":true}.
+_phase_push_live() {
+  local tid="$1" out
+  out="$(_phase_bottega_post "/api/tasks/$tid/push-changes" '{}')" || return 1
+  printf '%s' "$out" | jq -e '.success == true' >/dev/null 2>&1
 }
 
 _phase_pr_branch_live() {  # <tid> -> branch name (Task 6 will wire gh; placeholder errors so live use before Task-6 fails closed)
