@@ -229,16 +229,36 @@ export function resolveRootSession(
   return { rootSessionId: rootId, hops };
 }
 
-/** All .jsonl session files directly inside a directory, sorted by name. */
+/**
+ * All .jsonl session files at or below a directory, sorted by path.
+ *
+ * Recurses into subdirectories: ytsejam stores sessions under per-kind
+ * subdirs (e.g. `--chat--/`, `--subagent--/`), so a non-recursive scan of the
+ * top level finds nothing. `.compactions.jsonl` sidecars are log-compaction
+ * artifacts, not sessions, and are skipped (mirrors the bridge backfill walk).
+ */
 export function listSessionFiles(dir: string): string[] {
-  let names: string[];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  return names
-    .filter((n) => n.endsWith(".jsonl"))
-    .sort()
-    .map((n) => path.join(dir, n));
+  const results: string[] = [];
+  const walk = (d: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const filepath = path.join(d, entry.name);
+      if (entry.isDirectory()) {
+        walk(filepath);
+      } else if (
+        entry.isFile() &&
+        entry.name.endsWith(".jsonl") &&
+        !entry.name.endsWith(".compactions.jsonl")
+      ) {
+        results.push(filepath);
+      }
+    }
+  };
+  walk(dir);
+  return results.sort();
 }

@@ -97,7 +97,11 @@ export async function runCli(argv: string[]): Promise<number | null> {
       );
       return 2;
     }
-    return ltmPurgeFacts({ sessionsDir: dir });
+    return ltmPurgeFacts({
+      sessionsDir: dir,
+      dryRun: rest.includes("--dry-run"),
+      force: rest.includes("--force"),
+    });
   }
 
   if (sub === "backfill") {

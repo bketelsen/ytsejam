@@ -491,7 +491,12 @@ export class MemorySystem {
 
   async purgeStaleFacts(
     sessionsDir: string,
-  ): Promise<{ kept: number; purged: string[] }> {
+    opts: { maxPurgeFraction?: number; dryRun?: boolean } = {},
+  ): Promise<{
+    kept: number;
+    purged: string[];
+    aborted?: { reason: "fraction"; fraction: number; limit: number; active: number };
+  }> {
     const sessionFiles = new Map<string, string>();
     for (const file of listSessionFiles(sessionsDir)) {
       const sessionId = readSessionId(file);
@@ -514,11 +519,11 @@ export class MemorySystem {
       }
       return sessions
         .get(sessionId)
-        ?.turns.find((turn) => turn.entryId === entryId)?.text;
+        ?.turns.find((turn) => entryIdMatches(turn.entryId, entryId))?.text;
     };
 
-    const result = this.semantic.purgeStaleFacts(resolver, this.clock());
-    if (result.purged.length > 0) this.rebuildDerived();
+    const result = this.semantic.purgeStaleFacts(resolver, this.clock(), opts);
+    if (result.purged.length > 0 && !opts.dryRun) this.rebuildDerived();
     return result;
   }
 
@@ -746,6 +751,21 @@ export class MemorySystem {
       a.id.localeCompare(b.id),
     );
   }
+}
+
+/**
+ * Match a stored source entryId against a session turn's entryId.
+ *
+ * Source refs may carry a truncated id (older writes stored an 8-char prefix
+ * while the session turn carries the full id), so a shorter stored ref matches
+ * by prefix; equal-length refs must match exactly. Empty refs never match.
+ */
+function entryIdMatches(turnEntryId: string, storedEntryId: string): boolean {
+  if (!storedEntryId || !turnEntryId) return false;
+  if (storedEntryId.length < turnEntryId.length) {
+    return turnEntryId.startsWith(storedEntryId);
+  }
+  return turnEntryId === storedEntryId;
 }
 
 /** Whether a pid refers to a live process (EPERM = alive but not ours). */

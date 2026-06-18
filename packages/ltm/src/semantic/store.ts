@@ -278,46 +278,89 @@ export class SemanticStore {
     return { facts: this.facts.size, entities: this.entities.size };
   }
 
+  /**
+   * Redact active facts the extractor no longer reproduces from their sources.
+   *
+   * Two-phase: a read-only decision pass computes the redaction set, then a
+   * guarded commit pass applies it. `maxPurgeFraction` (default 0.5) is a
+   * circuit-breaker — if the decision pass would redact more than this share
+   * of active facts, the purge ABORTS without mutating anything and returns
+   * `aborted` with the offending fraction. A systemic resolver failure (no
+   * readable sources) looks like "everything is stale"; the fraction guard,
+   * together with the per-fact fail-safe below, prevents that from wiping the
+   * store. Pass `dryRun: true` to compute the set without committing.
+   */
   purgeStaleFacts(
     readTurnText: (sessionId: string, entryId: string) => string | undefined,
     now: string,
-  ): { kept: number; purged: string[] } {
-    let kept = 0;
-    const purged: string[] = [];
+    opts: { maxPurgeFraction?: number; dryRun?: boolean } = {},
+  ): {
+    kept: number;
+    purged: string[];
+    aborted?: { reason: "fraction"; fraction: number; limit: number; active: number };
+  } {
+    const maxPurgeFraction = opts.maxPurgeFraction ?? 0.5;
+    const active: SemanticFact[] = [];
+    const toPurge: string[] = [];
 
+    // Decision pass — read-only, no mutation.
     for (const fact of this.facts.values()) {
       if (fact.state !== "active" || fact.supersededBy) continue;
+      active.push(fact);
       const reproduced = new Set<string>();
+      let anySourceReadable = false;
       for (const source of fact.sources) {
         const text = readTurnText(source.sessionId, source.entryId);
         if (text === undefined) continue;
+        anySourceReadable = true;
         for (const candidate of extractFacts(text)) {
-          reproduced.add(
-            factId(candidate, normalizeObject(candidate.object)),
-          );
+          reproduced.add(factId(candidate, normalizeObject(candidate.object)));
         }
       }
-
-      if (reproduced.has(fact.id)) {
-        kept++;
-      } else {
-        const tombstone: SemanticFact = {
-          ...fact,
-          object: "",
-          objectNorm: "",
-          sources: [],
-          strength: 0,
-          state: "redacted",
-        };
-        this.facts.set(fact.id, tombstone);
-        this.factLog.append(tombstone);
-        purged.push(fact.id);
+      // Fail-safe: only redact when we actually read at least one source and
+      // the extractor no longer produces this fact from it. If NO source was
+      // readable (missing file, unreachable session dir, truncated/unmatched
+      // entryId), we have no evidence either way — keep the fact. Treating
+      // "couldn't verify" as "doesn't reproduce" is what wiped the whole
+      // active set under a non-recursive session scan.
+      if (!reproduced.has(fact.id) && anySourceReadable) {
+        toPurge.push(fact.id);
       }
     }
 
-    if (purged.length > 0) this.factLog.compact(this.facts.values());
+    // Circuit-breaker: refuse to commit a mass redaction.
+    const fraction = active.length === 0 ? 0 : toPurge.length / active.length;
+    if (toPurge.length > 0 && fraction > maxPurgeFraction) {
+      return {
+        kept: active.length,
+        purged: [],
+        aborted: { reason: "fraction", fraction, limit: maxPurgeFraction, active: active.length },
+      };
+    }
+
+    if (opts.dryRun) {
+      return { kept: active.length - toPurge.length, purged: [...toPurge] };
+    }
+
+    // Commit pass.
+    const purgeSet = new Set(toPurge);
+    for (const fact of active) {
+      if (!purgeSet.has(fact.id)) continue;
+      const tombstone: SemanticFact = {
+        ...fact,
+        object: "",
+        objectNorm: "",
+        sources: [],
+        strength: 0,
+        state: "redacted",
+      };
+      this.facts.set(fact.id, tombstone);
+      this.factLog.append(tombstone);
+    }
+
+    if (toPurge.length > 0) this.factLog.compact(this.facts.values());
     void now;
-    return { kept, purged };
+    return { kept: active.length - toPurge.length, purged: [...toPurge] };
   }
 
   // -- redaction -------------------------------------------------------------
