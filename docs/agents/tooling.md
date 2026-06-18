@@ -82,3 +82,51 @@ _Added: 2026-06-17 | Task: Task 2 state file — missing-slug fix | Direct-publi
 When you capture a function's stdout as a status token (`v="$(fn)"; [ "$v" = "ok" ]`), any stdout an inner command writes without redirection is inherited and prepended to your token — exact-equality then silently fails (and a substring match silently passes). Match the operative LAST line (`"${v##*$'\n'}"`) and have the producer capture/redirect its children; never trust `[ "$v" = … ]` on a multi-source capture. Silent test stubs mask this — every double must exercise the chatty path.
 
 _Added: 2026-06-17 | Task: Task 5 — phase_advance_prs verdict (chatty container-gate stdout false-parked every autonomous merge) | Direct-publish_
+
+## Always Set GIT_EDITOR=true On Git Ops That Might Open An Editor
+
+The harness has no `$EDITOR`, so any git operation that would open one blocks silently and the shell call hangs until timeout — `rebase --continue`/`--edit-todo`, `merge --no-ff` without `-m`, `commit --amend` without `-m`, `commit` with no message. Always prefix git invocations with `GIT_EDITOR=true GIT_MERGE_AUTOEDIT=no` so the editor step auto-accepts. The failure presents as a stalled command with no output, not an error, so it is easy to misread as a slow operation.
+
+(seen in: gate runs and merges across the ytsejam repo — `scripts/gate.sh` wraps merges with these env vars for exactly this reason)
+
+_Added: 2026-06-18 | Task: relocate harness bash quirks out of cog patterns into canonical tooling docs_
+
+## Split A Fork-And-Tail Into Two Shell Calls
+
+A single shell invocation that BOTH forks a long-lived process (`setsid`, `nohup … &`) AND then tails that process's log in the same call wedges — the call never returns because the tail follows a stream the forked child keeps open. Split it into two calls: one that starts the background process and returns, and a separate later call that reads or tails the log. Foreground polling is only safe for sub-30-second waits; longer waits belong in a background subagent, not a blocking loop.
+
+(seen in: background process management in this harness — a combined start+tail call hangs the tool turn)
+
+_Added: 2026-06-18 | Task: relocate harness bash quirks out of cog patterns into canonical tooling docs_
+
+## A Fresh Worktree Omits devDependencies — Verify A PR's Gate In CI Or The Main Checkout
+
+`npm install` in a freshly-created `git worktree` does NOT populate workspace devDependencies, because the harness inherits `NODE_ENV=production` from systemd and npm then silently omits dev deps. The install "succeeds" but the gate dies with `Cannot find module 'vitest'` across EVERY test file — including ones the PR never touched, which is the tell that the failure is infrastructural, not the diff. The symptom is roughly 100 fewer `node_modules` entries than `main`. `--ignore-scripts` does not fix it, and it also skips the load-bearing `postinstall: patch-package` step (`patches/@earendil-works+pi-ai+*.patch`). Two correct ways to verify a PR's gate: (a) trust CI green — authoritative, since CI does a real `npm ci` with `env -u NODE_ENV` and applies the patch; or (b) run the gate in the MAIN checkout `/home/bjk/projects/ytsejam`, which has a complete working install (a branch switch there is safe — it is NOT the live release at `~/.ytsejam/current`). If you must install in a detached worktree, use `NODE_ENV=development npm install`. Do not burn time re-installing a detached worktree to chase a `vitest`-missing gate failure.
+
+(seen in: PR gate verification on fresh `git worktree add` checkouts — every test file fails to import vitest)
+
+_Added: 2026-06-18 | Task: relocate harness bash quirks out of cog patterns into canonical tooling docs_
+
+## "Agent Doesn't See The Tool" Has Three Distinct Causes — Check Each
+
+When an expected tool is missing from the agent's surface, the cause is one of three independent things, and they need different fixes: the tool is unregistered (never added to the catalog), the catalog cache is stale (registered but not reloaded), or the tool is registered-but-failing (its init threw, so it silently dropped out). Diagnose them separately rather than assuming registration — a registered tool whose constructor throws looks identical to an unregistered one from the agent's side.
+
+(seen in: tool-catalog debugging in this harness)
+
+_Added: 2026-06-18 | Task: relocate harness bash quirks out of cog patterns into canonical tooling docs_
+
+## Rewrite Comma-Operator-In-Ternary Guards As Plain If Statements
+
+The pattern `cond ? (sideEffectThatThrows(), realValue) : fallback` smuggles a guard into an expression — the side-effect call (e.g. `c.resolveFile(domain, file)` throwing on a missing file) runs for its throw, and the comma operator discards its result so `realValue` is what the ternary yields. This obscures the guard: a future edit to `realValue` carries the throwing guard along silently, and a reader scanning for control flow never sees it. Rewrite to plain `if` statements so the guard is visible. Find every site with `grep -E '\?\s*\([a-zA-Z_.]+\([^)]*\)\s*,'`.
+
+(seen in: `server/src/memory/consolidated/entity-audit.ts` and `cluster-check.ts` — the only two sites at the time)
+
+_Added: 2026-06-18 | Task: relocate harness bash quirks out of cog patterns into canonical tooling docs_
+
+## Verify A List-Removal Diff By Grepping Every Mention And Reading The Diff
+
+When a change claims to "remove X from a list" in a doc or config, the failure mode is a half-edit that rewrites the prose AROUND the item but leaves the item itself physically present — often relocated under an "out of scope", "deferred", or "future" header rather than deleted. A dropped line count looks like success but the item still exists. Verify by grepping every mention of the id (`grep -n <id>`) and reading the actual `git diff` of the file, not just confirming the line count changed.
+
+(seen in: doc edits that "remove" an item but leave it under a deferred-scope header)
+
+_Added: 2026-06-18 | Task: relocate harness bash quirks out of cog patterns into canonical tooling docs_
