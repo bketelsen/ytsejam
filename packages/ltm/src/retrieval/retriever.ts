@@ -27,6 +27,30 @@ import type { EpisodicStore } from "../episodic/store.ts";
 const CANDIDATE_POOL = 50;
 
 /**
+ * The most common embedding dimension across a set of records, or null when
+ * none carry an embedding. Used to pin the vector index to the live
+ * dimension even when legacy off-dimension contaminants appear first in
+ * insertion order. Ties resolve to the first dimension reaching the max
+ * count (deterministic over a stable record order).
+ */
+export function majorityEmbeddingDim(records: EpisodicRecord[]): number | null {
+  const counts = new Map<number, number>();
+  for (const r of records) {
+    if (!r.embedding || r.embedding.length === 0) continue;
+    counts.set(r.embedding.length, (counts.get(r.embedding.length) ?? 0) + 1);
+  }
+  let best: number | null = null;
+  let bestCount = -1;
+  for (const [dim, n] of counts) {
+    if (n > bestCount) {
+      bestCount = n;
+      best = dim;
+    }
+  }
+  return best;
+}
+
+/**
  * Vector-channel normalization: mean-relative spread over the candidate
  * pool, clamped to [0,1]. Real embedders cluster cosines tightly (e.g.
  * nomic ~0.55-0.62 across a conversational corpus), so the previous
@@ -60,12 +84,18 @@ export interface RetrieverDeps {
 }
 
 export class Retriever {
-  private vectors = new VectorIndex();
+  private vectors: VectorIndex;
   private lexical = new Bm25Index();
   private readonly deps: RetrieverDeps;
 
   constructor(deps: RetrieverDeps) {
     this.deps = deps;
+    // Fix the vector index to the MAJORITY embedding dimension before
+    // admitting anything. A store may hold legacy off-dimension contaminants
+    // (e.g. hash-fallback 256-dim records); if insertion order put one first,
+    // a first-seen index would pin to the minority dimension and refuse the
+    // real ones. Majority-dim makes the live dimension win regardless of order.
+    this.vectors = new VectorIndex(majorityEmbeddingDim(deps.store.all()) ?? undefined);
     for (const record of deps.store.all()) this.admit(record);
   }
 
@@ -175,7 +205,10 @@ export class Retriever {
       const breakdown: ScoreBreakdown = {
         vector:
           vectorById.get(id) ??
-          (record.embedding
+          // Guard: only score embeddings that match the query dimension. An
+          // off-dimension stored vector (legacy hash fallback) contributes 0
+          // rather than reaching the now-throwing cosine.
+          (record.embedding && record.embedding.length === queryVector.length
             ? spreadNormalize(cosine(queryVector, record.embedding), meanVector, maxVector)
             : 0),
         lexical: lexicalById.get(id) ?? 0,
@@ -211,6 +244,10 @@ export class Retriever {
         if (candidate.record.embedding) {
           for (const s of selected) {
             if (!s.record.embedding) continue;
+            // Skip cross-dimension pairs (legacy off-dim embeddings) — they
+            // are not comparable; treat as no similarity rather than throwing.
+            if (s.record.embedding.length !== candidate.record.embedding.length)
+              continue;
             maxSim = Math.max(maxSim, cosine(candidate.record.embedding, s.record.embedding));
           }
         }

@@ -92,9 +92,20 @@ export function normalizeUnit(vector: number[]): number[] {
 }
 
 /** Cosine similarity of two unit-norm vectors (plain dot product). */
+/**
+ * Dot product of two L2-normalized vectors == cosine similarity. Throws on a
+ * dimension mismatch: vectors of different lengths are not comparable, and
+ * silently truncating to the shorter length (the old behavior) produced a
+ * plausible-looking garbage score that masked the D2 contamination. Callers
+ * scoring possibly-off-dimension stored embeddings must dimension-check first.
+ */
 export function cosine(a: number[], b: number[]): number {
+  if (a.length !== b.length) {
+    throw new Error(
+      `cosine: dimension mismatch (${a.length} vs ${b.length}); vectors are not comparable`,
+    );
+  }
   let dot = 0;
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) dot += a[i] * b[i];
+  for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
   return dot;
 }

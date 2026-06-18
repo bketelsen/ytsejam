@@ -185,6 +185,22 @@ try {
   if (mismatch) {
     throw new Error(mismatch);
   }
+  // Surface D2 contamination loudly: if the store holds embeddings of more
+  // than one dimension, the minority buckets are excluded from retrieval
+  // (VectorIndex refuses off-dimension vectors) and need re-embedding.
+  const dimReport = ltm.dimensionReport();
+  const dimBuckets = Object.keys(dimReport.counts).length;
+  if (dimBuckets > 1) {
+    const breakdown = Object.entries(dimReport.counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([d, n]) => `${d}-dim×${n}`)
+      .join(", ");
+    console.warn(
+      `[memory] LTM store holds mixed embedding dimensions (${breakdown}); ` +
+        `primary=${dimReport.primary}. Off-primary records are EXCLUDED from retrieval. ` +
+        `Re-embed with \`ltm replay --rebuild\` under YTSEJAM_LTM_EMBEDDER=copilot to reclaim them.`,
+    );
+  }
   const intervalEnv = Number(process.env.LTM_RECONCILE_INTERVAL_MS);
   const ctorOpts: ConstructorParameters<typeof LtmReconciler>[0] = {
     ltm,

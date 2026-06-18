@@ -324,6 +324,33 @@ export class MemorySystem {
     return vectors.sampleDimension();
   }
 
+  /**
+   * True on-disk distribution of stored embedding dimensions, counted
+   * directly from records (NOT through VectorIndex, which now refuses
+   * off-dimension vectors). Surfaces D2 contamination: the majority dimension
+   * is the live one; any minority bucket is dead weight excluded from
+   * retrieval, awaiting re-embed. `primary` is the most common dimension.
+   */
+  dimensionReport(): { primary: number | null; counts: Record<number, number>; total: number } {
+    const counts: Record<number, number> = {};
+    let total = 0;
+    for (const record of this.episodic.all()) {
+      if (!record.embedding || record.embedding.length === 0) continue;
+      const d = record.embedding.length;
+      counts[d] = (counts[d] ?? 0) + 1;
+      total++;
+    }
+    let primary: number | null = null;
+    let best = -1;
+    for (const [d, n] of Object.entries(counts)) {
+      if (n > best) {
+        best = n;
+        primary = Number(d);
+      }
+    }
+    return { primary, counts, total };
+  }
+
   async retrieve(
     query: string,
     opts: RetrieveOptions = {},
