@@ -161,6 +161,47 @@ export function createApp(deps: AppDeps) {
     return c.json({ ltm: h.ltm ?? null });
   });
 
+  app.get("/api/admin/ltm-debug/compose", async (c) => {
+    const ltm = memory.getLtm();
+    if (!ltm) return c.json({ error: "ltm not attached" }, 503);
+    const q = c.req.query("q") ?? "";
+    if (!q.trim()) return c.json({ error: "q is required" }, 400);
+    const parsePositiveNumber = (value: string | undefined, fallback: number) => {
+      if (value === undefined) return fallback;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    };
+    const k = Math.max(1, Math.floor(parsePositiveNumber(c.req.query("k"), 8)));
+    const budget = parsePositiveNumber(c.req.query("budget"), 1200);
+    // composeContext delegates to retrieve(); dryRun keeps this debug route from
+    // bumping episodic access counts or rehearsing recalled profile facts.
+    const [composed, profile, explained] = await Promise.all([
+      ltm.composeContext(q, { k, tokenBudget: budget, dryRun: true }),
+      Promise.resolve(ltm.profile()),
+      ltm.explain(q, k),
+    ]);
+    return c.json({
+      query: q,
+      k,
+      budget,
+      composed,
+      profile,
+      explain: explained.map((item) => ({
+        id: item.record.id,
+        role: item.record.role,
+        date: item.record.timestamp.slice(0, 10),
+        text: item.record.text.slice(0, 160),
+        total: item.breakdown.total,
+        vector: item.breakdown.vector,
+        lexical: item.breakdown.lexical,
+        recency: item.breakdown.recency,
+        salience: item.breakdown.salience,
+        graph: item.breakdown.graph,
+        retention: item.breakdown.retention,
+      })),
+    });
+  });
+
   app.post("/api/admin/ltm-backfill", async (c) => {
     const ltm = memory.getLtm();
     if (!ltm) return c.json({ error: "ltm not attached" }, 503);
