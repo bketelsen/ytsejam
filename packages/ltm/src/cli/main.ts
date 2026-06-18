@@ -6,6 +6,7 @@
  *   ltm explain <query>                 full score-breakdown table
  *   ltm profile                         current profile dump
  *   ltm consolidate                     run the maintenance pass
+ *   ltm purge-facts <sessions-dir>      tombstone stale extractor-residue facts
  *   ltm redact --entity <name> | --session <id> | --pattern <re> | --record <id>
  *   ltm stats                           store size + retention summary
  *   ltm export                          full JSON dump to stdout
@@ -28,6 +29,7 @@ commands:
   explain <query>      ranked candidates with per-channel score breakdowns
   profile              what the system believes about the user
   consolidate          fold old, faded turns into session summaries
+  purge-facts <dir>    tombstone stale extractor-residue facts
   redact               --entity <name> | --session <id> | --pattern <re> | --record <id>
   stats                store statistics
   export               full JSON dump to stdout (embeddings stripped)
@@ -142,6 +144,17 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
       case "consolidate": {
         const result = await mem.consolidate();
         out(`created ${result.created} summaries, folded ${result.folded} turn records`);
+        return 0;
+      }
+      case "purge-facts": {
+        const dir = rest[0];
+        if (!dir) {
+          out("purge-facts: missing <sessions-dir>");
+          return 2;
+        }
+        const result = await mem.purgeStaleFacts(dir);
+        out(`kept ${result.kept}, purged ${result.purged.length}`);
+        for (const id of result.purged) out(id);
         return 0;
       }
       case "redact": {

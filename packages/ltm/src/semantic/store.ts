@@ -269,11 +269,55 @@ export class SemanticStore {
     if ((c & (c - 1)) === 0) this.factLog.append(updated);
   }
 
+  // -- maintenance -----------------------------------------------------------
+
   /** Collapse semantic append-only logs to one latest-wins snapshot per id. */
   compactLogs(): { facts: number; entities: number } {
     this.factLog.compact(this.facts.values());
     this.entityLog.compact(this.entities.values());
     return { facts: this.facts.size, entities: this.entities.size };
+  }
+
+  purgeStaleFacts(
+    readTurnText: (sessionId: string, entryId: string) => string | undefined,
+    now: string,
+  ): { kept: number; purged: string[] } {
+    let kept = 0;
+    const purged: string[] = [];
+
+    for (const fact of this.facts.values()) {
+      if (fact.state !== "active" || fact.supersededBy) continue;
+      const reproduced = new Set<string>();
+      for (const source of fact.sources) {
+        const text = readTurnText(source.sessionId, source.entryId);
+        if (text === undefined) continue;
+        for (const candidate of extractFacts(text)) {
+          reproduced.add(
+            factId(candidate, normalizeObject(candidate.object)),
+          );
+        }
+      }
+
+      if (reproduced.has(fact.id)) {
+        kept++;
+      } else {
+        const tombstone: SemanticFact = {
+          ...fact,
+          object: "",
+          objectNorm: "",
+          sources: [],
+          strength: 0,
+          state: "redacted",
+        };
+        this.facts.set(fact.id, tombstone);
+        this.factLog.append(tombstone);
+        purged.push(fact.id);
+      }
+    }
+
+    if (purged.length > 0) this.factLog.compact(this.facts.values());
+    void now;
+    return { kept, purged };
   }
 
   // -- redaction -------------------------------------------------------------

@@ -44,7 +44,11 @@ import { Retriever, packToBudget } from "../retrieval/retriever.ts";
 import { promoteFacts } from "../retrieval/promote.ts";
 import { IngestPipeline, type IngestReport } from "../pipeline/ingest.ts";
 import { JsonlLog } from "../store/jsonl-log.ts";
-import type { ReadSessionOptions } from "../session/reader.ts";
+import {
+  listSessionFiles,
+  readSessionFile,
+  type ReadSessionOptions,
+} from "../session/reader.ts";
 
 export interface MemorySystemOptions {
   /** Directory for the memory store's JSONL files. */
@@ -92,6 +96,7 @@ export class MemorySystem {
   private graph: PreferenceGraph;
   private readonly clock: () => string;
   private readonly retrievalLog?: string;
+  private readonly readOptions?: ReadSessionOptions;
   private auditSeq = 0;
 
   private constructor(opts: MemorySystemOptions) {
@@ -103,6 +108,7 @@ export class MemorySystem {
     this.summarizer = opts.summarizer ?? extractiveSummary;
     this.clock = opts.now ?? (() => new Date().toISOString());
     this.retrievalLog = opts.retrievalLog ?? process.env.LTM_RETRIEVAL_LOG;
+    this.readOptions = opts.readOptions;
     this.episodic = EpisodicStore.open(this.storeDir);
     this.semantic = SemanticStore.open(this.storeDir);
     this.auditLog = new JsonlLog<AuditRecord>(
@@ -483,6 +489,39 @@ export class MemorySystem {
     };
   }
 
+  async purgeStaleFacts(
+    sessionsDir: string,
+  ): Promise<{ kept: number; purged: string[] }> {
+    const sessionFiles = new Map<string, string>();
+    for (const file of listSessionFiles(sessionsDir)) {
+      const sessionId = readSessionId(file);
+      if (sessionId) sessionFiles.set(sessionId, file);
+    }
+
+    const sessions = new Map<
+      string,
+      { turns: Turn[] } | undefined
+    >();
+    const resolver = (sessionId: string, entryId: string): string | undefined => {
+      const file = sessionFiles.get(sessionId);
+      if (!file) return undefined;
+      if (!sessions.has(sessionId)) {
+        try {
+          sessions.set(sessionId, readSessionFile(file, this.readOptions));
+        } catch {
+          sessions.set(sessionId, undefined);
+        }
+      }
+      return sessions
+        .get(sessionId)
+        ?.turns.find((turn) => turn.entryId === entryId)?.text;
+    };
+
+    const result = this.semantic.purgeStaleFacts(resolver, this.clock());
+    if (result.purged.length > 0) this.rebuildDerived();
+    return result;
+  }
+
   // -- inspection (user control surface) --------------------------------------
 
   listEpisodic(
@@ -710,6 +749,22 @@ export class MemorySystem {
 }
 
 /** Whether a pid refers to a live process (EPERM = alive but not ours). */
+function readSessionId(filePath: string): string | undefined {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").split("\n", 1)[0]) as {
+      type?: unknown;
+      version?: unknown;
+      id?: unknown;
+    };
+    if (parsed.type === "session" && parsed.version === 3 && typeof parsed.id === "string") {
+      return parsed.id;
+    }
+  } catch {
+    // Non-v3 or unreadable files cannot justify any fact evidence.
+  }
+  return undefined;
+}
+
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
