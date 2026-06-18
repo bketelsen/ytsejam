@@ -361,7 +361,8 @@ _phase_container_gate_live() {  # <pr-branch> -> exit 0 pass / non-zero fail (in
     set -e; cd ~/projects/ytsejam
     git fetch origin --quiet \"$br\" 2>/dev/null || git fetch origin --quiet
     wt=\$(mktemp -d); git worktree add -q \"\$wt\" \"origin/$br\" 2>/dev/null || { rm -rf \"\$wt\"; exit 90; }
-    ( cd \"\$wt\" && bash scripts/gate.sh ); rc=\$?
+    # Match GitHub CI's contract: a fresh worktree has no node_modules, so install deps before the gate.
+    ( cd \"\$wt\" && npm ci && bash scripts/gate.sh ); rc=\$?
     git worktree remove --force \"\$wt\" 2>/dev/null; rm -rf \"\$wt\"; exit \$rc
   "
 }
