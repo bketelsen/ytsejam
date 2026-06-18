@@ -124,6 +124,7 @@ setup_green_gate() {
   _t_meta(){ echo "pass MERGEABLE 0"; }; export -f _t_meta; export PHASE_PR_META_FN=_t_meta
   _t_sb(){ echo ""; }; export -f _t_sb; export PHASE_STALE_BASE_FN=_t_sb
   _t_cg(){ return 0; }; export -f _t_cg; export PHASE_CONTAINER_GATE_FN=_t_cg
+  _t_bh(){ echo "CLEAN"; }; export -f _t_bh; export PHASE_PR_BEHIND_FN=_t_bh
 }
 
 assert_pr_advance_mode() {
@@ -236,20 +237,26 @@ phase_state_init recon "$J" "" >/dev/null
 phase_task_set recon schema     '.taskId=6 | .state="running"'
 phase_task_set recon middleware '.taskId=7 | .state="running"'
 phase_task_set recon docs       '.taskId=8 | .state="running"'
+phase_task_set recon yolo_pr    '.taskId=10 | .state="running"'
 _phase_task_status_live() {
   case "$1" in
     6) echo '{"pr_agent_complete":1,"pr_number":231,"workflow_blocked":0}';;
     7) echo '{"pr_agent_complete":0,"workflow_blocked":1}';;
     8) echo '{"pr_agent_complete":false,"workflow_blocked":false}';;   # still running, neither flag
+    10) echo '{"pr_agent_complete":1,"workflow_blocked":0}';;          # real yolo shape: PR endpoint has number, task object does not
   esac
 }
-export -f _phase_task_status_live
+_phase_pr_number_from_endpoint() { [ "$1" = "10" ] && echo 256; }
+export -f _phase_task_status_live _phase_pr_number_from_endpoint
+export PHASE_PR_NUMBER_FN=_phase_pr_number_from_endpoint
 phase_reconcile recon
 check "reconcile: schema -> pr_open"            '[ "$(phase_state_read recon | jq -r .tasks.schema.state)" = "pr_open" ]'
 check "reconcile: schema pr=231"                '[ "$(phase_state_read recon | jq -r .tasks.schema.pr)" = "231" ]'
+check "reconcile: yolo PR number from endpoint" '[ "$(phase_state_read recon | jq -r .tasks.yolo_pr.pr)" = "256" ]'
 check "reconcile: middleware parked (blocked)"  '[ "$(phase_state_read recon | jq -r .tasks.middleware.state)" = "parked" ]'
 check "reconcile: middleware reason set"        '[ "$(phase_state_read recon | jq -r .tasks.middleware.reason)" = "workflow_blocked" ]'
 check "reconcile: docs stays running"           '[ "$(phase_state_read recon | jq -r .tasks.docs.state)" = "running" ]'
+unset PHASE_PR_NUMBER_FN
 # Idempotency: a 2nd reconcile must NOT change anything (pr_open/parked are in the skip set; docs unchanged because still no flags)
 B1="$(phase_state_read recon | jq -S .)"
 phase_reconcile recon
@@ -314,6 +321,7 @@ export PHASE_PR_BRANCH_FN=_t_branch;      _t_branch() { echo "feat/schema"; }; e
 export PHASE_PR_META_FN=_t_meta_ok;       _t_meta_ok() { echo "pass MERGEABLE 0"; }; export -f _t_meta_ok
 export PHASE_STALE_BASE_FN=_t_stale_no;   _t_stale_no() { echo ""; }; export -f _t_stale_no
 export PHASE_CONTAINER_GATE_FN=_t_gate_ok; _t_gate_ok() { return 0; }; export -f _t_gate_ok
+export PHASE_PR_BEHIND_FN=_t_behind_clean; _t_behind_clean() { echo "CLEAN"; }; export -f _t_behind_clean
 check "gate: all green -> pass"           '[ "$(phase_gate g schema)" = "pass" ]'
 export PHASE_PR_META_FN=_t_meta_cired;    _t_meta_cired() { echo "fail MERGEABLE 0"; }; export -f _t_meta_cired
 check "gate: CI red -> park"              '[[ "$(phase_gate g schema)" == park:ci-* ]]'
@@ -346,9 +354,11 @@ export PHASE_PR_BRANCH_FN=_t_branch
 export PHASE_PR_META_FN=_t_meta_malf; _t_meta_malf() { echo "pass MERGEABLE"; }; export -f _t_meta_malf
 check "gate: meta malformed -> park (fail closed)" '[ "$(phase_gate g schema)" = "park:meta-malformed" ]'
 export PHASE_PR_META_FN=_t_meta_ok
-# no-pr task -> park:no-pr
+# no-pr task -> retry:no-pr (bounded backoff), then park:no-pr-timeout at the cap
 phase_task_set g docs '.taskId=9 | .state="running" | .pr=null'
-check "gate: no PR -> park:no-pr" '[ "$(phase_gate g docs)" = "park:no-pr" ]'
+check "gate: no PR -> retry:no-pr (first tick)" '[ "$(phase_gate g docs)" = "retry:no-pr" ]'
+phase_task_set g docs '.nopr_attempts=3'
+check "gate: no PR at cap -> park:no-pr-timeout" '[ "$(phase_gate g docs)" = "park:no-pr-timeout" ]'
 # Regression teeth: gate resolvers are task-id-first; PR remains only the existence sentinel.
 phase_task_set g schema '.taskId=42 | .state="pr_open" | .pr=242'
 export PHASE_PR_BRANCH_FN=_t_capture_branch_arg; _t_capture_branch_arg() { echo "$1" > "$PHASE_DIR/branch-arg"; echo feat/x; }; export -f _t_capture_branch_arg
@@ -463,13 +473,17 @@ f3_branch_rc="$( ( incus() { local p="${*: -1}"; git() { case "$*" in
       "merge-base origin/main origin/somebranch") echo abc;;
       "diff --name-only abc origin/somebranch") echo "fatal: bad object" >&2; return 128;; # branch-diff fails -> || exit 4
       "diff --name-only abc origin/main") echo file.ts;;
-      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git; bash -c "$p"; }; export -f incus
+      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git
+    mkdir -p "$HOME/projects/ytsejam"  # _phase_stale_base_live cd target inside the fake container
+    bash -c "$p"; }; export -f incus
     _phase_stale_base_live somebranch >/dev/null 2>&1; echo "$?" ) )"
 check "stale-base live branch-diff failure -> exit 4 (rc-guard pinned)" '[ "$f3_branch_rc" = "4" ]'
 f3_merge_base_rc="$( ( incus() { local p="${*: -1}"; git() { case "$*" in
       "fetch origin --quiet") return 0;;
       "merge-base origin/main origin/somebranch") echo "fatal: no merge base" >&2; return 128;; # merge-base fails -> || exit 3
-      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git; bash -c "$p"; }; export -f incus
+      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git
+    mkdir -p "$HOME/projects/ytsejam"  # _phase_stale_base_live cd target inside the fake container
+    bash -c "$p"; }; export -f incus
     _phase_stale_base_live somebranch >/dev/null 2>&1; echo "$?" ) )"
 check "stale-base live merge-base failure -> exit 3 (rc-guard pinned)" '[ "$f3_merge_base_rc" = "3" ]'
 
