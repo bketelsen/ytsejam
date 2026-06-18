@@ -64,6 +64,15 @@ _phase_pr_branch_live() {  # <tid> -> head branch name
   gh pr view "$prnum" --repo bketelsen/ytsejam --json headRefName --jq '.headRefName // empty'
 }
 
+_phase_pr_number_live() {  # <tid> -> PR number via Bottega pull-request endpoint
+  local prj exists prnum
+  prj="$(api GET "/api/tasks/$1/pull-request")" || return 1
+  exists="$(printf '%s' "$prj" | jq -r '.exists // false')" || return 1
+  [ "$exists" = "true" ] || return 1
+  prnum="$(printf '%s' "$prj" | jq -r '.url // ""' | sed -nE 's#.*/pull/([0-9]+).*#\1#p')" || return 1
+  [ -n "$prnum" ] || return 1
+  printf '%s\n' "$prnum"
+}
 _phase_pr_meta_live() {  # <tid> -> "ci mergeable blocked"
   local prj tj ci mrg blk
   prj="$(api GET "/api/tasks/$1/pull-request")" || return 1

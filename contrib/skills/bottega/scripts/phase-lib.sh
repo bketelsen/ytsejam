@@ -136,6 +136,9 @@ phase_reconcile() {
 
     if [ "$pr_done" = "1" ]; then
       prnum="$(printf '%s' "$ts" | jq -r '.pr_number // .pr // empty')" || return $?
+      if ! [[ "$prnum" =~ ^[0-9]+$ ]]; then
+        prnum="$(${PHASE_PR_NUMBER_FN:-_phase_pr_number_live} "$tid" 2>/dev/null || true)"
+      fi
       if [[ "$prnum" =~ ^[0-9]+$ ]]; then
         pr_value="$prnum"
       else
