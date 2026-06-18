@@ -237,20 +237,26 @@ phase_state_init recon "$J" "" >/dev/null
 phase_task_set recon schema     '.taskId=6 | .state="running"'
 phase_task_set recon middleware '.taskId=7 | .state="running"'
 phase_task_set recon docs       '.taskId=8 | .state="running"'
+phase_task_set recon yolo_pr    '.taskId=10 | .state="running"'
 _phase_task_status_live() {
   case "$1" in
     6) echo '{"pr_agent_complete":1,"pr_number":231,"workflow_blocked":0}';;
     7) echo '{"pr_agent_complete":0,"workflow_blocked":1}';;
     8) echo '{"pr_agent_complete":false,"workflow_blocked":false}';;   # still running, neither flag
+    10) echo '{"pr_agent_complete":1,"workflow_blocked":0}';;          # real yolo shape: PR endpoint has number, task object does not
   esac
 }
-export -f _phase_task_status_live
+_phase_pr_number_from_endpoint() { [ "$1" = "10" ] && echo 256; }
+export -f _phase_task_status_live _phase_pr_number_from_endpoint
+export PHASE_PR_NUMBER_FN=_phase_pr_number_from_endpoint
 phase_reconcile recon
 check "reconcile: schema -> pr_open"            '[ "$(phase_state_read recon | jq -r .tasks.schema.state)" = "pr_open" ]'
 check "reconcile: schema pr=231"                '[ "$(phase_state_read recon | jq -r .tasks.schema.pr)" = "231" ]'
+check "reconcile: yolo PR number from endpoint" '[ "$(phase_state_read recon | jq -r .tasks.yolo_pr.pr)" = "256" ]'
 check "reconcile: middleware parked (blocked)"  '[ "$(phase_state_read recon | jq -r .tasks.middleware.state)" = "parked" ]'
 check "reconcile: middleware reason set"        '[ "$(phase_state_read recon | jq -r .tasks.middleware.reason)" = "workflow_blocked" ]'
 check "reconcile: docs stays running"           '[ "$(phase_state_read recon | jq -r .tasks.docs.state)" = "running" ]'
+unset PHASE_PR_NUMBER_FN
 # Idempotency: a 2nd reconcile must NOT change anything (pr_open/parked are in the skip set; docs unchanged because still no flags)
 B1="$(phase_state_read recon | jq -S .)"
 phase_reconcile recon

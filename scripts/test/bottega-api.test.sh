@@ -101,6 +101,19 @@ else
   fail=$((fail + 1))
 fi
 
+# Source helper with a harmless command, then stub api() to the confirmed pull-request shape.
+set -- help
+# shellcheck disable=SC1090
+source "$HELPER" >/dev/null 2>&1 || true
+api() {
+  printf '%s %s' "$1" "$2" > "$WORK/pr-number-endpoint"
+  printf '{"success":true,"exists":true,"url":"https://github.com/bketelsen/ytsejam/pull/256"}
+'
+}
+prnum="$(_phase_pr_number_live 14)"
+assert_eq "pr-number resolver uses pull-request endpoint" "GET /api/tasks/14/pull-request" "$(cat "$WORK/pr-number-endpoint")"
+assert_eq "pr-number resolver parses PR URL" "256" "$prnum"
+
 echo ""
 echo "bottega-api.test.sh: $pass passed, $fail failed"
 [[ $fail -eq 0 ]]
