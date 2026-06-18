@@ -467,13 +467,17 @@ f3_branch_rc="$( ( incus() { local p="${*: -1}"; git() { case "$*" in
       "merge-base origin/main origin/somebranch") echo abc;;
       "diff --name-only abc origin/somebranch") echo "fatal: bad object" >&2; return 128;; # branch-diff fails -> || exit 4
       "diff --name-only abc origin/main") echo file.ts;;
-      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git; bash -c "$p"; }; export -f incus
+      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git
+    mkdir -p "$HOME/projects/ytsejam"  # _phase_stale_base_live cd target inside the fake container
+    bash -c "$p"; }; export -f incus
     _phase_stale_base_live somebranch >/dev/null 2>&1; echo "$?" ) )"
 check "stale-base live branch-diff failure -> exit 4 (rc-guard pinned)" '[ "$f3_branch_rc" = "4" ]'
 f3_merge_base_rc="$( ( incus() { local p="${*: -1}"; git() { case "$*" in
       "fetch origin --quiet") return 0;;
       "merge-base origin/main origin/somebranch") echo "fatal: no merge base" >&2; return 128;; # merge-base fails -> || exit 3
-      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git; bash -c "$p"; }; export -f incus
+      *) echo "unexpected git $*" >&2; return 99;; esac; }; export -f git
+    mkdir -p "$HOME/projects/ytsejam"  # _phase_stale_base_live cd target inside the fake container
+    bash -c "$p"; }; export -f incus
     _phase_stale_base_live somebranch >/dev/null 2>&1; echo "$?" ) )"
 check "stale-base live merge-base failure -> exit 3 (rc-guard pinned)" '[ "$f3_merge_base_rc" = "3" ]'
 
