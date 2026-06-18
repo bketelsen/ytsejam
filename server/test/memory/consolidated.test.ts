@@ -261,32 +261,32 @@ describe("memory consolidated PR-2a", () => {
 
   test("housekeepingScan flags per-domain patterns.md over byte cap", async () => {
     await seed("cog-meta/patterns.md", "ok\n");
-    await seed("projects/ytsejam/patterns.md", "y".repeat(5000) + "\n");
+    await seed("projects/ytsejam/patterns.md", "y".repeat(9000) + "\n");
     const r = await housekeepingScan();
     expect(r.thresholds.domain_patterns_over_cap).toHaveLength(1);
     expect(r.thresholds.domain_patterns_over_cap[0]).toMatchObject({
       path: "projects/ytsejam/patterns.md",
-      size_cap: 3500,
+      size_cap: 8000,
     });
-    expect(r.thresholds.domain_patterns_over_cap[0].size).toBeGreaterThan(3500);
+    expect(r.thresholds.domain_patterns_over_cap[0].size).toBeGreaterThan(8000);
   });
 
   test("housekeepingScan flags per-domain patterns.md over line cap", async () => {
     await seed("cog-meta/patterns.md", "ok\n");
-    await seed("personal/patterns.md", "line\n".repeat(50));
+    await seed("personal/patterns.md", "line\n".repeat(70));
     const r = await housekeepingScan();
     expect(r.thresholds.domain_patterns_over_cap).toHaveLength(1);
     expect(r.thresholds.domain_patterns_over_cap[0]).toMatchObject({
       path: "personal/patterns.md",
-      lines_cap: 40,
+      lines_cap: 60,
     });
-    expect(r.thresholds.domain_patterns_over_cap[0].lines).toBeGreaterThan(40);
+    expect(r.thresholds.domain_patterns_over_cap[0].lines).toBeGreaterThan(60);
   });
 
   test("housekeepingScan sorts multiple per-domain patterns.md over-cap findings by path", async () => {
     await seed("cog-meta/patterns.md", "ok\n");
-    await seed("projects/zeta/patterns.md", "z".repeat(5000));
-    await seed("projects/alpha/patterns.md", "a".repeat(5000));
+    await seed("projects/zeta/patterns.md", "z".repeat(9000));
+    await seed("projects/alpha/patterns.md", "a".repeat(9000));
     const r = await housekeepingScan();
     expect(r.thresholds.domain_patterns_over_cap).toHaveLength(2);
     expect(r.thresholds.domain_patterns_over_cap[0].path).toBe("projects/alpha/patterns.md");
@@ -307,7 +307,7 @@ describe("memory consolidated PR-2a", () => {
 
   test("housekeepingScan reports global and per-domain patterns over caps in the same run", async () => {
     await seed("cog-meta/patterns.md", "x".repeat(7000));
-    await seed("projects/foo/patterns.md", "y".repeat(5000));
+    await seed("projects/foo/patterns.md", "y".repeat(9000));
     const r = await housekeepingScan();
     expect(r.thresholds.patterns_over_cap).toHaveLength(1);
     expect(r.thresholds.domain_patterns_over_cap).toHaveLength(1);
