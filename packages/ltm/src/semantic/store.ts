@@ -201,6 +201,33 @@ export class SemanticStore {
 
   // -- maintenance -----------------------------------------------------------
 
+  /**
+   * Restore exact fact records, overwriting whatever the store currently holds
+   * for those ids. Used to recover from a faulty redaction/purge (D3): the
+   * caller supplies the pre-damage records (e.g. from a store backup) and this
+   * appends them verbatim, so the log's latest-wins load resolves them as the
+   * live state. Facts NOT named here are untouched — restoring the wiped set
+   * cannot clobber surviving facts whose ids are absent from `records`.
+   *
+   * This is a verbatim restore, NOT a re-derivation: strength, mentionCount,
+   * sources, and timestamps are taken from the supplied record as-is. Records
+   * missing a string id are skipped (and counted) rather than corrupting the log.
+   */
+  restoreFacts(records: Iterable<SemanticFact>): { restored: number; skipped: number } {
+    let restored = 0;
+    let skipped = 0;
+    for (const fact of records) {
+      if (typeof fact.id !== "string" || !fact.id) {
+        skipped++;
+        continue;
+      }
+      this.facts.set(fact.id, fact);
+      this.factLog.append(fact);
+      restored++;
+    }
+    return { restored, skipped };
+  }
+
   /** Collapse the semantic append-only log to one latest-wins snapshot per id. */
   compactLogs(): { facts: number } {
     this.factLog.compact(this.facts.values());
