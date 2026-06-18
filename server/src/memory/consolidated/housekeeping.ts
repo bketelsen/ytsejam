@@ -16,9 +16,16 @@ const caps = {
   global_patterns_lines: 70,
   global_patterns_bytes: 6000,
   // Per-domain tier: project-specific rules in {domain-path}/patterns.md
-  // (loaded only when the domain skill activates).
-  domain_patterns_lines: 40,
-  domain_patterns_bytes: 3500,
+  // (loaded only when the domain skill activates — NOT injected every turn,
+  // so this tier can be larger than the global cap without per-session cost).
+  // Raised 40/3500 -> 60/8000 (2026-06-18) to match the files' load-bearing
+  // density: projects/ytsejam/patterns.md self-declares an 8KB ceiling and
+  // absorbed the develop-loop / harness / test-validation rules moved off the
+  // global tier. Domain patterns had been flagged over-cap on 12 distinct
+  // dates and hand-compressed each time; the recurrence is the signal the cap
+  // was too tight, not that the content was bloated.
+  domain_patterns_lines: 60,
+  domain_patterns_bytes: 8000,
   decisions_entries: 100,
   decisions_age_months: 6,
   dormant_domain_days: 28,
