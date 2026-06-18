@@ -12,11 +12,19 @@ vi.mock("../../src/cli/ltm-commands.ts", () => ({
   ltmReplay: vi.fn(async () => 0),
   ltmHealth: vi.fn(async () => 0),
   ltmBackfill: vi.fn(async () => 0),
+  ltmDoctor: vi.fn(async () => 0),
+  ltmPurgeFacts: vi.fn(async () => 0),
 }));
 
 // Imported AFTER the mock so the mocked symbols are bound.
 import { runCli } from "../../src/cli/dispatch.ts";
-import { ltmReplay, ltmHealth, ltmBackfill } from "../../src/cli/ltm-commands.ts";
+import {
+  ltmReplay,
+  ltmHealth,
+  ltmBackfill,
+  ltmDoctor,
+  ltmPurgeFacts,
+} from "../../src/cli/ltm-commands.ts";
 
 describe("runCli", () => {
   let dataDir = "";
@@ -47,6 +55,8 @@ describe("runCli", () => {
     vi.mocked(ltmReplay).mockClear();
     vi.mocked(ltmHealth).mockClear();
     vi.mocked(ltmBackfill).mockClear();
+    vi.mocked(ltmDoctor).mockClear();
+    vi.mocked(ltmPurgeFacts).mockClear();
   });
 
   afterEach(async () => {
@@ -165,6 +175,31 @@ describe("runCli", () => {
     expect(await runCli(["ltm", "health"])).toBe(0);
     expect(ltmHealth).toHaveBeenCalledTimes(1);
     expect(vi.mocked(ltmHealth).mock.calls[0]![0]).toEqual({});
+  });
+
+  it("routes `ltm doctor` to ltmDoctor with fix=false", async () => {
+    expect(await runCli(["ltm", "doctor"])).toBe(0);
+    expect(ltmDoctor).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmDoctor).mock.calls[0]![0]).toEqual({ fix: false });
+  });
+
+  it("routes `ltm doctor --fix` to ltmDoctor with fix=true", async () => {
+    expect(await runCli(["ltm", "doctor", "--fix"])).toBe(0);
+    expect(ltmDoctor).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmDoctor).mock.calls[0]![0]).toEqual({ fix: true });
+  });
+
+  it("routes `ltm purge-facts <dir>` to ltmPurgeFacts", async () => {
+    expect(await runCli(["ltm", "purge-facts", "/tmp/fixture"])).toBe(0);
+    expect(ltmPurgeFacts).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmPurgeFacts).mock.calls[0]![0]).toEqual({
+      sessionsDir: "/tmp/fixture",
+    });
+  });
+
+  it("returns 2 for `ltm purge-facts` (missing <sessions-dir>) without calling ltmPurgeFacts", async () => {
+    expect(await runCli(["ltm", "purge-facts"])).toBe(2);
+    expect(ltmPurgeFacts).not.toHaveBeenCalled();
   });
 
   it("routes `ltm backfill <dir>` to ltmBackfill with defaults", async () => {

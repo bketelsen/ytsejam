@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemorySystem } from "ltm";
-import { ltmReplay, ltmHealth } from "../../src/cli/ltm-commands.ts";
+import {
+  ltmDoctor,
+  ltmHealth,
+  ltmPurgeFacts,
+  ltmReplay,
+} from "../../src/cli/ltm-commands.ts";
 
 const ltmEmbedderEnvKeys = [
   "YTSEJAM_LTM_EMBEDDER",
@@ -289,6 +294,58 @@ describe("ltmReplay CLI", () => {
     expect(stats.replayed).toBe(0);
     expect(stats.skipped).toBe(0);
     expect(rebuiltErr).toEqual([]);
+  });
+});
+
+describe("ltmDoctor CLI", () => {
+  let ltmDir = "";
+
+  beforeEach(async () => {
+    ltmDir = await mkdtemp(join(tmpdir(), "cli-doctor-ltm-"));
+  });
+
+  afterEach(async () => {
+    if (ltmDir) await rm(ltmDir, { recursive: true, force: true });
+  });
+
+  it("--fix compacts duplicate entity snapshots to one line when findings exist", async () => {
+    await writeFile(
+      join(ltmDir, "entities.jsonl"),
+      JSON.stringify({ id: "e1", norm: "first", label: "first" }) +
+        "\n" +
+        JSON.stringify({ id: "e1", norm: "second", label: "second" }) +
+        "\n",
+    );
+    const out: string[] = [];
+    const err: string[] = [];
+
+    const code = await ltmDoctor({
+      ltmStoreDir: ltmDir,
+      fix: true,
+      stdout: (l) => out.push(l),
+      stderr: (l) => err.push(l),
+    });
+
+    expect(code).toBe(0);
+    expect(err).toEqual([]);
+    expect(out.join("\n")).toContain(
+      "fixed: entities.jsonl compacted to 1 record(s)",
+    );
+    const lines = (await readFile(join(ltmDir, "entities.jsonl"), "utf8"))
+      .trim()
+      .split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!).label).toBe("second");
+  });
+});
+
+describe("ltmPurgeFacts CLI", () => {
+  it("returns 2 when sessionsDir is missing", async () => {
+    const err: string[] = [];
+    const code = await ltmPurgeFacts({ stderr: (l) => err.push(l) });
+
+    expect(code).toBe(2);
+    expect(err).toEqual(["purge-facts: <sessions-dir> is required"]);
   });
 });
 
