@@ -412,9 +412,8 @@ _phase_push_live() {
   printf '%s' "$out" | jq -e '.success == true' >/dev/null 2>&1
 }
 
-_phase_pr_branch_live() {  # <tid> -> branch name (Task 6 will wire gh; placeholder errors so live use before Task-6 fails closed)
-  echo "_phase_pr_branch_live: not wired until Task 6" >&2; return 1
-}
+# NOTE: _phase_pr_branch_live (tid -> head branch via gh) is defined in bottega-api.sh, which sources
+# this file then defines it — the real impl shadows any stub. Do not re-add a stub here (it lies to readers).
 
 _phase_pr_meta_live() {  # <tid> -> "ci mergeable blocked" (Task 6 wires bottega-api.sh); placeholder errors closed
   echo "_phase_pr_meta_live: not wired until Task 6" >&2; return 1

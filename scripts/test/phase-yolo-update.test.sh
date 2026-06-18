@@ -82,4 +82,23 @@ unset SYNC_RC
 assert_eq "push fail -> park" "park:push-failed" "$(phase_gate s1 t1)"
 unset PUSH_RC
 
+# Case: the LIVE branch resolver wins (regression guard against re-adding the dead stub in phase-lib.sh).
+# Sourcing bottega-api.sh (which sources phase-lib.sh then redefines _phase_pr_branch_live) must yield
+# the real gh-headRefName impl, never the "not wired" placeholder. api() is shadowed so nothing hits net.
+API_SH="$SCRIPT_DIR/../../contrib/skills/bottega/scripts/bottega-api.sh"
+if [[ -r "$API_SH" ]]; then
+  resolver_body="$(bash -c '
+    api() { echo "{}"; }
+    source "'"$API_SH"'" >/dev/null 2>&1 || true
+    declare -f _phase_pr_branch_live
+  ' 2>/dev/null)"
+  if printf '%s' "$resolver_body" | grep -q 'headRefName'; then
+    echo "PASS [live resolver is real gh impl, not stub]"; pass=$((pass+1))
+  else
+    echo "FAIL [live resolver is real gh impl, not stub]" >&2
+    echo "  active _phase_pr_branch_live lacks 'headRefName' — a dead stub may have been re-added to phase-lib.sh" >&2
+    fail=$((fail+1))
+  fi
+fi
+
 echo ""; echo "phase-yolo-update.test.sh: $pass passed, $fail failed"; [[ $fail -eq 0 ]]
