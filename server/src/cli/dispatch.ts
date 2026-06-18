@@ -1,4 +1,10 @@
-import { ltmBackfill, ltmHealth, ltmReplay } from "./ltm-commands.ts";
+import {
+  ltmBackfill,
+  ltmDoctor,
+  ltmHealth,
+  ltmPurgeFacts,
+  ltmReplay,
+} from "./ltm-commands.ts";
 
 const USAGE = `\
 ytsejam CLI
@@ -7,13 +13,19 @@ Usage:
   ytsejam ltm replay [--force] [--rebuild] [--prune] [--verbose|--quiet]
                                   Open LTM, run one reconcile pass, print JSON stats.
   ytsejam ltm health              Print LTM bridge health (one-off tick).
+  ytsejam ltm doctor [--fix]      Store health checks; --fix compacts logs to one
+                                  line per id. Run with the server STOPPED.
+  ytsejam ltm purge-facts <dir>   Re-extract each active fact's source turn and
+                                  tombstone facts the current extractor no longer
+                                  produces. <dir> = pi v3 sessions dir. Server STOPPED.
   ytsejam ltm backfill <dir> [--rate=N] [--batch=N] [--pause-ms=N] [--poll-ms=N]
                                   Stream JSONLs in <dir> through LTM ingest via the
                                   running server. Polls progress; Ctrl-C cancels.
                                   Server MUST be running. Auth via YTSEJAM_API_TOKEN.
 
 Notes:
-  ltm replay and ltm health require the server to be STOPPED (LTM single-writer lock).
+  ltm replay, ltm health, ltm doctor --fix, and ltm purge-facts require the
+  server to be STOPPED (LTM single-writer lock / safe compaction).
   Environment:
     YTSEJAM_DATA_DIR              Cog data root (default: ./data).
     LTM_STORE_DIR                 LTM store dir (default: <dataDir>/ltm).
@@ -70,6 +82,22 @@ export async function runCli(argv: string[]): Promise<number | null> {
 
   if (sub === "health") {
     return ltmHealth({});
+  }
+
+  if (sub === "doctor") {
+    const fix = rest.includes("--fix");
+    return ltmDoctor({ fix });
+  }
+
+  if (sub === "purge-facts") {
+    const dir = rest.find((a) => !a.startsWith("--"));
+    if (!dir) {
+      process.stderr.write(
+        `ytsejam ltm purge-facts: missing <sessions-dir>\n\n${USAGE}`,
+      );
+      return 2;
+    }
+    return ltmPurgeFacts({ sessionsDir: dir });
   }
 
   if (sub === "backfill") {

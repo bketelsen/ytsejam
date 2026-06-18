@@ -1,5 +1,5 @@
 import path from "node:path";
-import { MemorySystem } from "ltm";
+import { MemorySystem, runDoctor } from "ltm";
 import { LtmReconciler } from "../memory/bridge/ltm-reconciler.ts";
 import { createLtmEmbedder, parseLtmEmbedderMode } from "../memory/embedder.ts";
 import { defaultPiAuthPath, PiAuthStore } from "../pi-auth.ts";
@@ -187,6 +187,99 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
       ltm.close();
     } catch {
       // already-failed reconcile leaves LTM in a closeable state; if even
+      // close() throws the lock is already gone via the process exit.
+    }
+  }
+}
+
+/**
+ * Run raw LTM store health checks. With --fix, compact logs only while the
+ * server is stopped so it cannot write concurrently.
+ */
+export async function ltmDoctor(
+  opts: LtmCliOpts & { fix?: boolean } = {},
+): Promise<number> {
+  const out = opts.stdout ?? ((line) => console.log(line));
+  const err = opts.stderr ?? ((line) => console.error(line));
+  const { ltmStoreDir } = resolveDirs(opts);
+  void err;
+  return runDoctor(ltmStoreDir, { fix: opts.fix ?? false }, out);
+}
+
+/**
+ * Open LTM and tombstone active facts the current extractor no longer
+ * reproduces from their source turns. Requires the server to be stopped.
+ */
+export async function ltmPurgeFacts(
+  opts: LtmCliOpts & { sessionsDir?: string } = {},
+): Promise<number> {
+  const out = opts.stdout ?? ((line) => console.log(line));
+  const err = opts.stderr ?? ((line) => console.error(line));
+  const sessionsDir = opts.sessionsDir;
+  if (!sessionsDir) {
+    err("purge-facts: <sessions-dir> is required");
+    return 2;
+  }
+  const { dataDir, ltmStoreDir } = resolveDirs(opts);
+  void dataDir;
+
+  const mode = (() => {
+    try {
+      return parseLtmEmbedderMode(process.env.YTSEJAM_LTM_EMBEDDER);
+    } catch (e) {
+      err(`[ltm purge-facts] invalid embedder config: ${(e as Error).message}`);
+      return null;
+    }
+  })();
+  if (!mode) return 1;
+
+  const authStore = new PiAuthStore(
+    process.env.YTSEJAM_PI_AUTH ?? defaultPiAuthPath(),
+  );
+  const embedderResult = await createLtmEmbedder(authStore, {
+    mode,
+    cacheDir: path.join(ltmStoreDir, "embed-cache"),
+    copilot: {
+      model: process.env.YTSEJAM_LTM_COPILOT_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_COPILOT_URL,
+    },
+    ollama: {
+      model: process.env.YTSEJAM_LTM_OLLAMA_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_OLLAMA_URL,
+    },
+  }).catch((e: Error) => {
+    err(`[ltm purge-facts] could not create LTM embedder: ${e.message}`);
+    return null;
+  });
+  if (!embedderResult) return 1;
+
+  let ltm: MemorySystem;
+  try {
+    ltm = MemorySystem.open({
+      storeDir: ltmStoreDir,
+      embedder: embedderResult.embedder,
+    });
+  } catch (e) {
+    err(
+      `[ltm purge-facts] could not open LTM at ${ltmStoreDir}\n` +
+        `  ${(e as Error).message}\n` +
+        `  If the ytsejam server is running it already holds the single-writer\n` +
+        `  lock on this store. Stop the server (systemctl --user stop ytsejam)\n` +
+        `  before running this command, or query the server's health endpoint.`,
+    );
+    return 1;
+  }
+
+  try {
+    const result = await ltm.purgeStaleFacts(sessionsDir);
+    out(`kept ${result.kept}, purged ${result.purged.length}`);
+    for (const id of result.purged) out(id);
+    return 0;
+  } finally {
+    try {
+      ltm.close();
+    } catch {
+      // already-failed purge leaves LTM in a closeable state; if even
       // close() throws the lock is already gone via the process exit.
     }
   }
