@@ -40,7 +40,7 @@ import {
 import { retention } from "../episodic/decay.ts";
 import { SemanticStore } from "../semantic/store.ts";
 import { Retriever, packToBudget } from "../retrieval/retriever.ts";
-import { promoteFacts } from "../retrieval/promote.ts";
+import { promoteFacts, vectorPromoteFacts } from "../retrieval/promote.ts";
 import { IngestPipeline, type IngestReport } from "../pipeline/ingest.ts";
 import { JsonlLog } from "../store/jsonl-log.ts";
 import {
@@ -110,7 +110,7 @@ export class MemorySystem {
     this.retrievalLog = opts.retrievalLog ?? process.env.LTM_RETRIEVAL_LOG;
     this.readOptions = opts.readOptions;
     this.episodic = EpisodicStore.open(this.storeDir);
-    this.semantic = SemanticStore.open(this.storeDir, opts.factExtractor);
+    this.semantic = SemanticStore.open(this.storeDir, opts.factExtractor, this.embedder);
     this.auditLog = new JsonlLog<AuditRecord>(
       path.join(this.storeDir, "redactions.jsonl"),
     );
@@ -346,6 +346,15 @@ export class MemorySystem {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
     const profile = this.semantic.profile(now, this.config.profile, opts.activeProjectTag);
+
+    // Empty/whitespace query: there is nothing to rank or embed, and an empty
+    // string reaches the embedding API as a hard 400 ("input cannot be an
+    // empty string"). Skip the retrieval path and return profile-only context.
+    if (!query.trim()) {
+      this.trace(query, k, now, []);
+      return { items: [], profile };
+    }
+
     const ranked = await this.retriever.rank(
       query,
       k,
@@ -359,7 +368,21 @@ export class MemorySystem {
     // a slot answer beats a lexical near-miss). Synthetic records — never
     // persisted. Episodic accessCount is never bumped for facts; stale dormant
     // facts instead get a rehearsal bump via semantic.recordRecall (below).
-    const promoted = promoteFacts(query, profile).map(
+    //
+    // Two complementary channels: promoteFacts() is keyword/slot-precise;
+    // vectorPromoteFacts() adds paraphrase matches the keyword map misses,
+    // excluding facts the keyword channel already surfaced.
+    const keywordPromoted = promoteFacts(query, profile);
+    const scopedFacts = this.semantic
+      .activeFacts()
+      .filter((f) => !f.projectTag || f.projectTag === opts.activeProjectTag);
+    const vectorPromoted = await vectorPromoteFacts(
+      query,
+      scopedFacts,
+      this.embedder,
+      new Set(keywordPromoted.map((p) => p.fact.id)),
+    );
+    const promoted = [...keywordPromoted, ...vectorPromoted].map(
       (record): RetrievedMemory => ({
         record,
         score: 1,
@@ -555,6 +578,15 @@ export class MemorySystem {
 
   listFacts(): SemanticFact[] {
     return this.semantic.allFacts();
+  }
+
+  /**
+   * Embed active facts that lack an embedding (semantic fact recall). Used by
+   * the one-time cleanup and as a maintenance pass after a restore. Returns
+   * the count embedded vs skipped (skip-on-failure per fact).
+   */
+  async backfillFactEmbeddings(): Promise<{ embedded: number; skipped: number }> {
+    return this.semantic.backfillEmbeddings();
   }
 
   getRecord(id: string): EpisodicRecord | undefined {

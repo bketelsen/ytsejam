@@ -154,6 +154,15 @@ export interface SemanticFact {
   state: RecordState;
   /** Resolved project tag (e.g. "projects:ytsejam"); absent = global. */
   projectTag?: string;
+  /**
+   * Embedding of the fact's rendered phrase, for semantic fact recall (a
+   * query that paraphrases a fact surfaces it even with no keyword overlap).
+   * Optional — facts written before this field existed, or when no embedder
+   * is configured, fall back to keyword/slot promotion. Pinned to the
+   * episodic embedder's dimension; off-dimension vectors are ignored at
+   * match time (never compared), mirroring the episodic D2 guard.
+   */
+  embedding?: number[];
 }
 
 // ---------------------------------------------------------------------------

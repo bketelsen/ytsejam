@@ -27,6 +27,17 @@ describe("CopilotFactExtractor", () => {
     ]);
   });
 
+  it("default floor is 0.75: drops a 0.7-confidence fact, keeps a 0.8", async () => {
+    const ext = new CopilotFactExtractor(opts(fakeFetch(toolResponse([
+      { kind: "attribute", predicate: "uses", object: "go", polarity: 1, confidence: 0.8 },
+      { kind: "preference", predicate: "prefers", object: "tabs", polarity: 1, confidence: 0.7 }, // below 0.75 floor
+    ]))));
+    const out = await ext.extract("hi");
+    expect(out).toEqual([
+      { kind: "attribute", predicate: "uses", object: "go", polarity: 1, initialStrength: 0.8, scope: "global" },
+    ]);
+  });
+
   it("returns [] when getApiKey yields undefined (no creds)", async () => {
     const ext = new CopilotFactExtractor({ getApiKey: async () => undefined, fetchImpl: fakeFetch(toolResponse([])) });
     expect(await ext.extract("hi")).toEqual([]);

@@ -23,12 +23,15 @@ import type {
 } from "../types.ts";
 import { JsonlLog } from "../store/jsonl-log.ts";
 import {
+  canonicalizePredicate,
   extractFacts,
   factId,
+  factPhrase,
   normalizeObject,
   slug,
 } from "./extract.ts";
 import { RegexFactExtractor, type FactExtractor } from "./fact-extractor.ts";
+import type { Embedder } from "../embedding/embedder.ts";
 
 const REINFORCE = 0.4;
 /** Identity predicates that hold a single value; a new value supersedes. */
@@ -60,21 +63,49 @@ export class SemanticStore {
   private facts: Map<string, SemanticFact>;
   private factLog: JsonlLog<SemanticFact>;
   private factExtractor: FactExtractor;
+  private embedder?: Embedder;
 
-  private constructor(factLog: JsonlLog<SemanticFact>, factExtractor: FactExtractor) {
+  private constructor(
+    factLog: JsonlLog<SemanticFact>,
+    factExtractor: FactExtractor,
+    embedder?: Embedder,
+  ) {
     this.factLog = factLog;
     this.facts = factLog.load();
     this.factExtractor = factExtractor;
+    this.embedder = embedder;
   }
 
   static open(
     storeDir: string,
     factExtractor: FactExtractor = new RegexFactExtractor(),
+    embedder?: Embedder,
   ): SemanticStore {
     return new SemanticStore(
       new JsonlLog<SemanticFact>(path.join(storeDir, "facts.jsonl")),
       factExtractor,
+      embedder,
     );
+  }
+
+  /**
+   * Embed a fact's rendered phrase for semantic recall. Skip-on-failure: a
+   * missing embedder or an embed error leaves the fact keyword-only rather
+   * than blocking the write (facts must persist even when the embedding
+   * backend is down — the same fail-open contract as the bridge).
+   */
+  private async embedFact(
+    predicate: string,
+    object: string,
+    polarity: 1 | -1,
+  ): Promise<number[] | undefined> {
+    if (!this.embedder) return undefined;
+    try {
+      const v = await this.embedder.embed(factPhrase(predicate, object, polarity));
+      return v.length ? v : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   // -- ingestion -----------------------------------------------------------
@@ -87,14 +118,22 @@ export class SemanticStore {
     }
 
     if (turn.role === "user") {
+      // Canonicalize predicates and dedupe within the turn so the LLM emitting
+      // e.g. works_on + works_on_repo for the same project asserts one fact,
+      // not several near-duplicates.
+      const seen = new Set<string>();
       for (const candidate of await this.factExtractor.extract(turn.text)) {
         const tag = candidate.scope === "project" && projectTag ? projectTag : undefined;
-        this.assertFact(candidate.kind, candidate.predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp, tag);
+        const predicate = canonicalizePredicate(candidate.predicate);
+        const id = factId({ kind: candidate.kind, predicate, polarity: candidate.polarity }, normalizeObject(candidate.object), tag);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        await this.assertFact(candidate.kind, predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp, tag);
       }
     }
   }
 
-  private assertFact(
+  private async assertFact(
     kind: FactKind,
     predicate: string,
     object: string,
@@ -103,12 +142,19 @@ export class SemanticStore {
     source: SourceRef,
     at: string,
     projectTag?: string,
-  ): void {
+  ): Promise<void> {
+    predicate = canonicalizePredicate(predicate);
     const objectNorm = normalizeObject(object);
     const id = factId({ kind, predicate, polarity }, objectNorm, projectTag);
     const existing = this.facts.get(id);
 
     if (existing && existing.state !== "redacted") {
+      // Re-embed only when the surface object changed or the fact had no
+      // embedding yet (e.g. learned before an embedder was configured).
+      const embedding =
+        existing.object !== object || !existing.embedding
+          ? (await this.embedFact(predicate, object, polarity)) ?? existing.embedding
+          : existing.embedding;
       const updated: SemanticFact = {
         ...existing,
         object,
@@ -118,6 +164,7 @@ export class SemanticStore {
         sources: dedupeSources([...existing.sources, source]),
         // Re-assertion revives a superseded fact: it wins again by recency.
         supersededBy: undefined,
+        ...(embedding ? { embedding } : {}),
       };
       this.facts.set(id, updated);
       this.factLog.append(updated);
@@ -125,6 +172,7 @@ export class SemanticStore {
       return;
     }
 
+    const embedding = await this.embedFact(predicate, object, polarity);
     const fact: SemanticFact = {
       id,
       kind,
@@ -139,6 +187,7 @@ export class SemanticStore {
       sources: [source],
       state: "active",
       ...(projectTag !== undefined ? { projectTag } : {}),
+      ...(embedding ? { embedding } : {}),
     };
     this.facts.set(id, fact);
     this.factLog.append(fact);
@@ -240,6 +289,34 @@ export class SemanticStore {
       restored++;
     }
     return { restored, skipped };
+  }
+
+  /**
+   * Embed active facts that have no embedding yet (e.g. learned before the
+   * embedder existed, or restored from a backup). Skip-on-failure per fact:
+   * an embed error leaves that fact keyword-only. Returns how many gained an
+   * embedding. Compacts the log when anything changed. No-op without an
+   * embedder.
+   */
+  async backfillEmbeddings(): Promise<{ embedded: number; skipped: number }> {
+    if (!this.embedder) return { embedded: 0, skipped: 0 };
+    let embedded = 0;
+    let skipped = 0;
+    for (const fact of this.facts.values()) {
+      if (fact.state !== "active" || fact.supersededBy) continue;
+      if (fact.embedding && fact.embedding.length > 0) continue;
+      const embedding = await this.embedFact(fact.predicate, fact.object, fact.polarity);
+      if (!embedding) {
+        skipped++;
+        continue;
+      }
+      const updated = { ...fact, embedding };
+      this.facts.set(fact.id, updated);
+      this.factLog.append(updated);
+      embedded++;
+    }
+    if (embedded > 0) this.factLog.compact(this.facts.values());
+    return { embedded, skipped };
   }
 
   /** Collapse the semantic append-only log to one latest-wins snapshot per id. */
