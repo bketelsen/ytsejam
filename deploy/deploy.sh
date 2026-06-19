@@ -78,8 +78,10 @@ EOF
 # install even if the calling shell exported NODE_ENV=production (which would
 # make npm omit devDeps). We install with --ignore-scripts to avoid depending
 # on a lifecycle-script binary (patch-package) being resolvable on PATH during
-# install, then run patches explicitly so the release still gets them. This
-# keeps deploy correct regardless of the shell it's launched from.
+# install, then run patches explicitly so the release still gets them. Native
+# dependencies still need their install/rebuild lifecycles, so run `npm rebuild`
+# after patch-package. This keeps deploy correct regardless of the shell it's
+# launched from while still producing usable native modules such as node-pty.
 log "Installing dependencies (npm ci, with devDeps)…"
 ( cd "$RELEASE_DIR" && env -u NODE_ENV npm ci --include=dev --ignore-scripts 2>&1 | tail -3 )
 
@@ -88,6 +90,13 @@ if [[ -d "$RELEASE_DIR/patches" ]]; then
   ( cd "$RELEASE_DIR" && env -u NODE_ENV npx --no-install patch-package 2>&1 | tail -3 ) \
     || warn "patch-package step reported an issue — check patches/ applied"
 fi
+
+log "Rebuilding native dependencies…"
+( cd "$RELEASE_DIR" && env -u NODE_ENV npm rebuild 2>&1 | tail -5 )
+
+# Fail before symlink swap if the terminal native addon did not build/load.
+( cd "$RELEASE_DIR" && env -u NODE_ENV node -e 'require("node-pty")' ) \
+  || die "node-pty native module failed to load after npm rebuild"
 
 log "Building web UI…"
 ( cd "$RELEASE_DIR" && env -u NODE_ENV npm run build 2>&1 | tail -3 )
