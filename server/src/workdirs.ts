@@ -32,6 +32,8 @@ export class WorkdirStore {
     return path.join(this.dir, `${safe}.jsonl`);
   }
 
+  get storeDir(): string { return this.dir; }
+
   /** Append a workdir-set event for one session. Caller must validate `dir`. */
   append(sessionId: string, event: WorkdirEvent): void {
     fs.mkdirSync(this.dir, { recursive: true });
@@ -85,7 +87,7 @@ export function recentWorkdirs(
 ): string[] {
   let files: string[];
   try {
-    files = readdirSync(store["dir"]).filter((f) => f.endsWith(".jsonl"));
+    files = readdirSync(store.storeDir).filter((f) => f.endsWith(".jsonl"));
   } catch {
     return [];
   }
@@ -93,10 +95,9 @@ export function recentWorkdirs(
   // collect (sessionId, latestEvent) pairs
   const entries: { dir: string; timestamp: string }[] = [];
   for (const file of files) {
-    const sessionId = file.slice(0, -".jsonl".length);
     let text: string;
     try {
-      text = fs.readFileSync(path.join(store["dir"], file), "utf8");
+      text = fs.readFileSync(path.join(store.storeDir, file), "utf8");
     } catch {
       continue;
     }
@@ -111,7 +112,6 @@ export function recentWorkdirs(
       }
     }
     if (latest) entries.push(latest);
-    void sessionId; // used only to derive file path via store["dir"]
   }
 
   // sort most-recent first
