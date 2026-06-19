@@ -25,6 +25,12 @@ function normalizeDomain(value: unknown, seen: Set<string>): Domain {
   if (path.startsWith("/")) throw new Error(`domain ${JSON.stringify(id)}: path must be relative, got ${JSON.stringify(path)}`);
   if (path.includes("..")) throw new Error(`domain ${JSON.stringify(id)}: path may not contain '..'`);
 
+  if (value.workingDir !== undefined) {
+    if (typeof value.workingDir !== "string" || !value.workingDir.startsWith("/")) {
+      throw new Error(`domain ${JSON.stringify(id)}: workingDir must be an absolute path`);
+    }
+  }
+
   const files = stringArray(value.files, "files", id);
   for (const file of files ?? []) {
     if (!file || file.includes("/") || file.includes("\\")) {
@@ -47,6 +53,7 @@ function normalizeDomain(value: unknown, seen: Set<string>): Domain {
     path,
     ...(typeof value.label === "string" ? { label: value.label } : {}),
     ...(typeof value.type === "string" ? { type: value.type } : {}),
+    ...(typeof value.workingDir === "string" ? { workingDir: value.workingDir } : {}),
     ...(triggers ? { triggers } : {}),
     ...(files ? { files } : {}),
     ...(subdomains ? { subdomains } : {}),
