@@ -294,6 +294,76 @@ until terminal status, and sends DELETE on Ctrl-C for graceful cancel.
 Auth via `YTSEJAM_API_TOKEN`, server URL via `YTSEJAM_API_URL` (default
 `http://127.0.0.1:9873`).
 
+## Dreaming (nightly memory maintenance)
+
+The **dream job** is a scheduled, background LTM maintenance pass that runs
+once per night (default 03:00 local) and keeps the fact profile clean without
+requiring user action. Code: `server/src/memory/dream/`.
+
+### What it does
+
+The job runs two phases:
+
+1. **Mechanical (autonomous) pass** — deterministic, reversible maintenance:
+   backs up `facts.jsonl`, runs `canonicalizeFacts()` (normalises predicate
+   casing and synonym predicates), `consolidate()` (folds episodic memories),
+   a full reconciler tick with `--rebuild --prune`, and `backfillFactEmbeddings()`.
+   This phase never consults the LLM and never touches proposals; it is skipped
+   when `DREAM_PROPOSE_ONLY=1`.
+
+2. **LLM mining pass** — sends current active facts + recent user turns to the
+   configured model via the `propose_changes` tool. The model returns
+   confidence-scored proposals of kinds `drop` / `merge` / `resolve` / `add`.
+   Proposals below `DREAM_MIN_CONFIDENCE` are discarded; proposals whose key
+   matches a previously dismissed proposal are discarded (anti-thrash guard).
+   Surviving proposals are persisted in `<dreamDir>/pending-proposals.jsonl`.
+
+After both phases the job opens (or reuses) a **"Memory maintenance" chat
+session** and posts a human-readable report listing each proposal with its
+id, kind, targets, and rationale. The agent (or operator) can review and
+reply `apply all`, `apply 1,2`, `dismiss 3`, or `explain 2` to action items
+via the `dream_apply` / `dream_dismiss` / `dream_pending` cog tools.
+
+Dream state (cursor position, last-run date, maintenance session id) is
+persisted in `<dreamDir>/dream-state.json`. Each run appends a structured
+entry to `<dreamDir>/dream-log.jsonl` for observability.
+
+### Kill-switches and safety
+
+- `DREAM_ENABLED=0` — disables the scheduler entirely; `DreamScheduler.start()`
+  is a no-op. This is the recommended kill-switch for staging environments or
+  while performing manual LTM surgery.
+- `DREAM_PROPOSE_ONLY=1` — skips the mechanical phase (no autonomous writes to
+  `facts.jsonl`). Proposals are still mined and the report is still posted.
+  Useful when you want LLM review but not autonomous canonicalization.
+- The mechanical pass always writes a timestamped `.bak.*` file next to
+  `facts.jsonl` before touching it, so mechanical changes are trivially
+  reversible with `cp`.
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `DREAM_ENABLED` | `1` | Set to `0` to disable the dream scheduler entirely. |
+| `DREAM_HOUR` | `3` | Hour of day (0–23, local time) at which the job runs. |
+| `DREAM_MODEL` | `claude-haiku-4.5` | Chat-completions model for the LLM mining pass. Passed to the Copilot endpoint. |
+| `DREAM_MINE_TOKEN_BUDGET` | `8000` | Approximate token budget for user turns fed to the miner. Newer turns are kept first when the budget is exceeded. |
+| `DREAM_MIN_CONFIDENCE` | `0.6` | Minimum proposal confidence (0–1) to retain. Proposals below this are silently discarded after the LLM call. |
+| `DREAM_PROPOSE_ONLY` | `0` | Set to `1` to skip the mechanical pass and only mine + report proposals. |
+
+All env vars are read at server boot by `DreamConfig` in
+`server/src/memory/dream/scheduler.ts`. Changing them requires a server
+restart; there is no live-reload.
+
+### Anti-thrash: applied proposals are excluded from re-proposal
+
+The anti-thrash guard checks both `dismissedKeys()` and `appliedKeys()` so a
+proposal that has already been applied is never re-proposed on a subsequent
+nightly run. `applyProposals()` only marks a proposal `"applied"` if the
+underlying mutation was verified to have landed (the fact round-trips through
+the regex extractor); proposals whose fact did not land remain `"pending"` and
+resurface for the next nightly pass.
+
 ## Health surface
 
 `memory.health()` returns the cog store health (git status, file count,

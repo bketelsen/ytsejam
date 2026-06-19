@@ -873,6 +873,50 @@ export class AgentManager {
     });
   }
 
+  /**
+   * Append an assistant note to a session WITHOUT running an agent turn (used
+   * by the dream report). Unarchives the session first so it surfaces in the UI.
+   */
+  async postAssistantNote(id: string, text: string): Promise<void> {
+    if (this.opts.isArchived?.(id)) await this.unarchiveSession(id);
+    const opened = await this.getOrOpen(id);
+    const model = opened.harness.getModel();
+    const message: AgentMessage = {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      stopReason: "stop",
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      timestamp: Date.now(),
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    await opened.harness.appendMessage(message);
+    this.recordMessageEnd(opened, message);
+    this.opts.bus.emit({
+      type: "agent",
+      sessionId: id,
+      event: { type: "message_start", message } as any,
+    });
+    this.opts.bus.emit({
+      type: "agent",
+      sessionId: id,
+      event: { type: "message_end", message } as any,
+    });
+    this.opts.bus.emit({
+      type: "agent",
+      sessionId: id,
+      event: { type: "turn_end", message, toolResults: [] } as any,
+    });
+  }
+
   async abort(id: string): Promise<void> {
     const opened = this.open.get(id);
     if (opened) await opened.harness.abort();

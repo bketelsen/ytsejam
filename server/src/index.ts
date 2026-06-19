@@ -43,6 +43,12 @@ import { projectTagForWorkdir } from "./memory/active-project.ts";
 import { loadManifest } from "./memory/domain/manifest.ts";
 import { memoryRoot } from "./memory/index.ts";
 import { runCli } from "./cli/dispatch.ts";
+import crypto from "node:crypto";
+import { DreamScheduler } from "./memory/dream/scheduler.ts";
+import { ProposalStore } from "./memory/dream/proposal-store.ts";
+import { runDreamJob } from "./memory/dream/dream-job.ts";
+import { makeGatherUserTurns } from "./memory/dream/sessions-reader.ts";
+import { createDreamTools } from "./memory/dream/tools.ts";
 
 // CLI short-circuit: if argv matches a CLI subcommand, run it and exit
 // without booting the server. Returns null when argv doesn't match -- in
@@ -96,6 +102,12 @@ try {
 // the tools late-bind through closures, which only run when a session opens
 let taskManager!: TaskManager;
 let scheduler!: SchedulerService;
+
+// Dream job: declared here (before manager) so sessionTools closure can capture them.
+// proposalStore and maintenanceSessionId don't depend on LTM; they're safe to create early.
+let maintenanceSessionId: string | null = null;
+let dreamScheduler: DreamScheduler | null = null;
+const proposalStore = new ProposalStore(path.join(process.env.LTM_STORE_DIR || path.join(config.dataDir, "ltm"), "dream"));
 const manager = new AgentManager({
   dataDir: config.dataDir,
   indexer,
@@ -108,10 +120,19 @@ const manager = new AgentManager({
     ...createCogTools(),
     createSkillTool(skills),
   ],
-  sessionTools: (sessionId) => [
-    ...createDelegationTools(() => taskManager, sessionId),
-    ...createSchedulingTools(() => scheduler, sessionId),
-  ],
+  sessionTools: (sessionId) => {
+    const dreamTools = (() => {
+      const l = memory.getLtm();
+      return l
+        ? createDreamTools({ apply: { ltm: l, store: proposalStore, now: () => new Date().toISOString() }, maintenanceSessionId: () => maintenanceSessionId }, sessionId)
+        : [];
+    })();
+    return [
+      ...createDelegationTools(() => taskManager, sessionId),
+      ...createSchedulingTools(() => scheduler, sessionId),
+      ...dreamTools,
+    ];
+  },
   resolveWorkdir: (sessionId) => resolveWorkdir(workdirs, sessionId, config.dataDir),
   isArchived: (sessionId) => archiveStore.isArchived(sessionId),
   markArchived: (sessionId, archived) =>
@@ -353,6 +374,63 @@ const shutdownLtm = async (signal: string): Promise<void> => {
   reconciler = null;
   ltm = null;
 };
+
+// --- Dream job (nightly supervised memory maintenance) -------------------
+if (process.env.DREAM_ENABLED !== "0") {
+  const ltmStoreDir = process.env.LTM_STORE_DIR || path.join(config.dataDir, "ltm");
+  const dreamDir = path.join(ltmStoreDir, "dream");
+  const sessionsDir = path.join(config.dataDir, "sessions");
+  const hour = Number(process.env.DREAM_HOUR ?? 3);
+  const model = process.env.DREAM_MODEL ?? "claude-haiku-4.5";
+  const minConfidence = Number(process.env.DREAM_MIN_CONFIDENCE ?? 0.6);
+  const tokenBudget = Number(process.env.DREAM_MINE_TOKEN_BUDGET ?? 8000);
+  const proposeOnly = process.env.DREAM_PROPOSE_ONLY === "1";
+
+  const ensureMaintenanceSession = async (): Promise<string> => {
+    if (maintenanceSessionId) {
+      await manager.unarchiveSession(maintenanceSessionId).catch(() => {});
+      return maintenanceSessionId;
+    }
+    const row = await manager.createSession();
+    await manager.rename(row.id, "Memory maintenance");
+    maintenanceSessionId = row.id;
+    return row.id;
+  };
+
+  const run = async () => {
+    const ltmInstance = memory.getLtm();
+    if (!ltmInstance) return;
+    await runDreamJob({
+      ltm: ltmInstance,
+      reconcile: (o) => (reconciler ? reconciler.reconcile(o) : Promise.resolve({ pruned: 0 } as { pruned: number })),
+      store: proposalStore,
+      storeDir: ltmStoreDir,
+      dreamDir,
+      gatherUserTurns: makeGatherUserTurns(sessionsDir),
+      ensureMaintenanceSession,
+      postReport: (sid, text) => manager.postAssistantNote(sid, text),
+      getApiKey: () => resolveApiKey("github-copilot", authStore),
+      model,
+      minConfidence,
+      tokenBudget,
+      proposeOnly,
+      idFor: (seed) => "p-" + crypto.createHash("sha256").update(seed).digest("hex").slice(0, 8),
+      now: () => new Date().toISOString(),
+    }).catch((e) => console.warn(`[dream] run error: ${(e as Error).message}`));
+  };
+
+  const readState = (): string | null => {
+    try {
+      return (JSON.parse(fs.readFileSync(path.join(dreamDir, "dream-state.json"), "utf8")) as { lastRunDate: string | null }).lastRunDate;
+    } catch {
+      return null;
+    }
+  };
+
+  dreamScheduler = new DreamScheduler({ run, hour, lastRunDate: readState, nowDate: () => new Date() });
+  dreamScheduler.start();
+}
+
 /**
  * Graceful shutdown orchestrator. Runs the 7-step drain when SIGTERM
  * or SIGINT arrives. Wired via process.once so a duplicate signal
@@ -387,6 +465,13 @@ const drainAndExit = async (signal: string): Promise<void> => {
     scheduler.stop();
   } catch (err) {
     console.warn(`[shutdown] scheduler.stop: ${(err as Error).message}`);
+  }
+
+  // Stop the dream scheduler's polling timer (sync clearInterval, like scheduler.stop).
+  try {
+    dreamScheduler?.stop();
+  } catch (err) {
+    console.warn(`[shutdown] dreamScheduler.stop: ${(err as Error).message}`);
   }
 
   // Step 2: close every attached WebSocket with code 1001 (going away).

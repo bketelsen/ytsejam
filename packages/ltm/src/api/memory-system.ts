@@ -576,6 +576,13 @@ export class MemorySystem {
     return result;
   }
 
+  /** Canonicalize + dedup the active fact set (dream mechanical pass). */
+  canonicalizeFacts(): { canonicalized: number; merged: number } {
+    const res = this.semantic.canonicalizeAndDedup(this.clock());
+    if (res.canonicalized > 0) this.rebuildDerived();
+    return res;
+  }
+
   // -- inspection (user control surface) --------------------------------------
 
   listEpisodic(
@@ -677,6 +684,11 @@ export class MemorySystem {
     const n = this.episodic.redactMany(ids);
     if (n > 0) this.rebuildDerived();
     return n;
+  }
+
+  /** Tombstone one semantic fact by id (used by the dream apply path). */
+  redactFact(id: string): boolean {
+    return this.semantic.redactFactById(id);
   }
 
   /**
