@@ -34,6 +34,7 @@ Every memory file begins with \`<!-- L0: summary (max 80 chars) -->\`.
 7. ALWAYS write to a domain's *path* from the Domains table below, never its id — the memory store rejects id-as-path writes
 8. cog-meta/patterns.md: edit in place, ≤70 lines of distilled, timeless rules
 9. decisions.md: append new entry \`- YYYY-MM-DD [d-<slug>]: <one-line decision>. <!-- origin: <pr-or-commit>, supersedes: <d-prior or omit> -->\`; on supersedes, also append \`<!-- superseded-by: d-<new> -->\` to the cited entry to keep the chain followable both directions
+10. Provenance: observations are YOUR notes, recalled as memories — not the user's stated facts. Do NOT write "the user prefers/always/never/uses/is X" unless the user actually said or explicitly confirmed it. Phrase your own inferences as observations — "Observed…", "Task revealed…", "Project pattern…" — so a later read can't mistake an assistant conclusion for the user's preference.
 
 ### File edit patterns
 

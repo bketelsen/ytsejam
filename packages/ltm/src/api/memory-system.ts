@@ -207,21 +207,26 @@ export class MemorySystem {
 
   /**
    * Record a deliberate, externally authored observation (SEAM 4) — the
-   * write API the cog→LTM bridge calls. Unlike session turns (learned by
-   * the ingester), an observation is an explicit note: it gets a slow
-   * per-kind half-life, an optional domain tag and provenance `origin`,
-   * and its text is run through the semantic extractor so facts learn from
-   * deliberate writes and a later originPrefix redaction cascades to them.
+   * write API the cog→LTM bridge calls. An observation is an explicit note:
+   * it gets a slow per-kind half-life, an optional domain tag and provenance
+   * `origin`, and it is stored as a retrievable episodic record.
+   *
+   * PROVENANCE GATE (`learnFacts`, default false): cog observations are
+   * AUTHORED BY THE ASSISTANT (`cog_append` is an agent tool), so an
+   * assistant-written note like "Brian prefers X" must NOT become a durable
+   * user fact — that conflates assistant inference with user assertion and is
+   * what polluted the profile (69 junk facts purged 2026-06-19). By default we
+   * mirror the observation for EPISODIC RECALL ONLY and skip semantic fact
+   * extraction. Genuine user facts come from the role-respecting session-file
+   * ingest path (`ingestSessionFile` → `ingestTurn`, user turns only). Pass
+   * `learnFacts: true` only for an explicitly user-authored/confirmed assertion.
    *
    * The id is content-addressed (`obs-<sha256(text+timestamp)>`), so
-   * re-recording the same line is idempotent: the record upserts
-   * latest-wins (metadata like tags/origin updates), and fact learning
-   * runs only on first sight of that id — re-ingest does NOT inflate the
-   * extracted fact's mentionCount/strength. This matters because the
-   * bridge's promotion gate reads mentionCount; a watcher re-emitting an
-   * unchanged line must not look like reinforcement. (Note: `origin` is
-   * not part of the id; re-recording identical text+timestamp under a new
-   * origin won't re-learn under the new provenance.)
+   * re-recording the same line is idempotent: the record upserts latest-wins
+   * (metadata like tags/origin updates), and any fact learning (opt-in) runs
+   * only on first sight of that id — re-ingest does NOT inflate the extracted
+   * fact's mentionCount/strength. (Note: `origin` is not part of the id;
+   * re-recording identical text+timestamp under a new origin won't re-learn.)
    */
   async recordObservation(obs: {
     text: string;
@@ -229,6 +234,13 @@ export class MemorySystem {
     tags?: string[];
     origin?: string;
     salience?: number;
+    /**
+     * Opt in to durable fact extraction from this observation. Default false:
+     * observations are episodic-only. Set true ONLY when the text is a
+     * user-authored or explicitly user-confirmed assertion (see the provenance
+     * gate above).
+     */
+    learnFacts?: boolean;
   }): Promise<EpisodicRecord> {
     const digest = crypto
       .createHash("sha256")
@@ -254,11 +266,13 @@ export class MemorySystem {
     };
     this.episodic.upsert(record);
 
-    // Learn facts from the deliberate write — ONLY on first sight of this
-    // id, so re-ingest of an unchanged line doesn't reinforce facts (the
-    // bridge's promotion gate reads mentionCount). The synthesized Turn's
-    // sessionId = origin so source-based redaction (originPrefix) cascades.
-    if (!alreadyLearned) {
+    // Fact learning is OPT-IN (see the provenance gate in the doc comment):
+    // assistant-authored cog observations are episodic-only by default. When
+    // explicitly opted in, learn ONLY on first sight of this id so re-ingest
+    // of an unchanged line doesn't reinforce facts (the bridge's promotion
+    // gate reads mentionCount). The synthesized Turn's sessionId = origin so
+    // source-based redaction (originPrefix) still cascades to the fact.
+    if (obs.learnFacts && !alreadyLearned) {
       const turn: Turn = {
         sessionId: obs.origin ?? "observation",
         entryId: digest,
