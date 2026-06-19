@@ -45,6 +45,13 @@ test("QuakeTerminal uses a top Sheet with xterm and FitAddon", () => {
   assert.match(quakeTerminal, /terminal\.onResize/);
 });
 
+test("QuakeTerminal keeps sheet padding outside the xterm fit target", () => {
+  assert.match(quakeTerminal, /className=["']h-\[min\(70dvh,42rem\)\] gap-0 overflow-hidden/);
+  assert.match(quakeTerminal, /<div className=["']min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-12["']>/);
+  assert.match(quakeTerminal, /<div ref=\{setContainerElement\} className=["']h-full min-h-0 overflow-hidden["'] \/>/);
+  assert.doesNotMatch(quakeTerminal, /ref=\{setContainerElement\}[^\n]*className=["'][^"']*(?:\bpx-|\bpy-|\bpt-|\bpb-|\bpl-|\bpr-)/);
+});
+
 test("terminal-ws connects to the terminal endpoint and forwards output and exit frames", () => {
   assert.match(terminalWs, /\/api\/terminal\/ws\?token=/);
   assert.match(terminalWs, /encodeURIComponent\s*\(\s*getToken\(\)\s*\?\?\s*["']["']\s*\)/);
