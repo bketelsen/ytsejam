@@ -138,6 +138,8 @@ export interface HealthResult {
       skipped: number;
       errors: number;
     };
+    /** Cached orphan count from the last successful reconciler tick; freshness is `lastTickAt`. */
+    orphans?: { observations: number };
     lastError?: { message: string; at: string };
   };
 }

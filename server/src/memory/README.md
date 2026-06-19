@@ -98,6 +98,10 @@ Per tick:
 - Parses each line; computes the same content-addressed origin; calls
   `hasObservation(origin)` to dedup; calls `ltm.recordObservation()` only
   for misses.
+- Runs a lightweight full origins-only scan after each tick and caches
+  `health().ltm.orphans.observations`, the count of active cog-origin LTM
+  observation records with no current source line. The health endpoint does
+  not do file I/O for this; freshness is `lastTickAt`.
 - Per-line errors bump `stats.errors` but don't fail the tick.
 - Tick-level errors bump `consecutiveFailures` and surface in `health()`.
 
@@ -145,11 +149,15 @@ const h = await memory.health();
 //   lastError?: { message: string, at: string },
 //   lastTickAt?: string,
 //   lastTickStats?: { scannedFiles, scannedLines, replayed, rebuilt, pruned, skipped, errors },
+//   orphans?: { observations: number },
 // }
 ```
 
 `h.ltm` is OMITTED (not present, not `undefined`) when no reconciler is
 attached. The web UI surfaces this via the Brain health icon (`web/src/components/HealthIcon.tsx`).
+When `orphans.observations > 0` after the first boot tick, startup logs a
+one-time hint to run `ltm replay --rebuild --prune`. The server never
+auto-prunes; orphan cleanup is opt-in.
 
 ## Auto-commit cadence
 

@@ -248,6 +248,15 @@ try {
   memory.attachLtm(ltm);
   memory.attachReconciler(reconciler);
   reconciler.start();
+  void reconciler.whenFirstTickSettled().then(() => {
+    const orphanCount = reconciler?.health().orphans?.observations ?? 0;
+    if (orphanCount > 0) {
+      console.warn(
+        `[memory] LTM bridge: ${orphanCount} orphan observation(s) detected ` +
+          "(run `ltm replay --rebuild --prune` to clean)",
+      );
+    }
+  });
   console.log(`[memory] LTM bridge attached, store=${ltmStoreDir}, embedder=${embedderResult.label}`);
 } catch (err) {
   console.warn(

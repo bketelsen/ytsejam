@@ -45,7 +45,20 @@ export type Health = {
   consecutiveFailures: number;
   lastTickAt?: string;
   lastTickStats?: ReconcileStats;
+  orphans?: { observations: number };
 };
+
+type ObservationLineCandidate = {
+  kind: "candidate";
+  line: string;
+  domainPath: string;
+  filename: string;
+  origin: string;
+};
+
+type DerivedObservationLine =
+  | ObservationLineCandidate
+  | { kind: "unexpected-path" };
 
 /**
  * Periodically walks the cog memory tree looking for observations.md
@@ -71,6 +84,7 @@ export class LtmReconciler {
   private readonly mtimeCache = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
+  private firstTickSettled: Promise<void> | null = null;
   private state: Health = {
     reachable: true,
     consecutiveFailures: 0,
@@ -104,7 +118,7 @@ export class LtmReconciler {
     if (typeof this.timer.unref === "function") this.timer.unref();
     // Kick off an immediate first tick so cold-restart back-fill doesn't
     // wait the full intervalMs. tickSafe() is idempotent (inFlight guard).
-    void this.tickSafe();
+    this.firstTickSettled = this.tickSafe();
   }
 
   async stop(): Promise<void> {
@@ -131,7 +145,12 @@ export class LtmReconciler {
     if (h.lastTickAt !== undefined) snap.lastTickAt = h.lastTickAt;
     if (h.lastTickStats !== undefined)
       snap.lastTickStats = { ...h.lastTickStats };
+    if (h.orphans !== undefined) snap.orphans = { ...h.orphans };
     return snap;
+  }
+
+  whenFirstTickSettled(): Promise<void> {
+    return this.firstTickSettled ?? Promise.resolve();
   }
 
   private async tickSafe(): Promise<void> {
@@ -163,7 +182,6 @@ export class LtmReconciler {
       prune = false;
     }
     const force = opts?.force || rebuild || false;
-    const mirroredOrigins = new Set<string>();
     const stats: ReconcileStats = {
       scannedFiles: 0,
       scannedLines: 0,
@@ -207,19 +225,21 @@ export class LtmReconciler {
         const state = { inComment: false, inFence: false };
         const rawLines = content.split(/\r?\n/);
         for (let i = 0; i < rawLines.length; i++) {
-          const trimmed = rawLines[i]!.trim();
-          if (!trimmed) continue;
-          if (skipMarkdownNoise(trimmed, state)) continue;
-          if (!trimmed.startsWith("- ")) continue;
-          stats.scannedLines++;
-          await this.processLine(
+          const candidate = this.deriveObservationLine(
             file,
-            trimmed,
-            i,
-            stats,
-            rebuild,
-            mirroredOrigins,
+            rawLines[i]!,
+            state,
           );
+          if (!candidate) continue;
+          stats.scannedLines++;
+          if (candidate.kind === "unexpected-path") {
+            stats.errors++;
+            this.logger("warn", `skipping observations.md at unexpected path`, {
+              file,
+            });
+            continue;
+          }
+          await this.processLine(candidate, i, stats, rebuild);
         }
         this.mtimeCache.set(file, st.mtimeMs);
       } catch (err) {
@@ -227,11 +247,17 @@ export class LtmReconciler {
       }
     }
 
+    let orphanIds: string[];
+    try {
+      const liveOrigins = await this.collectLiveOrigins();
+      orphanIds = this.collectOrphanObservationIds(liveOrigins);
+      this.state.orphans = { observations: orphanIds.length };
+    } catch (err) {
+      this.bumpTickError(err as Error, stats);
+      return stats;
+    }
+
     if (rebuild && prune) {
-      const orphanIds: string[] = [];
-      for (const [origin, id] of this.ltm.allObservationsByOrigin()) {
-        if (!mirroredOrigins.has(origin)) orphanIds.push(id);
-      }
       stats.pruned = this.ltm.episodicRedactMany(orphanIds);
       if (stats.pruned > 0) {
         this.logger("info", "pruned orphan observation records", {
@@ -254,49 +280,81 @@ export class LtmReconciler {
   }
 
   private async processLine(
-    file: string,
-    line: string,
+    candidate: ObservationLineCandidate,
     lineNum: number,
     stats: ReconcileStats,
     rebuild: boolean,
-    mirroredOrigins: Set<string>,
   ): Promise<void> {
-    const split = this.splitFilePath(file);
-    if (!split) {
-      stats.errors++;
-      this.logger("warn", `skipping observations.md at unexpected path`, {
-        file,
-      });
-      return;
-    }
-    const { domainPath, filename } = split;
-    const parsed = parseObservationLine(line);
+    const parsed = parseObservationLine(candidate.line);
     if (!parsed) {
       stats.errors++;
       this.logger("warn", `malformed line skipped`, {
-        file: `${domainPath}/${filename}`,
+        file: `${candidate.domainPath}/${candidate.filename}`,
         line: lineNum + 1,
       });
       return;
     }
-    const origin = computeOrigin(domainPath, filename, line);
-    const wasAlreadyMirrored = this.ltm.hasObservation(origin);
+    const wasAlreadyMirrored = this.ltm.hasObservation(candidate.origin);
     if (!rebuild && wasAlreadyMirrored) {
       stats.skipped++;
       return;
     }
-    const result = await mirrorToLtm(this.ltm, parsed, origin);
+    const result = await mirrorToLtm(this.ltm, parsed, candidate.origin);
     if (result.ok) {
-      mirroredOrigins.add(origin);
       if (rebuild && wasAlreadyMirrored) stats.rebuilt++;
       else stats.replayed++;
     } else {
       stats.errors++;
       this.logger("warn", `mirror failed`, {
-        origin,
+        origin: candidate.origin,
         error: result.error.message,
       });
     }
+  }
+
+  private deriveObservationLine(
+    file: string,
+    rawLine: string,
+    state: { inComment: boolean; inFence: boolean },
+  ): DerivedObservationLine | null {
+    const line = rawLine.trim();
+    if (!line) return null;
+    if (skipMarkdownNoise(line, state)) return null;
+    if (!line.startsWith("- ")) return null;
+
+    const split = this.splitFilePath(file);
+    if (!split) return { kind: "unexpected-path" };
+
+    const { domainPath, filename } = split;
+    return {
+      kind: "candidate",
+      line,
+      domainPath,
+      filename,
+      origin: computeOrigin(domainPath, filename, line),
+    };
+  }
+
+  private async collectLiveOrigins(): Promise<Set<string>> {
+    const origins = new Set<string>();
+    const files = await this.findObservationFiles();
+    for (const file of files) {
+      const content = await readFile(file, "utf8");
+      const state = { inComment: false, inFence: false };
+      for (const rawLine of content.split(/\r?\n/)) {
+        const candidate = this.deriveObservationLine(file, rawLine, state);
+        if (candidate?.kind === "candidate") origins.add(candidate.origin);
+      }
+    }
+    return origins;
+  }
+
+  private collectOrphanObservationIds(liveOrigins: Set<string>): string[] {
+    const orphanIds: string[] = [];
+    for (const [origin, id] of this.ltm.allObservationsByOrigin()) {
+      if (!liveOrigins.has(origin)) orphanIds.push(id);
+    }
+    return orphanIds;
   }
 
   private async findObservationFiles(): Promise<string[]> {
