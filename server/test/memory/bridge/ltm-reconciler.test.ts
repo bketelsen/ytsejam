@@ -138,10 +138,98 @@ describe("LtmReconciler", () => {
     expect(stats.rebuilt).toBe(3);
     expect(stats.pruned).toBe(2);
     expect(stats.errors).toBe(0);
+    expect(reconciler.health().orphans?.observations).toBe(2);
     expect(ltm.getRecord(orphan1.id)?.state).toBe("redacted");
     expect(ltm.getRecord(orphan1.id)?.text).toBe("");
     expect(ltm.getRecord(orphan2.id)?.state).toBe("redacted");
     expect(ltm.getRecord(orphan2.id)?.text).toBe("");
+
+    const afterPrune = await reconciler.reconcile({ force: true });
+    expect(afterPrune.errors).toBe(0);
+    expect(reconciler.health().orphans?.observations).toBe(0);
+  });
+
+  it("exposes orphan count on a non-force tick without counting unchanged live origins", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: live line one\n- 2026-06-11 [b]: live line two\n",
+    );
+
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    const initial = await reconciler.reconcile();
+    expect(initial.replayed).toBe(2);
+    expect(reconciler.health().orphans?.observations).toBe(0);
+
+    await ltm.recordObservation({
+      text: "orphan added after initial tick",
+      timestamp: "2026-06-12T00:00:00.000Z",
+      origin: "cog:personal/observations.md#orphan-after-cache",
+    });
+
+    const cachedTick = await reconciler.reconcile();
+    expect(cachedTick.scannedFiles).toBe(0);
+    expect(cachedTick.scannedLines).toBe(0);
+    expect(reconciler.health().orphans?.observations).toBe(1);
+  });
+
+  it("reports zero orphans when every live cog origin is mirrored", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: live only\n",
+    );
+
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    const stats = await reconciler.reconcile();
+    expect(stats.replayed).toBe(1);
+    expect(reconciler.health().orphans?.observations).toBe(0);
+  });
+
+  it("refreshes orphan count on each tick without rebuild", async () => {
+    const oldLine = "- 2026-06-10 [a]: old editable line";
+    const newLine = "- 2026-06-10 [a]: edited line";
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      `${oldLine}\n`,
+    );
+
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    await reconciler.reconcile();
+    expect(reconciler.health().orphans?.observations).toBe(0);
+
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      `${newLine}\n`,
+    );
+    const refreshed = await reconciler.reconcile();
+    expect(refreshed.replayed).toBe(1);
+    expect(ltm.hasObservation(computeOrigin("personal", "observations.md", oldLine))).toBe(true);
+    expect(ltm.hasObservation(computeOrigin("personal", "observations.md", newLine))).toBe(true);
+    expect(reconciler.health().orphans?.observations).toBe(1);
+  });
+
+  it("leaves previous orphan count intact when the live-origin scan fails", async () => {
+    await mkdir(join(dataDir, "memory", "personal"), { recursive: true });
+    await writeFile(
+      join(dataDir, "memory", "personal", "observations.md"),
+      "- 2026-06-10 [a]: live line\n",
+    );
+    await ltm.recordObservation({
+      text: "existing orphan",
+      timestamp: "2026-06-12T00:00:00.000Z",
+      origin: "cog:personal/observations.md#existing-orphan",
+    });
+
+    reconciler = new LtmReconciler({ ltm, dataDir, logger: noopLogger });
+    await reconciler.reconcile();
+    expect(reconciler.health().orphans?.observations).toBe(1);
+
+    await rm(join(dataDir, "memory"), { recursive: true, force: true });
+    const failed = await reconciler.reconcile();
+    expect(failed.errors).toBeGreaterThan(0);
+    expect(reconciler.health().orphans?.observations).toBe(1);
   });
 
   it("ignores prune without rebuild", async () => {
@@ -348,6 +436,7 @@ describe("LtmReconciler", () => {
         .fn()
         .mockRejectedValueOnce(new Error("boom"))
         .mockResolvedValue(undefined),
+      allObservationsByOrigin: () => new Map<string, string>(),
     } as unknown as MemorySystem;
     reconciler = new LtmReconciler({
       ltm: fakeLtm,

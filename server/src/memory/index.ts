@@ -142,6 +142,7 @@ type ReconcilerLike = {
       skipped: number;
       errors: number;
     };
+    orphans?: { observations: number };
     lastError?: { message: string; at: string };
   };
   reconcile(opts?: {

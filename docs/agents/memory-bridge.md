@@ -136,7 +136,14 @@ Per tick:
    multiple lines, state persists).
 4. For each candidate line: `parseObservationLine` → compute origin →
    `ltm.hasObservation(origin)` → if miss, `ltm.recordObservation(...)`.
-5. Per-line errors bump `stats.errors` and are isolated; tick-level
+5. After the mirror pass, run a lightweight origins-only scan over every
+   current `observations.md` line (same trimming/noise/origin derivation,
+   but no parsing, embeddings, or writes). Diff that complete live-origin
+   set against `ltm.allObservationsByOrigin()` and cache
+   `health().orphans.observations`: the count of active cog-origin LTM
+   observation records with no current source line. Health reads serve this
+   cached value only; freshness is `lastTickAt`.
+6. Per-line errors bump `stats.errors` and are isolated; tick-level
    errors (e.g. unreachable `dataDir`) bump `consecutiveFailures` and
    set `reachable=false` until the next clean tick.
 
@@ -184,6 +191,12 @@ are always degraded to cog-only memory, not process exit. Full design rationale:
    `memory.attachLtm(ltm)`, `memory.attachReconciler(reconciler)`, and
    `reconciler.start()`. If a downstream step throws, the catch path closes
    any opened LTM handle so the advisory lock does not leak.
+   The immediate first reconciler tick runs asynchronously; after it settles,
+   boot emits a one-time soft warning when cached orphans are present:
+   `[memory] LTM bridge: N orphan observation(s) detected (run \`ltm replay --rebuild --prune\` to clean)`.
+   This is visibility only. The server never auto-prunes; cleanup remains an
+   explicit operator action because source edits must not destructively alter
+   LTM provenance.
 
 Shutdown drains in the opposite order: `SIGTERM`/`SIGINT` (registered with
 `process.once`) await `reconciler.stop()`, then `attachReconciler(null)` /
@@ -293,12 +306,15 @@ h.ltm = {
   lastError?: { message, at },
   lastTickAt?: string,
   lastTickStats?: { scannedFiles, scannedLines, replayed, rebuilt, skipped, errors, durationMs? },
+  orphans?: { observations: number },
 };
 ```
 
 `h.ltm` is **omitted** (not present, not `undefined`) when no reconciler
 is attached — important for the web brain-icon polling logic, which
 distinguishes "unknown / not wired" from "ok / bad".
+`orphans.observations` is the cached count from the last successful
+reconciler tick; `lastTickAt` is the freshness marker.
 
 `/api/memory/health` (bearer-gated) returns `{ltm: h.ltm ?? null}` for the
 web UI. See [`observability.md`](observability.md) § Health icons.
