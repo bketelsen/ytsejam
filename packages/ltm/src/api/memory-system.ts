@@ -28,6 +28,7 @@ import type {
 } from "../types.ts";
 import { mergeConfig, type LtmConfigPatch } from "../types.ts";
 import { HashEmbedder, type Embedder } from "../embedding/embedder.ts";
+import type { FactExtractor } from "../semantic/fact-extractor.ts";
 import { VectorIndex } from "../embedding/vector-index.ts";
 import { EpisodicStore } from "../episodic/store.ts";
 import {
@@ -52,6 +53,8 @@ export interface MemorySystemOptions {
   /** Directory for the memory store's JSONL files. */
   storeDir: string;
   embedder?: Embedder;
+  /** Fact extractor for user turns. Defaults to the regex extractor. */
+  factExtractor?: FactExtractor;
   config?: LtmConfigPatch;
   summarizer?: Summarizer;
   readOptions?: ReadSessionOptions;
@@ -107,7 +110,7 @@ export class MemorySystem {
     this.retrievalLog = opts.retrievalLog ?? process.env.LTM_RETRIEVAL_LOG;
     this.readOptions = opts.readOptions;
     this.episodic = EpisodicStore.open(this.storeDir);
-    this.semantic = SemanticStore.open(this.storeDir);
+    this.semantic = SemanticStore.open(this.storeDir, opts.factExtractor);
     this.auditLog = new JsonlLog<AuditRecord>(
       path.join(this.storeDir, "redactions.jsonl"),
     );
