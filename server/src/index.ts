@@ -427,7 +427,22 @@ if (process.env.DREAM_ENABLED !== "0") {
     }
   };
 
-  dreamScheduler = new DreamScheduler({ run, hour, lastRunDate: readState, nowDate: () => new Date() });
+  // First-boot baseline: persist a minimal dream-state so a daytime (re)start
+  // past DREAM_HOUR doesn't trigger an immediate run; the next run waits for
+  // the scheduled hour. runDreamJob later overwrites this with the full state.
+  const recordBaseline = (date: string): void => {
+    try {
+      fs.mkdirSync(dreamDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dreamDir, "dream-state.json"),
+        JSON.stringify({ lastRunDate: date, cursorMs: 0, maintenanceSessionId: null }, null, 2),
+      );
+    } catch (e) {
+      console.warn(`[dream] could not write baseline dream-state: ${(e as Error).message}`);
+    }
+  };
+
+  dreamScheduler = new DreamScheduler({ run, hour, lastRunDate: readState, nowDate: () => new Date(), recordBaseline });
   dreamScheduler.start();
 }
 
