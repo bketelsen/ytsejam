@@ -17,6 +17,8 @@ import type { SchedulerService } from "./scheduler.ts";
 import type { SkillSummary, SkillsStore } from "./skills.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type { WorkdirStore } from "./workdirs.ts";
+import { recentWorkdirs } from "./workdirs.ts";
+import { loadManifest } from "./memory/domain/manifest.ts";
 
 const APPROVAL_PREFIX_SKILLS: SkillSummary[] = [
   {
@@ -42,6 +44,12 @@ export interface AppDeps {
   authStore: PiAuthStore;
   /** Optional: when supplied, exposes POST /api/sessions/:id/cwd. */
   workdirs?: WorkdirStore;
+  /**
+   * Optional: root directory for domains.yml (memoryRoot). When supplied,
+   * enables GET /api/workdirs/suggestions to include knownProjects from the
+   * domain manifest.
+   */
+  memoryRootDir?: string;
   /** Optional: when supplied, exposes GET /api/skills. */
   skills?: SkillsStore;
   /** Optional approval coordinator for WS approval lifecycle messages. */
@@ -392,6 +400,35 @@ export function createApp(deps: AppDeps) {
     if (typeof body.content !== "string") return c.json({ error: "content is required" }, 400);
     await persona.save(body.content);
     return c.json({ ok: true });
+  });
+
+  app.get("/api/workdirs/suggestions", (c) => {
+    // knownProjects: domains from manifest that declare a workingDir
+    const domains = deps.memoryRootDir ? (() => {
+      try { return loadManifest(deps.memoryRootDir!); } catch { return []; }
+    })() : [];
+
+    // flatten to include subdomains (recurse one level deep is enough; Domain
+    // tree can nest, so we fully flatten)
+    function flattenDomains(ds: ReturnType<typeof loadManifest>): typeof ds {
+      const result: typeof ds = [];
+      for (const d of ds) {
+        result.push(d);
+        if (d.subdomains?.length) result.push(...flattenDomains(d.subdomains));
+      }
+      return result;
+    }
+
+    const knownProjects = flattenDomains(domains)
+      .filter((d) => typeof d.workingDir === "string")
+      .map((d) => ({ path: d.workingDir as string, label: d.label ?? d.id }));
+
+    // recent: latest distinct workdirs across past sessions, excluding dataDir
+    const recent = deps.workdirs
+      ? recentWorkdirs(deps.workdirs, 20, deps.config.dataDir)
+      : [];
+
+    return c.json({ knownProjects, recent });
   });
 
   app.get("/api/skills", async (c) => {

@@ -403,7 +403,7 @@ try {
   console.warn(`memory health check failed: ${(err as Error).message} — memory disabled until it recovers`);
 }
 
-const { app, injectWebSocket, wss } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills, approvalCoordinator });
+const { app, injectWebSocket, wss } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills, approvalCoordinator, memoryRootDir: memoryRoot() });
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
   const allInterfaces = info.address === "0.0.0.0" || info.address === "::";
   const displayHost = allInterfaces ? "<all interfaces>" : info.address;

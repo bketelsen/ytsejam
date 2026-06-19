@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readdirSync } from "node:fs";
 
 /**
  * Per-session agent working directory. JSONL events are SSOT (latest-wins);
@@ -61,6 +62,72 @@ export class WorkdirStore {
     }
     return latest?.dir;
   }
+}
+
+/**
+ * Return the most-recent distinct working directories across all sessions in
+ * the store, excluding `excludeDir` (typically the dataDir default).
+ *
+ * Algorithm:
+ *   1. Enumerate every *.jsonl file in the store dir.
+ *   2. For each file, derive a session id and read the latest event via `current()`.
+ *   3. Collect (dir, timestamp) pairs from each file's last event so we can sort
+ *      by recency.
+ *   4. Sort descending by timestamp, deduplicate paths, then slice to `limit`.
+ *
+ * Errors reading individual session files are silently skipped (same resilience
+ * posture as `current()`).
+ */
+export function recentWorkdirs(
+  store: WorkdirStore,
+  limit: number,
+  excludeDir?: string,
+): string[] {
+  let files: string[];
+  try {
+    files = readdirSync(store["dir"]).filter((f) => f.endsWith(".jsonl"));
+  } catch {
+    return [];
+  }
+
+  // collect (sessionId, latestEvent) pairs
+  const entries: { dir: string; timestamp: string }[] = [];
+  for (const file of files) {
+    const sessionId = file.slice(0, -".jsonl".length);
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(store["dir"], file), "utf8");
+    } catch {
+      continue;
+    }
+    let latest: WorkdirEvent | undefined;
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      try {
+        const ev = JSON.parse(line) as WorkdirEvent;
+        if (typeof ev.dir === "string") latest = ev;
+      } catch {
+        // tolerate corrupt lines
+      }
+    }
+    if (latest) entries.push(latest);
+    void sessionId; // used only to derive file path via store["dir"]
+  }
+
+  // sort most-recent first
+  entries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  // deduplicate paths, exclude default dir, slice to limit
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const { dir } of entries) {
+    if (result.length >= limit) break;
+    if (excludeDir && dir === excludeDir) continue;
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    result.push(dir);
+  }
+  return result;
 }
 
 /**
