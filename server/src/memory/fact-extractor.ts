@@ -59,19 +59,19 @@ export interface CopilotFactExtractorOptions {
   fetchImpl?: typeof fetch;
 }
 
-let warned = false;
-function warnOnce(msg: string): void {
-  if (warned) return;
-  warned = true;
-  console.warn(`[ltm fact-extractor] ${msg} Falling back to NO extraction (skip) for failed turns.`);
-}
-
 export class CopilotFactExtractor implements FactExtractor {
   private readonly getApiKey: () => Promise<string | undefined>;
   private readonly model: string;
   private readonly url: string;
   private readonly floor: number;
   private readonly fetchImpl: typeof fetch;
+  private warned = false;
+
+  private warnOnce(msg: string): void {
+    if (this.warned) return;
+    this.warned = true;
+    console.warn(`[ltm fact-extractor] ${msg} Falling back to NO extraction (skip) for failed turns.`);
+  }
 
   constructor(opts: CopilotFactExtractorOptions) {
     this.getApiKey = opts.getApiKey;
@@ -84,14 +84,14 @@ export class CopilotFactExtractor implements FactExtractor {
   async extract(text: string): Promise<FactCandidate[]> {
     try {
       let apiKey = await this.getApiKey();
-      if (!apiKey) { warnOnce("Copilot API key unavailable."); return []; }
+      if (!apiKey) { this.warnOnce("Copilot API key unavailable."); return []; }
       let res = await this.post(text, apiKey);
       if (res.status === 401) {
         apiKey = await this.getApiKey();
         if (!apiKey) return [];
         res = await this.post(text, apiKey);
       }
-      if (!res.ok) { warnOnce(`Copilot returned HTTP ${res.status}.`); return []; }
+      if (!res.ok) { this.warnOnce(`Copilot returned HTTP ${res.status}.`); return []; }
       const body = (await res.json()) as {
         choices?: { message?: { tool_calls?: { function?: { arguments?: string } }[] } }[];
       };
@@ -100,7 +100,7 @@ export class CopilotFactExtractor implements FactExtractor {
       const parsed = JSON.parse(args) as { facts?: unknown };
       return this.toCandidates(parsed.facts);
     } catch (err) {
-      warnOnce(`extraction threw: ${(err as Error).message}.`);
+      this.warnOnce(`extraction threw: ${(err as Error).message}.`);
       return [];
     }
   }

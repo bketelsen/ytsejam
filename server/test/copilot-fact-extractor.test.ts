@@ -48,6 +48,26 @@ describe("CopilotFactExtractor", () => {
     expect(await ext.extract("hi")).toEqual([]);
   });
 
+  it("retries on 401 and returns facts from the successful second response", async () => {
+    let callCount = 0;
+    const facts = [{ kind: "identity", predicate: "name", object: "Brian", polarity: 1, confidence: 0.9 }];
+    const fetchImpl = (async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Response(JSON.stringify({}), { status: 401, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(toolResponse(facts)), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+    let keyCallCount = 0;
+    const getApiKey = async () => { keyCallCount += 1; return "tok"; };
+    const ext = new CopilotFactExtractor({ getApiKey, fetchImpl });
+    const out = await ext.extract("my name is Brian");
+    expect(out).toEqual([
+      { kind: "identity", predicate: "name", object: "Brian", polarity: 1, initialStrength: 0.9 },
+    ]);
+    expect(keyCallCount).toBeGreaterThanOrEqual(2);
+  });
+
   it("drops candidates with invalid kind/polarity", async () => {
     const ext = new CopilotFactExtractor(opts(fakeFetch(toolResponse([
       { kind: "bogus", predicate: "x", object: "y", polarity: 1, confidence: 0.9 },
