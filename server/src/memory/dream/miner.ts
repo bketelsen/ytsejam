@@ -45,6 +45,9 @@ export interface MinerDeps {
   model: string; baseUrl?: string; minConfidence: number;
   fetchImpl?: typeof fetch;
   idFor: (seed: string) => string;
+  /** Abort the Copilot call after this many ms so a hung request can't stall
+   *  the nightly run. Default 30s. */
+  timeoutMs?: number;
 }
 
 export async function mineProposals(deps: MinerDeps): Promise<Proposal[]> {
@@ -56,13 +59,26 @@ export async function mineProposals(deps: MinerDeps): Promise<Proposal[]> {
     facts: deps.facts,
     recent_user_statements: deps.userTurns.map((t) => ({ sessionId: t.sessionId, entryId: t.entryId, text: t.text })),
   });
-  const res = await fetchImpl(`${deps.baseUrl ?? DEFAULT_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Copilot-Integration-Id": "vscode-chat" },
-    body: JSON.stringify({ model: deps.model, temperature: 0,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }],
-      tools: [TOOL], tool_choice: { type: "function", function: { name: "propose_changes" } } }),
-  });
+  // Bound the call so a hung/slow Copilot request can't stall the nightly run.
+  // Any failure (network error, timeout/abort, non-200) skips proposals for
+  // this run — same skip-on-failure contract as the fact extractor.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 30_000);
+  let res: Response;
+  try {
+    res = await fetchImpl(`${deps.baseUrl ?? DEFAULT_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Copilot-Integration-Id": "vscode-chat" },
+      body: JSON.stringify({ model: deps.model, temperature: 0,
+        messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: userMsg }],
+        tools: [TOOL], tool_choice: { type: "function", function: { name: "propose_changes" } } }),
+      signal: controller.signal,
+    });
+  } catch {
+    return []; // network error or aborted (timeout)
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) return [];
   const json = (await res.json()) as { choices?: { message?: { tool_calls?: { function?: { arguments?: string } }[] } }[] };
   const args = json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;

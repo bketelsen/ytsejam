@@ -34,4 +34,21 @@ describe("mineProposals", () => {
     const out = await mineProposals(deps({ fetchImpl, dismissedKeys: new Set([keyOf(dropProposal)]) }));
     expect(out).toHaveLength(0);
   });
+
+  it("returns [] when the fetch fails/aborts (skip-on-failure, never throws)", async () => {
+    n = 0;
+    // Simulates an aborted/hung request: the fetch rejects.
+    const failing = (async () => { throw new Error("aborted"); }) as unknown as typeof fetch;
+    await expect(mineProposals(deps({ fetchImpl: failing }))).resolves.toEqual([]);
+  });
+
+  it("aborts via timeout: a fetch honoring AbortSignal yields [] after the deadline", async () => {
+    n = 0;
+    // A fetch that rejects when the signal aborts; timeoutMs:1 fires the abort.
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")));
+      })) as unknown as typeof fetch;
+    await expect(mineProposals(deps({ fetchImpl: hanging, timeoutMs: 1 }))).resolves.toEqual([]);
+  });
 });

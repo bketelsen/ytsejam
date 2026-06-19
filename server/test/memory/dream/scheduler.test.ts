@@ -14,3 +14,42 @@ describe("DreamScheduler.isDue", () => {
     expect(s.isDue()).toBe(false);
   });
 });
+
+describe("DreamScheduler boot baseline (no daytime-restart run)", () => {
+  it("first-ever boot past the hour seeds the baseline and does NOT run", () => {
+    let last: string | null = null;
+    const seeded: string[] = [];
+    let ran = 0;
+    const s = new DreamScheduler({
+      run: async () => { ran++; },
+      hour: 3,
+      lastRunDate: () => last,
+      nowDate: () => dateAt(18), // 6pm restart, never run today
+      intervalMs: 60_000,
+      recordBaseline: (d) => { seeded.push(d); last = d; }, // persist + reflect back
+    });
+    expect(s.shouldSeedBaseline()).toBe(true);
+    s.start();
+    expect(seeded).toEqual(["2026-06-20"]); // baseline recorded
+    expect(ran).toBe(0); // boot tick is a no-op after seeding
+    s.stop();
+  });
+
+  it("boot BEFORE the hour does not seed and does not run (waits for the hour)", () => {
+    const seeded: string[] = [];
+    let ran = 0;
+    const s = new DreamScheduler({
+      run: async () => { ran++; },
+      hour: 3,
+      lastRunDate: () => null,
+      nowDate: () => dateAt(1), // 1am, before the hour
+      intervalMs: 60_000,
+      recordBaseline: (d) => seeded.push(d),
+    });
+    expect(s.shouldSeedBaseline()).toBe(false);
+    s.start();
+    expect(seeded).toEqual([]);
+    expect(ran).toBe(0);
+    s.stop();
+  });
+});
