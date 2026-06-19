@@ -78,7 +78,6 @@ export class LocalEmbedder implements Embedder {
   async embed(text: string): Promise<number[]> {
     const out = await this.pipe(text, { pooling: "mean", normalize: true });
     const vector = Array.from(out.data);
-    // Defensive re-normalization: the index assumes unit vectors.
     return normalizeUnit(vector);
   }
 }

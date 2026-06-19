@@ -95,7 +95,6 @@ export class OllamaEmbedder implements Embedder {
           `the wire disagree; drop the dimension option to probe instead.`,
       );
     }
-    // Defensive re-normalization: the index assumes unit vectors.
     return normalizeUnit(vector);
   }
 }
