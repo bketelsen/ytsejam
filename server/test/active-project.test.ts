@@ -22,4 +22,25 @@ describe("projectTagForWorkdir", () => {
   it("ignores domains without workingDir", () => {
     expect(projectTagForWorkdir(domains, "/home/bjk/work")).toBeNull();
   });
+
+  it("prefix-collision guard: sibling dir with project name as string-prefix must not match", () => {
+    const prefixDomains: Domain[] = [
+      { id: "ytsejam", path: "projects/ytsejam", workingDir: "/home/bjk/projects/ytsejam" },
+    ];
+    expect(projectTagForWorkdir(prefixDomains, "/home/bjk/projects/ytsejam-extra")).toBeNull();
+  });
+
+  it("nested subdomain flattening: workdir under a subdomain resolves to the subdomain tag", () => {
+    const nestedDomains: Domain[] = [
+      {
+        id: "parent",
+        path: "projects/parent",
+        workingDir: "/home/bjk/projects/parent",
+        subdomains: [
+          { id: "sub", path: "projects/parent/sub", workingDir: "/home/bjk/projects/parent/sub" },
+        ],
+      },
+    ];
+    expect(projectTagForWorkdir(nestedDomains, "/home/bjk/projects/parent/sub/src")).toBe("projects:parent:sub");
+  });
 });
