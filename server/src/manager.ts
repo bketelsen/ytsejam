@@ -141,6 +141,13 @@ interface OpenSession {
   compacting: boolean;
   /** Mutated per-turn; wrapped tools read via closure to resolve effective mode. */
   currentEffectiveMode: { value: ApprovalMode };
+  /**
+   * The current turn's user text, set just before harness.prompt(). The
+   * systemPrompt closure reads it to key memory recall on THIS turn — the
+   * branch doesn't yet contain the current message when systemPrompt runs, so
+   * a branch read alone recalls against the previous turn (stale context).
+   */
+  currentTurnText?: string;
   /** rename requested while running; flushed to JSONL on agent_end (JSONL is SSOT) */
   pendingTitle?: string;
   compaction?: CompactionWiringState;
@@ -321,37 +328,53 @@ export class AgentManager {
             this.opts.skills?.promptSection().catch(() => undefined),
             this.opts.loadContextFiles?.(liveCwd).catch(() => ""),
           ]);
-        // Best-effort: extract the most recent user message from the branch to
-        // use as a recall query. NOTE: the current turn's user message is NOT
-        // yet in the branch when systemPrompt is called (the harness builds the
-        // turn state before appending the user message). We therefore get the
-        // previous turn's user text, which is still useful for project-scoped
-        // recall. On failure or empty branch, query defaults to "" which causes
-        // buildMemorySection to emit profile-only (no recall hits).
-        const latestUser = await opened.session
-          .getBranch()
-          .then((b) =>
-            [...b]
-              .reverse()
-              .find(
-                (e): e is Extract<SessionTreeEntry, { type: "message" }> =>
-                  e.type === "message" &&
-                  (e as Extract<SessionTreeEntry, { type: "message" }>).message
-                    .role === "user",
-              ),
-          )
-          .catch(() => undefined);
-        const query = latestUser ? textBlocksOf(latestUser.message).join(" ") : "";
+        // Recall query: prefer the CURRENT turn's user text (set by
+        // sendMessage/injectMessage just before harness.prompt). The current
+        // message is NOT yet in the branch when systemPrompt runs — the harness
+        // builds turn state before appending it — so a branch read alone recalls
+        // against the PREVIOUS turn (stale, off-topic context). Fall back to the
+        // most recent branch user message for the first turn or edge cases. On
+        // empty query, buildMemorySection emits profile-only (no recall hits).
+        let query = opened.currentTurnText?.trim() ?? "";
+        if (!query) {
+          const latestUser = await opened.session
+            .getBranch()
+            .then((b) =>
+              [...b]
+                .reverse()
+                .find(
+                  (e): e is Extract<SessionTreeEntry, { type: "message" }> =>
+                    e.type === "message" &&
+                    (e as Extract<SessionTreeEntry, { type: "message" }>).message
+                      .role === "user",
+                ),
+            )
+            .catch(() => undefined);
+          query = latestUser ? textBlocksOf(latestUser.message).join(" ") : "";
+        }
         const memorySection = await this.opts
           .recallSection?.(metadata.id, query)
           .catch(() => undefined);
-        return composeSystemPrompt(persona, {
+        const prompt = composeSystemPrompt(persona, {
           dataDir: this.opts.dataDir,
           cogSection,
           skillsSection,
           memorySection,
           contextFiles,
         });
+        // Observability (off by default): the assembled system prompt is a
+        // stack of always-on scaffolding (persona, cog brief, skills table,
+        // memory section, context files). Logging its size per turn makes
+        // context bloat/dilution measurable instead of inferred. ~4 chars/token.
+        if (process.env.YTSEJAM_PROMPT_DEBUG === "1") {
+          const bytes = Buffer.byteLength(prompt, "utf8");
+          console.log(
+            `[prompt] session=${metadata.id} systemPrompt≈${Math.ceil(prompt.length / 4)} tokens (${bytes} B)` +
+              ` cog=${cogSection ? "y" : "n"} skills=${skillsSection ? "y" : "n"}` +
+              ` memory=${memorySection ? "y" : "n"} ctxFiles=${contextFiles ? Buffer.byteLength(contextFiles, "utf8") : 0}B query="${query.slice(0, 60)}"`,
+          );
+        }
+        return prompt;
       },
       getApiKeyAndHeaders: makeApiKeyResolver(this.opts.authStore),
     });
@@ -815,6 +838,7 @@ export class AgentManager {
     opened.currentEffectiveMode.value = override ?? sessionMode;
     if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
+    opened.currentTurnText = effectiveText; // key this turn's recall on the current message
     opened.harness.prompt(effectiveText).catch((err) => {
       // run failures already surface as assistant error messages via events;
       // this catches pre-run rejections (e.g. "busy") so they don't crash the process
@@ -842,6 +866,7 @@ export class AgentManager {
     opened.currentEffectiveMode.value = override ?? sessionMode;
     if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
     opened.running = true;
+    opened.currentTurnText = effectiveText; // key this turn's recall on the injected message
     opened.harness.prompt(effectiveText).catch((err) => {
       console.error(`task result injection failed for session ${id}`, err);
       opened.running = false;

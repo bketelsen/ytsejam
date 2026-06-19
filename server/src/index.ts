@@ -188,103 +188,150 @@ scheduler.start();
 
 // LTM bridge: open store, construct reconciler, attach, start.
 // Failures here must NOT block boot -- LTM is best-effort; the bridge is a
-// safety net, not load-bearing. We catch + warn and continue with cog-only.
+// safety net, not load-bearing. attachLtmBridge() catches + warns and leaves
+// the process in cog-only mode; a supervisor then retries with backoff so a
+// transient boot-time outage (e.g. the Copilot embedding endpoint briefly
+// unresolvable) self-heals instead of stranding recall off until a manual
+// restart.
 let ltm: MemorySystem | null = null;
 let reconciler: LtmReconciler | null = null;
-try {
-  // `||` (not `??`) so LTM_STORE_DIR="" coerces to the default rather than
-  // attempting MemorySystem.open({storeDir: ""}). Empty-string env is almost
-  // certainly user misconfiguration, not an intentional override.
-  const ltmStoreDir =
-    process.env.LTM_STORE_DIR || path.join(config.dataDir, "ltm");
-  const mode = parseLtmEmbedderMode(process.env.YTSEJAM_LTM_EMBEDDER);
-  const embedderResult = await createLtmEmbedder(authStore, {
-    mode,
-    cacheDir: path.join(ltmStoreDir, "embed-cache"),
-    copilot: {
-      model: process.env.YTSEJAM_LTM_COPILOT_MODEL,
-      baseUrl: process.env.YTSEJAM_LTM_COPILOT_URL,
-    },
-    ollama: {
-      model: process.env.YTSEJAM_LTM_OLLAMA_MODEL,
-      baseUrl: process.env.YTSEJAM_LTM_OLLAMA_URL,
-    },
-  });
-  const factExtractor = new CopilotFactExtractor({
-    getApiKey: () => resolveApiKey("github-copilot", authStore),
-    model: process.env.YTSEJAM_LTM_FACT_MODEL,
-    debug: process.env.YTSEJAM_LTM_FACT_DEBUG === "1",
-  });
-  ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder, factExtractor });
-  const mismatch = checkDimensionMismatch(ltm.indexDimension(), embedderResult);
-  if (mismatch) {
-    throw new Error(mismatch);
-  }
-  // Surface D2 contamination loudly: if the store holds embeddings of more
-  // than one dimension, the minority buckets are excluded from retrieval
-  // (VectorIndex refuses off-dimension vectors) and need re-embedding.
-  const dimReport = ltm.dimensionReport();
-  const dimBuckets = Object.keys(dimReport.counts).length;
-  if (dimBuckets > 1) {
-    const breakdown = Object.entries(dimReport.counts)
-      .sort((a, b) => b[1] - a[1])
-      .map(([d, n]) => `${d}-dim×${n}`)
-      .join(", ");
-    console.warn(
-      `[memory] LTM store holds mixed embedding dimensions (${breakdown}); ` +
-        `primary=${dimReport.primary}. Off-primary records are EXCLUDED from retrieval. ` +
-        `Re-embed with \`ltm replay --rebuild\` under YTSEJAM_LTM_EMBEDDER=copilot to reclaim them.`,
-    );
-  }
-  const intervalEnv = Number(process.env.LTM_RECONCILE_INTERVAL_MS);
-  const ctorOpts: ConstructorParameters<typeof LtmReconciler>[0] = {
-    ltm,
-    dataDir: config.dataDir,
-  };
-  if (Number.isFinite(intervalEnv) && intervalEnv > 0) {
-    ctorOpts.intervalMs = intervalEnv;
-  }
-  reconciler = new LtmReconciler(ctorOpts);
-  memory.attachLtm(ltm);
-  memory.attachReconciler(reconciler);
-  reconciler.start();
-  void reconciler.whenFirstTickSettled().then(() => {
-    const orphanCount = reconciler?.health().orphans?.observations ?? 0;
-    if (orphanCount > 0) {
+let ltmReconnectTimer: NodeJS.Timeout | null = null;
+let ltmAttachAttempts = 0;
+// Log the down-state warning only on a transition (first failure, and again
+// after a recovery), not once per retry tick -- the per-tick spam is exactly
+// what the old single-shot init left in the journal.
+let ltmWarnedDown = false;
+
+async function attachLtmBridge(): Promise<boolean> {
+  if (memory.getLtm()) return true; // already attached -- idempotent
+  let opened: MemorySystem | null = null;
+  try {
+    // `||` (not `??`) so LTM_STORE_DIR="" coerces to the default rather than
+    // attempting MemorySystem.open({storeDir: ""}). Empty-string env is almost
+    // certainly user misconfiguration, not an intentional override.
+    const ltmStoreDir =
+      process.env.LTM_STORE_DIR || path.join(config.dataDir, "ltm");
+    const mode = parseLtmEmbedderMode(process.env.YTSEJAM_LTM_EMBEDDER);
+    const embedderResult = await createLtmEmbedder(authStore, {
+      mode,
+      cacheDir: path.join(ltmStoreDir, "embed-cache"),
+      copilot: {
+        model: process.env.YTSEJAM_LTM_COPILOT_MODEL,
+        baseUrl: process.env.YTSEJAM_LTM_COPILOT_URL,
+      },
+      ollama: {
+        model: process.env.YTSEJAM_LTM_OLLAMA_MODEL,
+        baseUrl: process.env.YTSEJAM_LTM_OLLAMA_URL,
+      },
+    });
+    const factExtractor = new CopilotFactExtractor({
+      getApiKey: () => resolveApiKey("github-copilot", authStore),
+      model: process.env.YTSEJAM_LTM_FACT_MODEL,
+      debug: process.env.YTSEJAM_LTM_FACT_DEBUG === "1",
+    });
+    opened = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder, factExtractor });
+    const mismatch = checkDimensionMismatch(opened.indexDimension(), embedderResult);
+    if (mismatch) {
+      throw new Error(mismatch);
+    }
+    // Surface D2 contamination loudly: if the store holds embeddings of more
+    // than one dimension, the minority buckets are excluded from retrieval
+    // (VectorIndex refuses off-dimension vectors) and need re-embedding.
+    const dimReport = opened.dimensionReport();
+    const dimBuckets = Object.keys(dimReport.counts).length;
+    if (dimBuckets > 1) {
+      const breakdown = Object.entries(dimReport.counts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([d, n]) => `${d}-dim×${n}`)
+        .join(", ");
       console.warn(
-        `[memory] LTM bridge: ${orphanCount} orphan observation(s) detected ` +
-          "(run `ltm replay --rebuild --prune` to clean)",
+        `[memory] LTM store holds mixed embedding dimensions (${breakdown}); ` +
+          `primary=${dimReport.primary}. Off-primary records are EXCLUDED from retrieval. ` +
+          `Re-embed with \`ltm replay --rebuild\` under YTSEJAM_LTM_EMBEDDER=copilot to reclaim them.`,
       );
     }
-  });
-  console.log(`[memory] LTM bridge attached, store=${ltmStoreDir}, embedder=${embedderResult.label}`);
-} catch (err) {
-  console.warn(
-    `[memory] LTM bridge init failed (continuing cog-only): ${(err as Error).message}`,
-  );
-  // Partial-init guard: MemorySystem.open() acquires a file lock and
-  // registers in a process-static openDirs set inside its constructor.
-  // If anything AFTER a successful open() throws (today only the reconciler
-  // ctor + two assignments, but the surface is one PR change away from
-  // doing real work), we leak the lock + openDirs entry for the process
-  // lifetime AND any future open() of the same dir will throw. Close the
-  // partial-init LTM here so the leak window stays closed.
-  if (ltm) {
-    try {
-      ltm.close();
-    } catch {
-      // already-failed init -- swallow close errors, the warn above is the
-      // operator-facing signal.
+    const intervalEnv = Number(process.env.LTM_RECONCILE_INTERVAL_MS);
+    const ctorOpts: ConstructorParameters<typeof LtmReconciler>[0] = {
+      ltm: opened,
+      dataDir: config.dataDir,
+    };
+    if (Number.isFinite(intervalEnv) && intervalEnv > 0) {
+      ctorOpts.intervalMs = intervalEnv;
     }
+    reconciler = new LtmReconciler(ctorOpts);
+    memory.attachLtm(opened);
+    memory.attachReconciler(reconciler);
+    reconciler.start();
+    ltm = opened;
+    void reconciler.whenFirstTickSettled().then(() => {
+      const orphanCount = reconciler?.health().orphans?.observations ?? 0;
+      if (orphanCount > 0) {
+        console.warn(
+          `[memory] LTM bridge: ${orphanCount} orphan observation(s) detected ` +
+            "(run `ltm replay --rebuild --prune` to clean)",
+        );
+      }
+    });
+    const suffix = ltmAttachAttempts > 0 ? ` (after ${ltmAttachAttempts} retr${ltmAttachAttempts === 1 ? "y" : "ies"})` : "";
+    console.log(`[memory] LTM bridge attached, store=${ltmStoreDir}, embedder=${embedderResult.label}${suffix}`);
+    ltmWarnedDown = false;
+    return true;
+  } catch (err) {
+    // Partial-init guard: MemorySystem.open() acquires a file lock and
+    // registers in a process-static openDirs set inside its constructor.
+    // If anything AFTER a successful open() throws, we leak the lock +
+    // openDirs entry for the process lifetime AND any future open() of the
+    // same dir will throw. Close the partial-init LTM here so the leak
+    // window stays closed and the next retry can re-open cleanly.
+    if (opened) {
+      try {
+        opened.close();
+      } catch {
+        // already-failed init -- swallow close errors, the warn below is the
+        // operator-facing signal.
+      }
+    }
+    ltm = null;
+    reconciler = null;
+    if (!ltmWarnedDown) {
+      ltmWarnedDown = true;
+      console.warn(
+        `[memory] LTM bridge init failed (continuing cog-only, will retry): ${(err as Error).message}`,
+      );
+    }
+    return false;
   }
-  ltm = null;
-  reconciler = null;
 }
+
+// Boot attempt + bounded-backoff supervisor (30s → cap 5min). Retries only
+// while the bridge is unattached; stops once attached. Unref'd so a pending
+// retry never keeps the process alive on its own.
+function scheduleLtmReconnect(): void {
+  if (ltmReconnectTimer || memory.getLtm()) return;
+  const baseMs = 30_000;
+  const capMs = 300_000;
+  const delay = Math.min(capMs, baseMs * 2 ** Math.min(ltmAttachAttempts, 4));
+  ltmReconnectTimer = setTimeout(async () => {
+    ltmReconnectTimer = null;
+    ltmAttachAttempts++;
+    const ok = await attachLtmBridge();
+    if (!ok) scheduleLtmReconnect();
+  }, delay);
+  ltmReconnectTimer.unref?.();
+}
+
+if (!(await attachLtmBridge())) scheduleLtmReconnect();
 
 // LTM bridge shutdown: drain the reconciler, detach, close the LTM store.
 // Use once() so duplicate signals don't re-run. Does NOT call process.exit
 // -- let the process exit naturally once all handles drain.
 const shutdownLtm = async (signal: string): Promise<void> => {
+  // Stop any pending reconnect attempt first, so a retry can't re-open the
+  // store mid-drain.
+  if (ltmReconnectTimer) {
+    clearTimeout(ltmReconnectTimer);
+    ltmReconnectTimer = null;
+  }
   if (!reconciler && !ltm) return;
   console.log(`[memory] ${signal} received, draining LTM bridge`);
   try {

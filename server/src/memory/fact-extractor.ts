@@ -10,12 +10,20 @@ const SYSTEM_PROMPT = [
   "Emit a fact only when it states something stable and personal: the user's identity",
   "(name, role, employer), a standing preference, a standing directive (always/never),",
   "or a durable attribute (tools they use, where they live).",
+  "Be CONSERVATIVE: when in doubt, emit nothing. A wrong or noisy fact is worse than a missing one —",
+  "it is injected into every future prompt. Most messages contain NO durable fact; returning an empty list is the common, correct answer.",
   "DO NOT emit: transient or task-scoped statements, plans for right now, opinions about",
   "the current code/task, hypotheticals, questions, code snippets, or anything about the assistant.",
+  "DO NOT emit sentence fragments, partial clauses, or facts whose object is a pronoun (it/this/that/them),",
+  "a placeholder, or a snippet of the message rather than a real value. The object must be a concrete, self-contained value.",
+  "Use a stable canonical predicate: 'works_on' (NOT works_on_repo/works_on_project), 'works_at', 'role', 'name', 'uses', 'lives_in', 'prefers', 'directive'.",
+  "Use ONE fact per distinct piece of information; do not restate the same fact under several predicates.",
+  "Set confidence below 0.75 for anything you are not sure is a durable user fact (it will be dropped).",
   "If there are no durable user facts, return an empty list.",
-  "Examples — EMIT: 'my name is Brian' -> {kind:identity,predicate:name,object:Brian}.",
-  "EMIT: 'I prefer my own harness' -> {kind:preference,predicate:prefers,object:my own harness}.",
-  "DO NOT EMIT: 'let's defer this right now', 'I'll fire these off before bed', 'use the current state'.",
+  "Examples — EMIT: 'my name is Brian' -> {kind:identity,predicate:name,object:Brian,confidence:0.95}.",
+  "EMIT: 'I prefer my own harness' -> {kind:preference,predicate:prefers,object:my own harness,confidence:0.9}.",
+  "DO NOT EMIT: 'let's defer this right now', 'I'll fire these off before bed', 'use the current state',",
+  "'do_not_mutate_files=any file in worktree' (task rule, not a user fact), 'prefers=a with a twist' (fragment), 'uses=it' (pronoun).",
   "Set scope=project for facts specific to the current codebase/repo/task (e.g. a build/test/deploy rule for this project);",
   "scope=global for identity and general preferences. Default to global.",
 ].join(" ");
@@ -56,7 +64,7 @@ export interface CopilotFactExtractorOptions {
   getApiKey: () => Promise<string | undefined>;
   model?: string;
   baseUrl?: string;
-  /** Minimum confidence to keep a fact. Default 0.6. */
+  /** Minimum confidence to keep a fact. Default 0.75. */
   confidenceFloor?: number;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
@@ -94,7 +102,7 @@ export class CopilotFactExtractor implements FactExtractor {
     this.getApiKey = opts.getApiKey;
     this.model = opts.model ?? DEFAULT_MODEL;
     this.url = `${opts.baseUrl ?? DEFAULT_BASE_URL}/chat/completions`;
-    this.floor = opts.confidenceFloor ?? 0.6;
+    this.floor = opts.confidenceFloor ?? 0.75;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.debug = opts.debug ?? false;
     this.log = opts.log ?? ((m) => console.log(m));

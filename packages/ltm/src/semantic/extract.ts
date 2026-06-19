@@ -42,17 +42,66 @@ export function slug(s: string): string {
   return s.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
 
+/**
+ * Collapse predicate synonyms to one canonical slot so the same fact stated
+ * different ways shares a single id. The LLM extractor in particular mints
+ * `works_on` / `works_on_project` / `works_on_repo` as three separate facts;
+ * canonicalizing here makes them reinforce one fact instead of cluttering the
+ * profile. Idempotent — a predicate already canonical maps to itself.
+ */
+const PREDICATE_CANONICAL: Record<string, string> = {
+  works_on_project: "works_on",
+  works_on_repo: "works_on",
+  works_on_repository: "works_on",
+  working_on: "works_on",
+  works_at_company: "works_at",
+  works_for: "works_at",
+  employed_at: "works_at",
+  employer: "works_at",
+  occupation: "role",
+  profession: "role",
+  job: "role",
+  job_title: "role",
+  full_name: "name",
+};
+
+export function canonicalizePredicate(predicate: string): string {
+  const key = predicate.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return PREDICATE_CANONICAL[key] ?? key;
+}
+
 export function factId(
   c: Pick<FactCandidate, "kind" | "predicate" | "polarity">,
   objectNorm: string,
   projectTag?: string,
 ): string {
-  const base = `fact-${c.kind}-${c.predicate}-${slug(objectNorm)}-${c.polarity > 0 ? "p" : "n"}`;
+  const predicate = canonicalizePredicate(c.predicate);
+  const base = `fact-${c.kind}-${predicate}-${slug(objectNorm)}-${c.polarity > 0 ? "p" : "n"}`;
   return projectTag ? `${base}@${slug(projectTag)}` : base;
 }
 
 function clean(s: string): string {
   return s.replace(/[.,!?;:]+$/g, "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * The natural-language phrase for a fact, derived from its raw fields (not a
+ * stored SemanticFact) so the write path can embed the exact text retrieval
+ * renders and matches against. retrieval/promote.ts:renderFact delegates here.
+ */
+export function factPhrase(predicate: string, object: string, polarity: 1 | -1): string {
+  const p = predicate;
+  if (p === "name") return `The user's name is ${object}.`;
+  if (p === "role") return `The user is a ${object}.`;
+  if (p === "works_at") return `The user works at ${object}.`;
+  if (p === "works_on") return `The user is working on ${object}.`;
+  if (p === "lives_in") return `The user lives in ${object}.`;
+  if (p === "allergic_to") return `The user is allergic to ${object}.`;
+  if (p.startsWith("rel_")) return `The user's ${p.slice(4)} is named ${object}.`;
+  if (p === "uses") return `The user uses ${object}.`;
+  if (p === "directive") return `${polarity > 0 ? "Always" : "Never"} ${object}.`;
+  if (p === "prefers") return `The user ${polarity > 0 ? "likes" : "dislikes"} ${object}.`;
+  return `The user's ${p}: ${object}.`;
 }
 
 // ---------------------------------------------------------------------------

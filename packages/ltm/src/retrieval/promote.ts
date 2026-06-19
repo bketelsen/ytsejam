@@ -17,7 +17,8 @@
  */
 
 import type { ProfileSummary, PromotedFact, SemanticFact } from "../types.ts";
-import { tokenize } from "../embedding/embedder.ts";
+import { tokenize, cosine, type Embedder } from "../embedding/embedder.ts";
+import { factPhrase } from "../semantic/extract.ts";
 
 /** Query keyword → profile predicates it addresses. */
 const PREDICATE_KEYWORDS: Record<string, string[]> = {
@@ -74,18 +75,7 @@ const PREDICATE_KEYWORDS: Record<string, string[]> = {
 };
 
 function renderFact(fact: SemanticFact): string {
-  const p = fact.predicate;
-  if (p === "name") return `The user's name is ${fact.object}.`;
-  if (p === "role") return `The user is a ${fact.object}.`;
-  if (p === "works_at") return `The user works at ${fact.object}.`;
-  if (p === "works_on") return `The user is working on ${fact.object}.`;
-  if (p === "lives_in") return `The user lives in ${fact.object}.`;
-  if (p === "allergic_to") return `The user is allergic to ${fact.object}.`;
-  if (p.startsWith("rel_")) return `The user's ${p.slice(4)} is named ${fact.object}.`;
-  if (p === "uses") return `The user uses ${fact.object}.`;
-  if (p === "directive") return `${fact.polarity > 0 ? "Always" : "Never"} ${fact.object}.`;
-  if (p === "prefers") return `The user ${fact.polarity > 0 ? "likes" : "dislikes"} ${fact.object}.`;
-  return `The user's ${p}: ${fact.object}.`;
+  return factPhrase(fact.predicate, fact.object, fact.polarity);
 }
 
 /** Stale facts carry their age so consumers phrase them as historical. */
@@ -94,6 +84,67 @@ function renderStale(fact: SemanticFact): string {
 }
 
 const MAX_PROMOTED = 3;
+
+/** A profile fact as a synthetic, retrieval-only item (never persisted). */
+function toPromoted(fact: SemanticFact, stale: boolean): PromotedFact {
+  return {
+    id: `fact/${fact.id}`,
+    kind: "fact",
+    fact,
+    sessionId: fact.sources[0]?.sessionId ?? "profile",
+    entryId: fact.sources[0]?.entryId,
+    role: "summary",
+    text: stale ? renderStale(fact) : renderFact(fact),
+    timestamp: fact.lastSeenAt,
+    salience: fact.strength,
+    accessCount: 0,
+    ...(stale ? { stale: true } : {}),
+  };
+}
+
+/** Cosine floor for semantic fact recall — high-precision so a paraphrase
+ *  surfaces a fact but loosely-related chatter does not re-pollute context. */
+const VECTOR_FACT_FLOOR = 0.6;
+/** Most facts the vector channel may add beyond the keyword/slot matches. */
+const MAX_VECTOR_PROMOTED = 2;
+
+/**
+ * Semantic fact recall: facts whose embedding is a close match to the query,
+ * independent of keyword/slot overlap. Complements promoteFacts() (the
+ * keyword-precise path) for paraphrases its small keyword map misses
+ * ("which language am I into?" → the `prefers C` fact).
+ *
+ * Conservative by design: a high cosine floor and a small cap, so this never
+ * becomes a noise source. Facts without an embedding, or one off the query's
+ * dimension (legacy/un-embedded), are skipped — graceful degrade to keyword
+ * recall. `exclude` carries ids already promoted by promoteFacts so the same
+ * fact isn't surfaced twice.
+ */
+export async function vectorPromoteFacts(
+  query: string,
+  facts: SemanticFact[],
+  embedder: Embedder,
+  exclude: Set<string>,
+): Promise<PromotedFact[]> {
+  if (!query.trim()) return [];
+  const candidates = facts.filter(
+    (f) => f.embedding && f.embedding.length > 0 && !exclude.has(f.id),
+  );
+  if (candidates.length === 0) return [];
+
+  const qv = await embedder.embed(query);
+  const scored: { fact: SemanticFact; score: number }[] = [];
+  for (const f of candidates) {
+    // Dimension guard (mirrors the episodic D2 rule): never compare across
+    // dimensions — an off-dimension fact contributes nothing rather than
+    // reaching the now-throwing cosine.
+    if (f.embedding!.length !== qv.length) continue;
+    const score = cosine(qv, f.embedding!);
+    if (score >= VECTOR_FACT_FLOOR) scored.push({ fact: f, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, MAX_VECTOR_PROMOTED).map((s) => toPromoted(s.fact, false));
+}
 
 /**
  * Profile facts the query addresses, as synthetic retrieval-only items.
@@ -134,20 +185,6 @@ export function promoteFacts(query: string, profile: ProfileSummary): PromotedFa
     covered.add(f.predicate);
     dormantPicks.push(f);
   }
-
-  const toPromoted = (fact: SemanticFact, stale: boolean): PromotedFact => ({
-    id: `fact/${fact.id}`,
-    kind: "fact",
-    fact,
-    sessionId: fact.sources[0]?.sessionId ?? "profile",
-    entryId: fact.sources[0]?.entryId,
-    role: "summary",
-    text: stale ? renderStale(fact) : renderFact(fact),
-    timestamp: fact.lastSeenAt,
-    salience: fact.strength,
-    accessCount: 0,
-    ...(stale ? { stale: true } : {}),
-  });
 
   return [
     ...aboveFloor.map((f) => toPromoted(f, false)),

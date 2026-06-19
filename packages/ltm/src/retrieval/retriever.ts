@@ -126,6 +126,10 @@ export class Retriever {
     filterTags?: string[],
   ): Promise<RetrievedMemory[]> {
     const { store, embedder, config } = this.deps;
+    // Defense-in-depth: never embed an empty query (the embedding API 400s on
+    // "" and there is nothing to rank). retrieve() already guards this, but
+    // explain()/direct callers reach rank() too.
+    if (!query.trim()) return [];
     const queryVector = await embedder.embed(query);
 
     const vectorHits = this.vectors.search(queryVector, CANDIDATE_POOL);
