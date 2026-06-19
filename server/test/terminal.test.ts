@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { PiAuthStore } from "../src/pi-auth.ts";
 import { createApp } from "../src/server.ts";
 import { createTerminalSession, type TerminalSession } from "../src/terminal.ts";
-import { makeManager, setupFaux, waitFor } from "./helpers.ts";
+import { makeManager, setupFaux } from "./helpers.ts";
 import { PersonaStore } from "../src/persona.ts";
 
 function waitForExit(run: (onExit: (code: number | undefined) => void) => TerminalSession) {
@@ -112,14 +112,27 @@ describe("terminal websocket", () => {
 
   test("rejects missing or invalid terminal websocket tokens", async () => {
     const ws = new WebSocket(`ws://localhost:${port}/api/terminal/ws?token=wrong`);
-    let closeCode = 0;
-    ws.addEventListener("close", (event) => {
-      closeCode = event.code;
+    const closeEvent = await new Promise<CloseEvent>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timed out waiting for close event")), 2000);
+      ws.addEventListener(
+        "close",
+        (event) => {
+          clearTimeout(timeout);
+          resolve(event);
+        },
+        { once: true },
+      );
+      ws.addEventListener(
+        "error",
+        (event) => {
+          clearTimeout(timeout);
+          reject(event.error ?? new Error("websocket error before close"));
+        },
+        { once: true },
+      );
     });
 
-    await waitFor(() => ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING, 2000);
-
     expect(ws.readyState).not.toBe(WebSocket.OPEN);
-    expect(closeCode).toBe(4401);
+    expect(closeEvent.code).toBe(4401);
   });
 });
