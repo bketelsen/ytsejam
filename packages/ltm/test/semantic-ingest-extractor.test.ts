@@ -16,6 +16,10 @@ class FakeFactExtractor {
   }
 }
 
+// Structural typing: FakeFactExtractor satisfies FactExtractor without `implements`
+const _check: FactExtractor = new FakeFactExtractor([]);
+void _check;
+
 let dir: string;
 afterEach(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
 

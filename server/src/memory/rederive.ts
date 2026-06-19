@@ -10,7 +10,7 @@ export const KNOWN_GOOD: { label: string; predicate: string; match: (object: str
   { label: "prefers own harness", predicate: "prefers", match: (o) => o.toLowerCase().includes("harness") },
 ];
 
-export interface FreshFactView { kind: string; predicate: string; object: string; polarity: number; }
+export interface SemanticFactView { kind: string; predicate: string; object: string; polarity: number; }
 
 export interface BuildFreshFactsOptions {
   storeDir: string;
@@ -20,7 +20,7 @@ export interface BuildFreshFactsOptions {
 }
 
 export interface BuildFreshFactsResult {
-  facts: FreshFactView[];
+  facts: SemanticFactView[];
   knownGood: { ok: boolean; missing: string[] };
   /** Path to the freshly-written facts.jsonl (in outDir) — caller copies over live on a real run. */
   freshFactsPath: string;
@@ -43,7 +43,7 @@ export async function buildFreshFacts(opts: BuildFreshFactsOptions): Promise<Bui
   }
 
   const all = fresh.allFacts().filter((f) => f.state === "active");
-  const facts: FreshFactView[] = all.map((f) => ({ kind: f.kind, predicate: f.predicate, object: f.object, polarity: f.polarity }));
+  const facts: SemanticFactView[] = all.map((f) => ({ kind: f.kind, predicate: f.predicate, object: f.object, polarity: f.polarity }));
   const missing = KNOWN_GOOD.filter((g) => !all.some((f) => f.predicate === g.predicate && g.match(f.object))).map((g) => g.label);
 
   return {

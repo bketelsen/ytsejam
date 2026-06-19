@@ -1,8 +1,7 @@
 // scripts/ltm-rederive-facts.ts
 import fs from "node:fs";
 import { parseArgs } from "node:util";
-import { PiAuthStore } from "../server/src/pi-auth.ts";
-import { resolveApiKey } from "../server/src/pi-auth.ts";
+import { PiAuthStore, resolveApiKey } from "../server/src/pi-auth.ts";
 import { CopilotFactExtractor } from "../server/src/memory/fact-extractor.ts";
 import { buildFreshFacts } from "../server/src/memory/rederive.ts";
 

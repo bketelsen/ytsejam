@@ -31,7 +31,7 @@ export { chunkText } from "./episodic/chunk.ts";
 export { consolidate, extractiveSummary, type Summarizer } from "./episodic/consolidate.ts";
 export { SemanticStore, effectiveStrength } from "./semantic/store.ts";
 export { extractFacts, normalizeObject, type FactCandidate } from "./semantic/extract.ts";
-export type { FactKind } from "./types.ts";
+// FactKind is re-exported via the `export * from "./types.ts"` wildcard below.
 export { type FactExtractor, RegexFactExtractor } from "./semantic/fact-extractor.ts";
 export { readSessionFile, listSessionFiles, activeBranch, messageText } from "./session/reader.ts";
 export { IngestPipeline, type IngestReport } from "./pipeline/ingest.ts";
