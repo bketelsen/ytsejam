@@ -65,9 +65,13 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   `/api/ws` WebSocket (per-client session subscription + lightweight global liveness events), the
   `/api/terminal/ws` WebSocket (query-token-gated raw PTY I/O frames), and static serving of
   `web/dist` with SPA fallback.
-- **`terminal.ts`** — owns interactive PTY sessions via `node-pty`: spawns the user's shell in
+- **`terminal.ts`** — owns the quake-style interactive PTY sessions via `node-pty` (a **native
+  module** — see the deploy note in [`terminal.md`](terminal.md)): spawns the user's shell in
   `os.homedir()`, forwards output, handles input/resize, and reaps the process on socket close. The
-  web side is `QuakeTerminal` + `lib/terminal-ws.ts`, opened from the left rail or `Ctrl+``.
+  route is `/api/terminal/ws`, gated by a `?token=` query param (not the bearer header). The web side
+  is `QuakeTerminal` + `lib/terminal-ws.ts`, opened from the left rail or `Ctrl+`` / `Ctrl+~`. This is
+  a direct human↔shell bridge with SSH-equivalent blast radius, not an agent tool. See
+  [`terminal.md`](terminal.md).
 - **`manager.ts`** — `AgentManager` owns chat sessions: opens/caches a pi `AgentHarness` per session,
   composes the system prompt each turn, forwards harness events to the bus, mirrors metadata into the
   index, generates titles, drives compaction (idle, inner-loop via the `context` event hook, and the
@@ -171,7 +175,9 @@ React 19 SPA, Vite build, Tailwind v4 + shadcn/ui. The server serves the built `
 
 - **`App.tsx`** — top-level layout (sidebar + chat + settings/tasks dialogs); gates on login.
   Renders the WebSocket + LTM **health icons** in the chat header (`Plug` for WS, `Brain` for LTM,
-  gray/green/red outline by state), and owns the quake-style terminal open state / `Ctrl+`` hotkey.
+  gray/green/red outline by state), and owns the quake-style terminal open state + the
+  `Ctrl+`` / `Ctrl+~` toggle hotkey (the Sidebar rail also has an explicit open button).
+  See [`terminal.md`](terminal.md).
 - **`useApp.ts`** — the app state hook: holds sessions/messages/streaming/tasks plus the WS and LTM
   health states, opens the WebSocket, routes `ServerEvent`s into React state (streaming assistant
   tokens, session metadata incl. live `compacting` flag, task updates, archive/unarchive,
@@ -180,7 +186,8 @@ React 19 SPA, Vite build, Tailwind v4 + shadcn/ui. The server serves the built `
 - **`components/`** — `Sidebar` (session list + new/archived/settings/tasks/terminal; per-row compaction
   indicator), `Chat` (transcript + composer + per-session cwd editor + task-transcript dialog +
   in-flight compaction pill), `Message` (renders a transcript message, incl. tool calls/results,
-  markdown), `QuakeTerminal` (top `Sheet` + xterm renderer for `/api/terminal/ws`),
+  markdown), `QuakeTerminal` (top `Sheet` + xterm/FitAddon renderer for `/api/terminal/ws`; **sheet
+  padding stays outside the ref-backed fit-target div** — PR #273, see [`terminal.md`](terminal.md)),
   `TaskCard`/`TasksDialog` (delegated-task status + transcript), `Settings` (persona editor, model
   picker, schedules), `Login`, `HealthIcon` (the WS + LTM status indicators), and generated shadcn
   primitives in `components/ui/`.
@@ -257,6 +264,11 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
   `compaction_start`/`compaction_end` bus events plus a `.compactions.jsonl` sidecar with the
   `entry_point` label. A "successful" compaction is gated on `tokensAfterEstimated < budget`, not
   just on the trim running to completion. → [`observability.md`](observability.md)
+- **The terminal is a raw shell, gated only by token.** `/api/terminal/ws` spawns the user's login
+  shell via `node-pty` (SSH-equivalent blast radius) and is auth'd by a `?token=` query param, not the
+  bearer header — keep it in `PUBLIC_API_PATHS` *only* with that in-handler check. `node-pty` is a
+  **native module**: `deploy.sh` must `npm rebuild` + smoke-load it (a bad build fails the deploy).
+  The web fit-target div must stay padding-free (PR #273). → [`terminal.md`](terminal.md)
 
 ## Configuration
 
@@ -307,6 +319,9 @@ Config files:
 - [`tools.md`](tools.md) — how tools are registered/called, the cwd-binding split, the full tool
   surface (including `recall` and the `cog_rpc` allow-list), and the absolute-path rule for
   subagent file tools.
+- [`terminal.md`](terminal.md) — the quake-style PTY terminal: `node-pty` server session, the
+  query-token-gated `/api/terminal/ws` route, the xterm/FitAddon `QuakeTerminal` + `Ctrl+`` hotkey,
+  the padding-outside-the-fit-target invariant (PR #273), and the native-module deploy/rebuild gotcha.
 - [`skills.md`](skills.md) — seeded vs user skill discovery + precedence, runtime invocation, skill
   file structure, and the "skills are cheap, server code is expensive" bias.
 - [`delegation.md`](delegation.md) — how `delegate` works, the background-task lifecycle, concurrency/

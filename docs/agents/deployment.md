@@ -74,8 +74,11 @@ $USER` to survive logout.)
 3. **Install + build, inside the release** — `env -u NODE_ENV npm ci --include=dev --ignore-scripts`
    (clears the inherited `NODE_ENV=production` so devDeps install; `--ignore-scripts` avoids depending
    on `patch-package` being resolvable on PATH during install), then `npx --no-install patch-package`
-   to apply `patches/` explicitly, then `env -u NODE_ENV npm run build` (web). Asserts
-   `web/dist/index.html` and `server/src/index.ts` exist or dies.
+   to apply `patches/` explicitly, then **`env -u NODE_ENV npm rebuild`** to build native modules that
+   `--ignore-scripts` skipped (notably `node-pty` for the terminal) plus a
+   `node -e 'require("node-pty")'` smoke check that **`die`s the deploy before the symlink swap** if
+   the native addon won't load, then `env -u NODE_ENV npm run build` (web). Asserts
+   `web/dist/index.html` and `server/src/index.ts` exist or dies. → see § Native modules below.
 4. **Seeded-skill drift gate, against the staged release** — before `current` moves, run
    `scripts/check-skills-drift.sh <new-release>/server/skills ~/.ytsejam/data/skills`. A content drift
    exit (`1`) aborts unless `ALLOW_SKILL_DRIFT=1`; structural errors still abort. This is intentionally
@@ -93,6 +96,24 @@ The agent contract: `deploy.sh` verifies the *exit code* and the health check, n
 quality gate (`scripts/gate.sh`) is a **separate** pre-deploy bar — `deploy.sh` does not run it; run
 the gate before you deploy. See [`quality-gate.md`](quality-gate.md).
 
+## Native modules (`node-pty`)
+
+`server` depends on **`node-pty`** (the interactive terminal — see [`terminal.md`](terminal.md)),
+which ships **native bindings compiled against the host's Node ABI**. Two facts make this a deploy
+concern:
+
+- `deploy.sh` installs with `--ignore-scripts` (to avoid needing `patch-package` on PATH during
+  `npm ci`), which **also skips native build lifecycles**. So the flow runs an explicit
+  `env -u NODE_ENV npm rebuild` after the patch step, then `node -e 'require("node-pty")'`. The smoke
+  check runs **before the atomic symlink swap**, so a release with a broken/incompatible native build
+  fails the deploy without ever becoming `current`. (Added in commit `cb9c2a1`.)
+- If you add another native dependency, do **not** assume `npm ci` built it under `--ignore-scripts` —
+  it must be covered by the `npm rebuild` step (and ideally the load-smoke check). A native module
+  built for the wrong Node major will load-fail at boot, not at install.
+
+`deploy/dev.sh` runs the same checkout's `node_modules`, so its native modules are whatever your dev
+`npm install` produced for your local Node — keep the dev Node major aligned with prod to avoid a
+"works in dev, fails the deploy rebuild" surprise.
 
 ## `deploy/sync-skills.sh` semantics
 
