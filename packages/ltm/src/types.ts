@@ -152,6 +152,8 @@ export interface SemanticFact {
   /** Set when a newer contradictory fact replaced this one. */
   supersededBy?: string;
   state: RecordState;
+  /** Resolved project tag (e.g. "projects:ytsejam"); absent = global. */
+  projectTag?: string;
 }
 
 // ---------------------------------------------------------------------------
