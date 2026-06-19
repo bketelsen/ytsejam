@@ -455,6 +455,57 @@ export class SemanticStore {
     this.factLog.compact(this.facts.values());
     return true;
   }
+
+  /**
+   * Rewrite each active fact's predicate to its canonical form; when the
+   * canonical id collides with an existing active fact, merge into the
+   * stronger one (union sources, max mentionCount/strength, keep latest object)
+   * and tombstone the variant. Fixes legacy drift the per-write canonicalizer
+   * never touched. Returns counts; a clean store is a no-op.
+   */
+  canonicalizeAndDedup(now: string): { canonicalized: number; merged: number } {
+    let canonicalized = 0;
+    let merged = 0;
+    for (const fact of [...this.facts.values()]) {
+      if (fact.state !== "active" || fact.supersededBy) continue;
+      const canonPred = canonicalizePredicate(fact.predicate);
+      const canonId = factId(
+        { kind: fact.kind, predicate: canonPred, polarity: fact.polarity },
+        fact.objectNorm, fact.projectTag,
+      );
+      if (canonId === fact.id) continue; // already canonical
+      canonicalized++;
+      const existing = this.facts.get(canonId);
+      if (existing && existing.state === "active" && !existing.supersededBy) {
+        // Merge variant -> existing canonical fact.
+        merged++;
+        const keepLatest = Date.parse(fact.lastSeenAt) > Date.parse(existing.lastSeenAt);
+        const mergedFact: SemanticFact = {
+          ...existing,
+          object: keepLatest ? fact.object : existing.object,
+          objectNorm: keepLatest ? fact.objectNorm : existing.objectNorm,
+          strength: Math.max(existing.strength, fact.strength),
+          mentionCount: existing.mentionCount + fact.mentionCount,
+          lastSeenAt: keepLatest ? fact.lastSeenAt : existing.lastSeenAt,
+          sources: dedupeSources([...existing.sources, ...fact.sources]),
+        };
+        this.facts.set(canonId, mergedFact);
+        this.factLog.append(mergedFact);
+        this.facts.set(fact.id, { ...fact, object: "", objectNorm: "", sources: [], strength: 0, state: "redacted" });
+        this.factLog.append(this.facts.get(fact.id)!);
+      } else {
+        // No collision: rewrite this fact under the canonical id/predicate.
+        const moved: SemanticFact = { ...fact, id: canonId, predicate: canonPred };
+        this.facts.delete(fact.id);
+        this.facts.set(canonId, moved);
+        this.factLog.append({ ...fact, object: "", objectNorm: "", sources: [], strength: 0, state: "redacted" });
+        this.factLog.append(moved);
+      }
+    }
+    void now;
+    if (canonicalized > 0) this.factLog.compact(this.facts.values());
+    return { canonicalized, merged };
+  }
 }
 
 function dedupeSources(sources: SourceRef[]): SourceRef[] {

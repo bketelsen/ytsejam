@@ -576,6 +576,13 @@ export class MemorySystem {
     return result;
   }
 
+  /** Canonicalize + dedup the active fact set (dream mechanical pass). */
+  canonicalizeFacts(): { canonicalized: number; merged: number } {
+    const res = this.semantic.canonicalizeAndDedup(this.clock());
+    if (res.canonicalized > 0) this.rebuildDerived();
+    return res;
+  }
+
   // -- inspection (user control surface) --------------------------------------
 
   listEpisodic(
