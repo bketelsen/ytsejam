@@ -15,6 +15,7 @@ export function connectWs(handlers: {
   onPendingApprovals?: (snapshot: PendingApprovalsSnapshot) => void;
 }): {
   subscribe: (sessionId: string | null) => void;
+  reconcile: () => void;
   close: () => void;
   respondToApproval: (approvalId: string, decision: Exclude<ApprovalDecision, "timeout">) => void;
 } {
@@ -65,6 +66,11 @@ export function connectWs(handlers: {
       subscribed = sessionId;
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(sessionId ? { type: "subscribe", sessionId } : { type: "unsubscribe" }));
+      }
+    },
+    reconcile() {
+      if (ws?.readyState === WebSocket.OPEN && subscribed) {
+        ws.send(JSON.stringify({ type: "subscribe", sessionId: subscribed }));
       }
     },
     close() {

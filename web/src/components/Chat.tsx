@@ -12,8 +12,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { client, getToken, setToken } from "@/lib/api";
-import type { ApprovalRequest, ChatMessage, HealthState, SkillSummary, TaskRow } from "@/lib/types";
+import type {
+  ApprovalRequest,
+  ChatMessage,
+  HealthState,
+  LostApproval,
+  SkillSummary,
+  TaskRow,
+} from "@/lib/types";
 import { ApprovalCard } from "./ApprovalCard";
+import { LostApprovalNotice } from "./LostApprovalNotice";
 import { Message } from "./Message";
 import { MessageErrorBoundary } from "./MessageErrorBoundary";
 import { TaskTranscriptDialog } from "./TaskCard";
@@ -28,11 +36,13 @@ export function Chat({
   compacting,
   tasks,
   pendingApprovals,
+  lostApprovals,
   wsState,
   cwd,
   onCwdChange,
   onSend,
   respondToApproval,
+  dismissLostApproval,
   onMenuClick,
   headerRight,
 }: {
@@ -43,11 +53,13 @@ export function Chat({
   compacting: boolean;
   tasks: Record<string, TaskRow>;
   pendingApprovals: Record<string, ApprovalRequest>;
+  lostApprovals: Record<string, LostApproval>;
   wsState: HealthState;
   cwd: string | undefined;
   onCwdChange: (cwd: string | undefined) => void;
   onSend: (text: string) => Promise<void>;
   respondToApproval: (approvalId: string, decision: "approve" | "deny") => void;
+  dismissLostApproval: (approvalId: string) => void;
   onMenuClick: () => void;
   headerRight?: React.ReactNode;
 }) {
@@ -74,10 +86,11 @@ export function Chat({
   const slash = useSlashMenu(draft, skills);
 
   const approvalRequests = useMemo(() => Object.values(pendingApprovals), [pendingApprovals]);
+  const lostApprovalNotices = useMemo(() => Object.values(lostApprovals), [lostApprovals]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streaming, approvalRequests.length]);
+  }, [messages.length, streaming, approvalRequests.length, lostApprovalNotices.length]);
 
   // Memoize so the reference is stable across re-renders driven by unrelated
   // state (e.g. the composer's `draft`). Without this, the fresh Map on every
@@ -151,6 +164,13 @@ export function Chat({
               request={request}
               disabled={wsState !== "ok"}
               onRespond={(decision) => respondToApproval(request.approvalId, decision)}
+            />
+          ))}
+          {lostApprovalNotices.map((lost) => (
+            <LostApprovalNotice
+              key={lost.approvalId}
+              lost={lost}
+              onDismiss={() => dismissLostApproval(lost.approvalId)}
             />
           ))}
           <div ref={bottomRef} />
