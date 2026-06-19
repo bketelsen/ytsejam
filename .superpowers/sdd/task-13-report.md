@@ -52,5 +52,5 @@ npm run check
 ```
 
 ## Concerns / notes
-- `canonicalizePredicate` is imported via relative path (`../../../../packages/ltm/src/semantic/extract.ts`) in `apply.ts` rather than from the `ltm` package root, because the worktree's package changes aren't picked up by the shared `node_modules` symlink during testing. The `ltm/index.ts` export change is still included in the commit for correctness once installed fresh.
+- ~~`canonicalizePredicate` is imported via relative path~~ — Fixed in follow-up commit `276b465`: now correctly imports from `"ltm"` (the package root export was confirmed in place at `ltm/index.ts:33`).
 - Merge test uses `prefers=TypeScript` as canonical (new object) so the canonical fact id doesn't collide with the two seeded originals (`prefers=ts` and `prefers=typescript lang`). In production, the LLM should similarly propose a canonical that isn't literally one of the originals, to avoid self-redaction.
