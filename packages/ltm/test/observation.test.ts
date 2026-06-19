@@ -80,12 +80,29 @@ describe("recordObservation (SEAM 4)", () => {
     }
   });
 
-  it("feeds the semantic extractor with origin-based provenance", async () => {
+  it("does NOT learn facts by default (cog observations are episodic-only)", async () => {
+    const mem = openMem();
+    // Assistant-authored cog observation phrased like a user assertion: it must
+    // stay a retrievable memory, NOT become a durable user fact.
+    await mem.recordObservation({
+      text: "I work at Initech.",
+      timestamp: "2026-05-01T00:00:00.000Z",
+      origin: "cog:personal/observations.md#2026-05-01:abc123def456",
+    });
+    expect(mem.listFacts()).toHaveLength(0);
+    // ...but it is still retrievable episodically.
+    const { items } = await mem.retrieve("where do I work", { dryRun: true });
+    expect(items.some((i) => i.record.text.includes("Initech"))).toBe(true);
+    mem.close();
+  });
+
+  it("feeds the semantic extractor with origin-based provenance when learnFacts opted in", async () => {
     const mem = openMem();
     await mem.recordObservation({
       text: "I work at Initech.",
       timestamp: "2026-05-01T00:00:00.000Z",
       origin: "cog:personal/observations.md#2026-05-01:abc123def456",
+      learnFacts: true,
     });
     const fact = mem.listFacts().find((f) => f.predicate === "works_at");
     expect(fact).toBeDefined();
@@ -125,6 +142,7 @@ describe("observation redaction + consolidation exemption (SEAM 5)", () => {
       text: "I work at Initech.",
       timestamp: "2026-05-01T00:00:00.000Z",
       origin: "cog:personal/observations.md#2026-05-01:aaa111",
+      learnFacts: true, // opt-in: this test exercises fact-cascade on redaction
     });
     await mem.recordObservation({
       text: "ytsejam deploy moved to forgejo.",
@@ -169,7 +187,7 @@ describe("observation redaction + consolidation exemption (SEAM 5)", () => {
 describe("recordObservation re-ingest is fact-idempotent (SEAM 5 review)", () => {
   it("re-recording the same observation does not inflate fact mentionCount/strength", async () => {
     const mem = openMem();
-    const args = { text: "I work at Initech.", timestamp: "2026-05-01T00:00:00.000Z" };
+    const args = { text: "I work at Initech.", timestamp: "2026-05-01T00:00:00.000Z", learnFacts: true };
     await mem.recordObservation(args);
     const first = mem.listFacts().find((f) => f.predicate === "works_at")!;
     const m0 = first.mentionCount;

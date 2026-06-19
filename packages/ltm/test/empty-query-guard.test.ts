@@ -50,7 +50,7 @@ async function withMem<T>(fn: (mem: MemorySystem, emb: CountingEmbedder) => Prom
 describe("empty-query recall guard", () => {
   it("returns profile-only and never embeds an empty/whitespace query", async () => {
     await withMem(async (mem, emb) => {
-      await mem.recordObservation({ text: "hi there", timestamp: "2026-06-19T00:00:00Z" });
+      await mem.recordObservation({ text: "hi there", timestamp: "2026-06-19T00:00:00Z", learnFacts: true });
       const before = emb.calls;
 
       const empty = await mem.retrieve("");
@@ -67,7 +67,7 @@ describe("empty-query recall guard", () => {
 
   it("a real query DOES embed (the guard is empty-only)", async () => {
     await withMem(async (mem, emb) => {
-      await mem.recordObservation({ text: "hi there", timestamp: "2026-06-19T00:00:00Z" });
+      await mem.recordObservation({ text: "hi there", timestamp: "2026-06-19T00:00:00Z", learnFacts: true });
       const before = emb.calls;
       await mem.retrieve("what is my name");
       expect(emb.calls).toBeGreaterThan(before);

@@ -26,7 +26,9 @@ describe("MemorySystem factExtractor injection", () => {
     const fake = new FakeFactExtractor();
     const mem = MemorySystem.open({ storeDir: dir, factExtractor: fake });
     try {
-      await mem.recordObservation({ text: "I run nixos", timestamp: "2026-06-18T00:00:00Z", tags: ["x"] });
+      // learnFacts opt-in: observations are episodic-only by default; this test
+      // exercises the injected extractor on the explicit fact-learning path.
+      await mem.recordObservation({ text: "I run nixos", timestamp: "2026-06-18T00:00:00Z", tags: ["x"], learnFacts: true });
       expect(fake.calls).toBeGreaterThan(0);
       expect(mem.profile().attributes.some((a) => a.object === "nixos")).toBe(true);
     } finally {
