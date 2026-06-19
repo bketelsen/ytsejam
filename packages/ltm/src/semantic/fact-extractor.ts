@@ -1,4 +1,5 @@
 import { extractFacts, type FactCandidate } from "./extract.ts";
+export type { FactCandidate };
 
 /**
  * Pluggable fact extraction. The pure package ships only the regex impl;

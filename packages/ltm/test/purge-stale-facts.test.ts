@@ -21,11 +21,11 @@ function turn(text: string, entryId: string): Turn {
 }
 
 describe("SemanticStore.purgeStaleFacts", () => {
-  it("tombstones active facts the current extractor cannot reproduce from their source turns", () => {
+  it("tombstones active facts the current extractor cannot reproduce from their source turns", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
     const goodTurn = turn("I prefer dark mode", "e-good");
-    store.ingestTurn(goodTurn);
+    await store.ingestTurn(goodTurn);
 
     const staleObject = "defer right now";
     const staleFact: SemanticFact = {
@@ -76,10 +76,10 @@ describe("SemanticStore.purgeStaleFacts", () => {
     expect(raw).not.toContain(staleObject);
   });
 
-  it("keeps facts whose source turns are all unreadable (fail-safe: absence of evidence is not non-reproduction)", () => {
+  it("keeps facts whose source turns are all unreadable (fail-safe: absence of evidence is not non-reproduction)", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
-    store.ingestTurn(turn("I prefer dark mode", "e-missing"));
+    await store.ingestTurn(turn("I prefer dark mode", "e-missing"));
 
     const id = store.activeFacts()[0].id;
     // Resolver can't read ANY source (wrong dir, gone session, bad entryId).
@@ -92,14 +92,14 @@ describe("SemanticStore.purgeStaleFacts", () => {
     expect(store.allFacts().find((f) => f.id === id)?.state).toBe("active");
   });
 
-  it("aborts (changes nothing) when it would redact more than the fraction limit", () => {
+  it("aborts (changes nothing) when it would redact more than the fraction limit", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
     // Three facts with READABLE sources that no longer reproduce — without the
     // guard all three would be redacted (100% > 50% default limit).
-    store.ingestTurn(turn("I prefer dark mode", "e1"));
-    store.ingestTurn(turn("I prefer tabs over spaces", "e2"));
-    store.ingestTurn(turn("I work at Initech", "e3"));
+    await store.ingestTurn(turn("I prefer dark mode", "e1"));
+    await store.ingestTurn(turn("I prefer tabs over spaces", "e2"));
+    await store.ingestTurn(turn("I work at Initech", "e3"));
     const before = store.activeFacts().length;
     expect(before).toBeGreaterThanOrEqual(3);
 
@@ -111,10 +111,10 @@ describe("SemanticStore.purgeStaleFacts", () => {
     expect(store.activeFacts().length).toBe(before); // nothing changed
   });
 
-  it("dryRun reports the redaction set without mutating", () => {
+  it("dryRun reports the redaction set without mutating", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
-    store.ingestTurn(turn("I prefer dark mode", "e-keep"));
+    await store.ingestTurn(turn("I prefer dark mode", "e-keep"));
     const staleObject = "defer right now";
     const staleFact: SemanticFact = {
       id: factId(

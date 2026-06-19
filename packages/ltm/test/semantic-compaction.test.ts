@@ -15,7 +15,7 @@ function lineCount(file: string): number {
 }
 
 describe("semantic log compaction", () => {
-  it("collapses repeated fact snapshots without losing latest-wins content", () => {
+  it("collapses repeated fact snapshots without losing latest-wins content", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
 
@@ -27,7 +27,7 @@ describe("semantic log compaction", () => {
         text: "I love dark roast coffee.",
         timestamp: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
       };
-      store.ingestTurn(turn);
+      await store.ingestTurn(turn);
     }
 
     const factsPath = path.join(dir, "facts.jsonl");

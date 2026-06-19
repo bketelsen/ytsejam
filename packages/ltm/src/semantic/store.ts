@@ -28,6 +28,7 @@ import {
   normalizeObject,
   slug,
 } from "./extract.ts";
+import { RegexFactExtractor, type FactExtractor } from "./fact-extractor.ts";
 
 const REINFORCE = 0.4;
 /** Identity predicates that hold a single value; a new value supersedes. */
@@ -58,29 +59,35 @@ export function effectiveStrength(fact: SemanticFact, now: string): number {
 export class SemanticStore {
   private facts: Map<string, SemanticFact>;
   private factLog: JsonlLog<SemanticFact>;
+  private factExtractor: FactExtractor;
 
-  private constructor(factLog: JsonlLog<SemanticFact>) {
+  private constructor(factLog: JsonlLog<SemanticFact>, factExtractor: FactExtractor) {
     this.factLog = factLog;
     this.facts = factLog.load();
+    this.factExtractor = factExtractor;
   }
 
-  static open(storeDir: string): SemanticStore {
+  static open(
+    storeDir: string,
+    factExtractor: FactExtractor = new RegexFactExtractor(),
+  ): SemanticStore {
     return new SemanticStore(
       new JsonlLog<SemanticFact>(path.join(storeDir, "facts.jsonl")),
+      factExtractor,
     );
   }
 
   // -- ingestion -----------------------------------------------------------
 
   /** Learn facts from one turn. Facts come from user turns only. */
-  ingestTurn(turn: Turn): void {
+  async ingestTurn(turn: Turn): Promise<void> {
     const source: SourceRef = { sessionId: turn.sessionId, entryId: turn.entryId };
     if (turn.rootSessionId && turn.rootSessionId !== turn.sessionId) {
       source.rootSessionId = turn.rootSessionId;
     }
 
     if (turn.role === "user") {
-      for (const candidate of extractFacts(turn.text)) {
+      for (const candidate of await this.factExtractor.extract(turn.text)) {
         this.assertFact(candidate.kind, candidate.predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp);
       }
     }

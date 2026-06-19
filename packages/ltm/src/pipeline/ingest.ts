@@ -89,7 +89,7 @@ export class IngestPipeline {
       seen.add(turn.entryId);
       report.turnsIngested++;
 
-      this.deps.semantic.ingestTurn(turn);
+      await this.deps.semantic.ingestTurn(turn);
       newRecords.push(...(await this.turnToRecords(turn)));
     }
 

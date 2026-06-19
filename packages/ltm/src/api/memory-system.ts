@@ -263,7 +263,7 @@ export class MemorySystem {
         text: obs.text,
         timestamp: obs.timestamp,
       };
-      this.semantic.ingestTurn(turn);
+      await this.semantic.ingestTurn(turn);
     }
 
     this.rebuildDerived();
