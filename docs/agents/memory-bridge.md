@@ -355,18 +355,14 @@ All env vars are read at server boot by `DreamConfig` in
 `server/src/memory/dream/scheduler.ts`. Changing them requires a server
 restart; there is no live-reload.
 
-### Known gap: applied proposals can be re-proposed
+### Anti-thrash: applied proposals are excluded from re-proposal
 
-The current anti-thrash guard (`dismissedKeys()`) only excludes proposals
-whose status is `"dismissed"`. Proposals that were **applied** (i.e.,
-`applyProposals()` was called and the fact was actually mutated) are not
-excluded from the dismissed-keys set. If the same LLM call proposes the same
-structural change again on the next nightly run (e.g., because the redacted
-fact id still appears in the LLM's context window via some path), a fresh
-`"pending"` proposal will be created. The mitigation is to review and dismiss
-re-proposed items that are stale. A future improvement would be to extend
-`ProposalStore` with an `appliedKeys()` method analogous to `dismissedKeys()`
-and have the miner check both.
+The anti-thrash guard checks both `dismissedKeys()` and `appliedKeys()` so a
+proposal that has already been applied is never re-proposed on a subsequent
+nightly run. `applyProposals()` only marks a proposal `"applied"` if the
+underlying mutation was verified to have landed (the fact round-trips through
+the regex extractor); proposals whose fact did not land remain `"pending"` and
+resurface for the next nightly pass.
 
 ## Health surface
 
