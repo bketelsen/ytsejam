@@ -130,7 +130,7 @@ export function Chat({
           </span>
         </div>
       )}
-      <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto max-w-4xl space-y-3 p-4">
           {messages.length === 0 && !streaming && (
             <p className="pt-20 text-center text-muted-foreground">Start a conversation</p>
