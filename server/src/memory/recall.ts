@@ -46,7 +46,59 @@ export type RecallResult = {
 
 const K = 5;
 
-export async function recall(query: string): Promise<RecallResult> {
+/**
+ * Merge project-tagged hits ahead of global hits, deduped by `where`.
+ * Project hits appear first; any global hit whose `where` already appeared
+ * in the project set is dropped (project version wins).
+ */
+export function mergeRecallHits(global: RecallHit[], project: RecallHit[]): RecallHit[] {
+  const seen = new Set<string>();
+  const out: RecallHit[] = [];
+  for (const h of [...project, ...global]) {
+    if (seen.has(h.where)) continue;
+    seen.add(h.where);
+    out.push(h);
+  }
+  return out;
+}
+
+/** Normalize a slice of LTM RetrievedMemory items into RecallHit[], dropping
+ *  items whose observation origin is already covered by a cog prefix. */
+function toLtmHits(
+  items: RetrievalResult["items"],
+  cogOriginPrefixes: Set<string>,
+  droppedRef: { count: number },
+): RecallHit[] {
+  const hits: RecallHit[] = [];
+  for (const item of items.slice(0, K)) {
+    const record = item.record;
+    if (record.kind === "observation" && record.origin) {
+      const prefix = record.origin.split("#")[0];
+      if (cogOriginPrefixes.has(prefix)) {
+        droppedRef.count++;
+        continue;
+      }
+    }
+    const hit: RecallHit = {
+      from: "ltm",
+      text: (record.text ?? "").trim(),
+      where: `ltm:${record.id}`,
+      score: item.score,
+    };
+    if (item.stale) hit.stale = true;
+    const tags = "tags" in record ? record.tags : undefined;
+    if (Array.isArray(tags) && tags.length > 0) {
+      hit.tags = tags;
+    }
+    hits.push(hit);
+  }
+  return hits;
+}
+
+export async function recall(
+  query: string,
+  opts: { filterTags?: string[] } = {},
+): Promise<RecallResult> {
   // 1. Fan out to both substrates, swallowing per-substrate errors.
   const cogRaw = await memory.search(query).catch((err: Error) => {
     console.warn("[recall] cog search failed:", err.message);
@@ -89,37 +141,32 @@ export async function recall(query: string): Promise<RecallResult> {
 
   // 4. Normalize LTM hits, dropping those whose origin starts with a cog
   //    prefix we already have. Non-observation records have no origin -> kept.
-  let dropped = 0;
-  const ltmHits: RecallHit[] = [];
-  for (const item of ltmRaw.items.slice(0, K)) {
-    const record = item.record;
-    if (record.kind === "observation" && record.origin) {
-      const prefix = record.origin.split("#")[0];
-      if (cogOriginPrefixes.has(prefix)) {
-        dropped++;
-        continue;
-      }
-    }
-    const hit: RecallHit = {
-      from: "ltm",
-      text: (record.text ?? "").trim(),
-      where: `ltm:${record.id}`,
-      score: item.score,
-    };
-    if (item.stale) hit.stale = true;
-    const tags = "tags" in record ? record.tags : undefined;
-    if (Array.isArray(tags) && tags.length > 0) {
-      hit.tags = tags;
-    }
-    ltmHits.push(hit);
-  }
+  const droppedRef = { count: 0 };
+  const ltmHits = toLtmHits(ltmRaw.items, cogOriginPrefixes, droppedRef);
+  const dropped = droppedRef.count;
 
   // 5. Interleave: cog[0], ltm[0], cog[1], ltm[1], ...
-  const hits: RecallHit[] = [];
+  const globalHits: RecallHit[] = [];
   const maxLen = Math.max(cogHits.length, ltmHits.length);
   for (let i = 0; i < maxLen; i++) {
-    if (i < cogHits.length) hits.push(cogHits[i]);
-    if (i < ltmHits.length) hits.push(ltmHits[i]);
+    if (i < cogHits.length) globalHits.push(cogHits[i]);
+    if (i < ltmHits.length) globalHits.push(ltmHits[i]);
+  }
+
+  // 6. Optional: second LTM pass scoped to filterTags (project boost).
+  //    Runs only when filterTags is set and LTM is present; keeps cogCount/
+  //    ltmCount/dropped from the global pass.
+  let hits = globalHits;
+  if (opts.filterTags?.length && ltm) {
+    const projectRaw: RetrievalResult = await ltm
+      .retrieve(query, { k: K, filterTags: opts.filterTags })
+      .catch((err: Error) => {
+        console.warn("[recall] ltm filterTags retrieve failed:", err.message);
+        return EMPTY_LTM;
+      });
+    const projectDropped = { count: 0 };
+    const projectHits = toLtmHits(projectRaw.items, cogOriginPrefixes, projectDropped);
+    hits = mergeRecallHits(globalHits, projectHits);
   }
 
   return {
