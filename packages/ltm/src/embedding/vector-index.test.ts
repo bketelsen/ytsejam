@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { VectorIndex } from "./vector-index.ts";
 
 describe("VectorIndex", () => {
@@ -64,5 +64,23 @@ describe("VectorIndex", () => {
     // similarity() against an off-dimension query throws rather than
     // truncating, because cosine now refuses unequal lengths.
     expect(() => index.similarity("short", [0, 1, 999])).toThrow(/dimension mismatch/);
+  });
+
+  it("uses an expected dimension before any vector is stored", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const index = new VectorIndex(2);
+
+    try {
+      index.set("wrong-first", [1, 0, 0]);
+      index.set("right-dim", [1, 0]);
+
+      expect(index.has("wrong-first")).toBe(false);
+      expect(index.size).toBe(1);
+      expect(index.sampleDimension()).toBe(2);
+      expect(index.search([1, 0], 2)).toEqual([{ id: "right-dim", score: 1 }]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
