@@ -1,7 +1,6 @@
 // server/src/memory/dream/apply.ts
 import type { MemorySystem } from "ltm";
-import { factPhrase, normalizeObject } from "ltm";
-import { canonicalizePredicate } from "../../../../packages/ltm/src/semantic/extract.ts";
+import { factPhrase, normalizeObject, canonicalizePredicate } from "ltm";
 import type { ProposalStore } from "./proposal-store.ts";
 import type { Proposal } from "./types.ts";
 
