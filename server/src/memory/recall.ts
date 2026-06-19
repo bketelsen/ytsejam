@@ -164,6 +164,7 @@ export async function recall(
         console.warn("[recall] ltm filterTags retrieve failed:", err.message);
         return EMPTY_LTM;
       });
+    // project-pass drop count is intentionally not reported; `dropped` reflects the global pass
     const projectDropped = { count: 0 };
     const projectHits = toLtmHits(projectRaw.items, cogOriginPrefixes, projectDropped);
     hits = mergeRecallHits(globalHits, projectHits);

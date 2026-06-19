@@ -124,7 +124,7 @@ describe("IngestPipeline.ingestFile with projectTag", () => {
   });
 });
 
-describe("MemorySystem.ingestSessionFile with projectTag (end-to-end compile check)", () => {
+describe("MemorySystem.ingestSessionFile with projectTag (stamps projectTag end-to-end)", () => {
   it("accepts opts.projectTag and threads it to the pipeline", async () => {
     const dir = makeTmpDir();
     const semanticDir = path.join(dir, "store");
