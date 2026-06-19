@@ -475,8 +475,12 @@ export class AgentManager {
         setTimeout(() => void this.maybeGenerateTitle(opened), 0);
       }
       setTimeout(() => {
-        const projectTag =
-          this.opts.activeProjectTag?.(opened.id) ?? undefined;
+        let projectTag: string | undefined;
+        try {
+          projectTag = this.opts.activeProjectTag?.(opened.id) ?? undefined;
+        } catch {
+          projectTag = undefined;
+        }
         void this.opts.ltm
           ?.()
           ?.ingestSessionFile(
