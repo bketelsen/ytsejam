@@ -62,10 +62,11 @@ export async function runDreamJob(deps: DreamJobDeps): Promise<{ summary: Mechan
     .map((f) => ({ id: f.id, kind: f.kind, predicate: f.predicate, object: f.object, polarity: f.polarity as 1 | -1 }));
 
   // Mine proposals via LLM
+  const excludeKeys = new Set<string>([...deps.store.dismissedKeys(), ...deps.store.appliedKeys()]);
   const proposals = await mineProposals({
     facts,
     userTurns: kept,
-    dismissedKeys: deps.store.dismissedKeys(),
+    dismissedKeys: excludeKeys,
     getApiKey: deps.getApiKey,
     model: deps.model,
     baseUrl: deps.baseUrl,

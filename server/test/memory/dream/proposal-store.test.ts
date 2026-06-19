@@ -22,6 +22,7 @@ describe("ProposalStore", () => {
     const reopened = new ProposalStore(d);
     expect(reopened.pending()).toHaveLength(0);
     expect(reopened.dismissedKeys().has(keyOf(p({ id: "p2", factIds: ["f2"] })))).toBe(true);
+    expect(reopened.appliedKeys().has(keyOf(p({ id: "p1" })))).toBe(true);
   });
   it("creates dir lazily on first write, not on construction", () => {
     const nonexistentDir = path.join(os.tmpdir(), `dream-lazy-${Date.now()}`);

@@ -33,4 +33,10 @@ export class ProposalStore {
     for (const p of this.map.values()) if (p.status === "dismissed") out.add(keyOf(p));
     return out;
   }
+  /** Keys of applied proposals — the miner excludes these (anti-thrash). */
+  appliedKeys(): Set<string> {
+    const out = new Set<string>();
+    for (const p of this.map.values()) if (p.status === "applied") out.add(keyOf(p));
+    return out;
+  }
 }

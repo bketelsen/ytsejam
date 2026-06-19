@@ -153,28 +153,18 @@ describe("dream pipeline e2e", () => {
 
       // ── Step 5: re-run runDreamJob with the same stubbed LLM response ────
       //
-      // The miner only excludes *dismissed* proposal keys (via dismissedKeys()).
-      // Applied proposals are NOT excluded from the dismissed-keys set.
-      // Therefore, re-proposing the same drop targeting the same (now-redacted)
-      // fact WILL produce a second pending proposal when the fact is still
-      // listed in active facts — BUT the redacted fact is filtered out of
-      // `facts` inside runDreamJob (it checks `f.state === "active"`), so the
-      // LLM stub's factIds reference a non-active fact.
+      // The miner now excludes BOTH dismissed AND applied proposal keys
+      // (via dismissedKeys() + appliedKeys()). Therefore, re-proposing the
+      // same drop targeting the same (now-redacted) fact is excluded by the
+      // anti-thrash guard (the applied key matches). No new pending proposal
+      // is created.
       //
-      // However, the stub always returns the same factId regardless of what
-      // facts are passed in. So the miner will receive the drop proposal again.
-      // The anti-thrash guard checks dismissedKeys() only — applied proposals
-      // are NOT deduped by key. This means a second pending proposal with a
-      // NEW id would be created.
+      // The redacted fact is also filtered out of `facts` inside runDreamJob
+      // (it checks `f.state === "active"`), so the LLM stub's factIds
+      // reference a non-active fact. But even if the miner received the drop
+      // proposal again, it would be excluded by the appliedKeys() set.
       //
-      // We test this gap explicitly: a second run with the same stub targeting
-      // an applied-fact id WILL produce a second pending proposal.
-      // This is the documented gap: applied proposals should also be excluded
-      // from the dismissed-keys set (or the store needs an `appliedKeys()`
-      // method that the miner also checks) to prevent thrash re-proposal of
-      // facts that were deliberately applied (confirmed-dropped).
-      //
-      // We assert the exact current behavior so CI catches any future change.
+      // We assert the fixed behavior: no second pending proposal is created.
 
       proposalId = "e2e-p2"; // different id for second run
       const store2 = new ProposalStore(dreamDir); // reload to pick up applied status
@@ -202,24 +192,16 @@ describe("dream pipeline e2e", () => {
         fetchImpl, // same stub returning same drop targeting same targetId
       });
 
-      // GAP DOCUMENTED: applied proposals are NOT excluded from re-proposal.
-      // The stub will attempt to propose the same drop again. Since the fact
-      // is redacted, it no longer appears in the active-facts list passed to
-      // the miner — so the miner receives the factId in the LLM stub's
-      // response but the target is already gone. The proposal is still saved
-      // as pending (the miner doesn't validate factIds against active facts).
-      //
-      // Expected result: a fresh pending proposal exists (out2.proposed === 1)
-      // because the miner only anti-thrashes on dismissed keys, not applied keys.
-      // If this ever changes to 0 (applied keys are also excluded), update this
-      // comment and flip the expectation.
-      expect(out2.proposed).toBe(1); // CONCERN: applied not deduped — see comment above
+      // FIXED: applied proposals are now excluded from re-proposal via appliedKeys().
+      // The anti-thrash guard now checks both dismissed and applied keys. Since
+      // the same drop was already applied in step 4, it is now deduped by key,
+      // and no second pending proposal is created.
+      expect(out2.proposed).toBe(0);
 
       const store3 = new ProposalStore(dreamDir);
       const allPending = store3.pending();
-      // The first proposal was applied (no longer pending), but a second one was created
-      expect(allPending).toHaveLength(1);
-      expect(allPending[0].id).toBe("e2e-p2");
+      // The first proposal was applied (no longer pending), and the second one was excluded by anti-thrash
+      expect(allPending).toHaveLength(0);
 
       // The second run's report still contains the header
       expect(postedText2).toContain("Memory maintenance");
