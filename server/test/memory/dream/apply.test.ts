@@ -1,5 +1,5 @@
 // server/test/memory/dream/apply.test.ts
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 import { MemorySystem } from "ltm";
 import { ProposalStore } from "../../../src/memory/dream/proposal-store.ts";
@@ -45,6 +45,40 @@ describe("applyProposals", () => {
       store.save([{ id: "p3", kind: "drop", factIds: ["f"], rationale: "", confidence: 0.9, status: "pending" }]);
       expect(dismissProposals({ ltm, store, now }, ["p3"]).dismissed).toEqual(["p3"]);
       expect(store.get("p3")!.status).toBe("dismissed");
+    } finally { ltm.close(); }
+  });
+
+  it("add with known predicate does not warn and learns the fact", async () => {
+    const root = tmp();
+    const ltm = MemorySystem.open({ storeDir: path.join(root, "ltm") });
+    try {
+      const store = new ProposalStore(path.join(root, "dream"));
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      store.save([{ id: "p4", kind: "add", factIds: [], add: { kind: "preference", predicate: "prefers", object: "Rust", polarity: 1 as const, sourceRef: { sessionId: "s", entryId: "e" } }, rationale: "known", confidence: 0.9, status: "pending" }]);
+      await applyProposals({ ltm, store, now }, ["p4"]);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(ltm.listFacts().some((f) => f.predicate === "prefers" && f.object === "Rust")).toBe(true);
+
+      warnSpy.mockRestore();
+    } finally { ltm.close(); }
+  });
+
+  it("add with unknown predicate warns and still records observation", async () => {
+    const root = tmp();
+    const ltm = MemorySystem.open({ storeDir: path.join(root, "ltm") });
+    try {
+      const store = new ProposalStore(path.join(root, "dream"));
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      store.save([{ id: "p5", kind: "add", factIds: [], add: { kind: "preference", predicate: "speaks_language", object: "Spanish", polarity: 1 as const, sourceRef: { sessionId: "s", entryId: "e" } }, rationale: "unknown", confidence: 0.9, status: "pending" }]);
+      await applyProposals({ ltm, store, now }, ["p5"]);
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[dream] add proposal used a non-standard predicate "speaks_language"'));
+      expect(store.get("p5")!.status).toBe("applied");
+
+      warnSpy.mockRestore();
     } finally { ltm.close(); }
   });
 });

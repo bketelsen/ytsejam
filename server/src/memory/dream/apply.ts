@@ -48,8 +48,25 @@ async function applyOne(deps: ApplyDeps, p: Proposal): Promise<void> {
       });
     }
   } else if (p.kind === "add" && p.add) {
+    const { predicate, object, polarity } = p.add;
+    const isKnownPredicate =
+      predicate === "name" ||
+      predicate === "role" ||
+      predicate === "works_at" ||
+      predicate === "works_on" ||
+      predicate === "lives_in" ||
+      predicate === "allergic_to" ||
+      predicate.startsWith("rel_") ||
+      predicate === "uses" ||
+      predicate === "directive" ||
+      predicate === "prefers";
+
+    if (!isKnownPredicate) {
+      console.warn(`[dream] add proposal used a non-standard predicate "${predicate}"; the fact may not be re-extracted from the observation phrase`);
+    }
+
     await deps.ltm.recordObservation({
-      text: obsPhrase(p.add.predicate, p.add.object, p.add.polarity),
+      text: obsPhrase(predicate, object, polarity),
       timestamp: deps.now(),
       origin: "dream:approved",
       learnFacts: true,
