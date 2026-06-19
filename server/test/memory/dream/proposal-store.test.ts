@@ -23,4 +23,12 @@ describe("ProposalStore", () => {
     expect(reopened.pending()).toHaveLength(0);
     expect(reopened.dismissedKeys().has(keyOf(p({ id: "p2", factIds: ["f2"] })))).toBe(true);
   });
+  it("creates dir lazily on first write, not on construction", () => {
+    const nonexistentDir = path.join(os.tmpdir(), `dream-lazy-${Date.now()}`);
+    const s = new ProposalStore(nonexistentDir);
+    expect(fs.existsSync(nonexistentDir)).toBe(false);
+    s.save([p({ id: "p1" })]);
+    expect(fs.existsSync(nonexistentDir)).toBe(true);
+    fs.rmSync(nonexistentDir, { recursive: true, force: true });
+  });
 });

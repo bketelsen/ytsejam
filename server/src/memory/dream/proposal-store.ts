@@ -10,7 +10,6 @@ export class ProposalStore {
   private file: string;
   private map: Map<string, Proposal>;
   constructor(dir: string) {
-    fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, "pending-proposals.jsonl");
     this.map = new Map();
     if (fs.existsSync(this.file)) {
@@ -20,7 +19,7 @@ export class ProposalStore {
       }
     }
   }
-  private append(p: Proposal): void { fs.appendFileSync(this.file, JSON.stringify(p) + "\n"); }
+  private append(p: Proposal): void { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.appendFileSync(this.file, JSON.stringify(p) + "\n"); }
   save(ps: Proposal[]): void { for (const p of ps) { this.map.set(p.id, p); this.append(p); } }
   pending(): Proposal[] { return [...this.map.values()].filter((p) => p.status === "pending"); }
   get(id: string): Proposal | undefined { return this.map.get(id); }
