@@ -86,6 +86,13 @@ async function applyOne(deps: ApplyDeps, p: Proposal): Promise<boolean> {
     if (!p.canonical) return false;
     const { predicate, object, polarity } = p.canonical;
 
+    // Capture the originals' source turns BEFORE redacting, so the canonical
+    // can inherit their provenance (a later source-based redaction then still
+    // cascades to the merged fact).
+    const carriedSources = p.factIds.flatMap(
+      (id) => deps.ltm.listFacts().find((f) => f.id === id)?.sources ?? [],
+    );
+
     // FIRST record the canonical observation and verify it round-trips.
     // Only redact the originals if the canonical fact actually landed —
     // this prevents data loss when the observation phrase is unparseable.
@@ -101,7 +108,13 @@ async function applyOne(deps: ApplyDeps, p: Proposal): Promise<boolean> {
       return false;
     }
 
-    // Canonical fact exists — now safe to redact the originals.
+    // Canonical landed: carry the originals' provenance onto it, then redact them.
+    const canon = deps.ltm.listFacts().find(
+      (f) => f.state === "active" && !f.supersededBy &&
+        canonicalizePredicate(f.predicate) === canonicalizePredicate(predicate) &&
+        normalizeObject(f.object) === normalizeObject(object),
+    );
+    if (canon && carriedSources.length > 0) deps.ltm.attachFactSources(canon.id, carriedSources);
     for (const id of p.factIds) deps.ltm.redactFact(id);
     return true;
   }

@@ -35,6 +35,25 @@ describe("mineProposals", () => {
     expect(out).toHaveLength(0);
   });
 
+  it("drops structurally-malformed add (missing sourceRef) and merge (missing canonical object)", async () => {
+    n = 0;
+    const fetchImpl = fetchReturning({ proposals: [
+      { kind: "add", factIds: [], add: { kind: "preference", predicate: "prefers", object: "Go", polarity: 1 }, rationale: "no sourceRef", confidence: 0.9 },
+      { kind: "merge", factIds: ["f1", "f2"], canonical: { kind: "attribute", predicate: "works_on", polarity: 1 }, rationale: "no object", confidence: 0.9 },
+    ] });
+    expect(await mineProposals(deps({ fetchImpl }))).toHaveLength(0);
+  });
+
+  it("keeps a well-formed add (with sourceRef) and a well-formed merge", async () => {
+    n = 0;
+    const fetchImpl = fetchReturning({ proposals: [
+      { kind: "add", factIds: [], add: { kind: "preference", predicate: "prefers", object: "Go", polarity: 1, sourceRef: { sessionId: "s", entryId: "e" } }, rationale: "stated", confidence: 0.9 },
+      { kind: "merge", factIds: ["f1", "f2"], canonical: { kind: "attribute", predicate: "works_on", object: "ytsejam", polarity: 1 }, rationale: "dupes", confidence: 0.9 },
+    ] });
+    const out = await mineProposals(deps({ fetchImpl }));
+    expect(out.map((p) => p.kind).sort()).toEqual(["add", "merge"]);
+  });
+
   it("returns [] when the fetch fails/aborts (skip-on-failure, never throws)", async () => {
     n = 0;
     // Simulates an aborted/hung request: the fetch rejects.

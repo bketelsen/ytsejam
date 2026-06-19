@@ -56,10 +56,17 @@ export async function runDreamJob(deps: DreamJobDeps): Promise<{ summary: Mechan
     kept.unshift(t);
   }
 
-  // Collect active facts for the miner
-  const facts = deps.ltm.listFacts()
-    .filter((f) => f.state === "active" && !f.supersededBy)
-    .map((f) => ({ id: f.id, kind: f.kind, predicate: f.predicate, object: f.object, polarity: f.polarity as 1 | -1 }));
+  // Collect active facts for the miner, capped (strongest first) so a large
+  // profile can't blow the LLM context. User turns are already token-budgeted.
+  const MAX_MINER_FACTS = 300;
+  const activeFacts = deps.ltm.listFacts().filter((f) => f.state === "active" && !f.supersededBy);
+  const selectedFacts = activeFacts.length > MAX_MINER_FACTS
+    ? [...activeFacts].sort((a, b) => b.strength - a.strength).slice(0, MAX_MINER_FACTS)
+    : activeFacts;
+  if (activeFacts.length > MAX_MINER_FACTS) {
+    console.warn(`[dream] ${activeFacts.length} active facts; sending the ${MAX_MINER_FACTS} strongest to the miner`);
+  }
+  const facts = selectedFacts.map((f) => ({ id: f.id, kind: f.kind, predicate: f.predicate, object: f.object, polarity: f.polarity as 1 | -1 }));
 
   // Mine proposals via LLM
   const excludeKeys = new Set<string>([...deps.store.dismissedKeys(), ...deps.store.appliedKeys()]);
@@ -81,16 +88,15 @@ export async function runDreamJob(deps: DreamJobDeps): Promise<{ summary: Mechan
   // Ensure maintenance session is visible
   const sessionId = await deps.ensureMaintenanceSession();
 
-  // Compose and post the report
-  const factText = (id: string): string | undefined => {
-    const f = deps.ltm.listFacts().find((x) => x.id === id);
-    return f ? `${f.kind}/${f.predicate}=${f.object}` : undefined;
-  };
+  // Compose and post the report (build the id→label map once, not per proposal)
+  const factTextById = new Map(
+    deps.ltm.listFacts().map((f) => [f.id, `${f.kind}/${f.predicate}=${f.object}`]),
+  );
   const report = composeReport(
     deps.now().slice(0, 10),
     summary,
     proposals,
-    factText,
+    (id) => factTextById.get(id),
   );
   await deps.postReport(sessionId, report);
 
