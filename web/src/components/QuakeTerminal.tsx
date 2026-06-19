@@ -82,11 +82,13 @@ export function QuakeTerminal({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="top"
-        className="h-[min(70dvh,42rem)] gap-0 border-border bg-background p-0 text-foreground"
+        className="h-[min(70dvh,42rem)] gap-0 overflow-hidden border-border bg-background p-0 text-foreground"
       >
         <SheetTitle className="sr-only">Terminal</SheetTitle>
         <SheetDescription className="sr-only">Interactive server shell</SheetDescription>
-        <div ref={setContainerElement} className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-12" />
+        <div className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-12">
+          <div ref={setContainerElement} className="h-full min-h-0 overflow-hidden" />
+        </div>
       </SheetContent>
     </Sheet>
   );
