@@ -30,8 +30,9 @@ export { scoreSalience } from "./episodic/salience.ts";
 export { chunkText } from "./episodic/chunk.ts";
 export { consolidate, extractiveSummary, type Summarizer } from "./episodic/consolidate.ts";
 export { SemanticStore, effectiveStrength } from "./semantic/store.ts";
-export { PreferenceGraph, USER_NODE } from "./semantic/graph.ts";
-export { extractFacts, extractEntities, normalizeObject } from "./semantic/extract.ts";
+export { extractFacts, normalizeObject, type FactCandidate } from "./semantic/extract.ts";
+// FactKind is re-exported via the `export * from "./types.ts"` wildcard below.
+export { type FactExtractor, RegexFactExtractor } from "./semantic/fact-extractor.ts";
 export { readSessionFile, listSessionFiles, activeBranch, messageText } from "./session/reader.ts";
 export { IngestPipeline, type IngestReport } from "./pipeline/ingest.ts";
 export { JsonlLog } from "./store/jsonl-log.ts";

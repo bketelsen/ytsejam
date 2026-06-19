@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { extractEntities, extractFacts } from "../src/semantic/extract.ts";
+import { extractFacts } from "../src/semantic/extract.ts";
 import { effectiveStrength, SemanticStore } from "../src/semantic/store.ts";
 import type { SemanticFact, Turn } from "../src/types.ts";
 
@@ -91,50 +91,13 @@ describe("fact extraction heuristics", () => {
   });
 });
 
-describe("entity extraction heuristics", () => {
-  it("finds people via relationship phrases", () => {
-    const entities = extractEntities("My sister Alice is visiting next month.");
-    expect(entities).toContainEqual(expect.objectContaining({ name: "Alice", kind: "person" }));
-  });
-
-  it("finds tech, code spans, paths, urls, and emails", () => {
-    const entities = extractEntities(
-      "I use TypeScript; see `loadConfig()` in ./src/config.ts or https://example.com/docs — mail me at bjk@example.com",
-    );
-    const kinds = new Map(entities.map((e) => [e.kind, e.name]));
-    expect(kinds.get("tech")).toBeDefined();
-    expect(kinds.get("code")).toBe("loadConfig()");
-    expect(kinds.get("path")).toBe("./src/config.ts");
-    expect(kinds.get("url")).toContain("https://example.com");
-    expect(kinds.get("email")).toBe("bjk@example.com");
-  });
-
-  it("keys entities by normalized form, independent of surface-case order (PLAN 2.4)", () => {
-    for (const text of [
-      "TypeScript is great. i still write typescript every day.",
-      "i still write typescript every day. TypeScript is great.",
-    ]) {
-      const candidates = extractEntities(text).filter((e) => e.key === "typescript");
-      expect(candidates).toHaveLength(1);
-      expect(candidates[0].name).toBe("TypeScript");
-      expect(candidates[0].kind).toBe("tech");
-    }
-  });
-
-  it("skips sentence-starting stopwords", () => {
-    const entities = extractEntities("The Quick answer is yes. When I checked it worked.");
-    expect(entities.map((e) => e.name)).not.toContain("The");
-    expect(entities.map((e) => e.name)).not.toContain("When");
-  });
-});
-
 describe("semantic store belief dynamics", () => {
-  it("reinforces repeated facts and persists across reopen", () => {
+  it("reinforces repeated facts and persists across reopen", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
-    store.ingestTurn(turn("I like dark roast coffee.", { entryId: "e1" }));
+    await store.ingestTurn(turn("I like dark roast coffee.", { entryId: "e1" }));
     const first = store.activeFacts().find((f) => f.objectNorm.includes("dark roast"))!;
-    store.ingestTurn(
+    await store.ingestTurn(
       turn("I really like dark roast coffee.", { entryId: "e2", timestamp: "2026-01-05T00:00:00.000Z" }),
     );
     const reinforced = store.activeFacts().find((f) => f.objectNorm.includes("dark roast"))!;
@@ -146,10 +109,10 @@ describe("semantic store belief dynamics", () => {
     expect(reopened.activeFacts().some((f) => f.objectNorm.includes("dark roast"))).toBe(true);
   });
 
-  it("resolves contradictions in favor of the newest statement", () => {
+  it("resolves contradictions in favor of the newest statement", async () => {
     const store = SemanticStore.open(tmpDir());
-    store.ingestTurn(turn("I like tabs for indentation.", { entryId: "e1" }));
-    store.ingestTurn(
+    await store.ingestTurn(turn("I like tabs for indentation.", { entryId: "e1" }));
+    await store.ingestTurn(
       turn("I really dislike tabs for indentation now.", {
         entryId: "e2",
         timestamp: "2026-02-01T00:00:00.000Z",
@@ -160,24 +123,24 @@ describe("semantic store belief dynamics", () => {
     expect(facts[0].polarity).toBe(-1);
   });
 
-  it("treats identity slots as single-valued, newest wins", () => {
+  it("treats identity slots as single-valued, newest wins", async () => {
     const store = SemanticStore.open(tmpDir());
-    store.ingestTurn(turn("My name is Brian.", { entryId: "e1" }));
-    store.ingestTurn(turn("Call me Bee.", { entryId: "e2", timestamp: "2026-03-01T00:00:00.000Z" }));
+    await store.ingestTurn(turn("My name is Brian.", { entryId: "e1" }));
+    await store.ingestTurn(turn("Call me Bee.", { entryId: "e2", timestamp: "2026-03-01T00:00:00.000Z" }));
     const names = store.activeFacts().filter((f) => f.predicate === "name");
     expect(names).toHaveLength(1);
     expect(names[0].object).toBe("Bee");
   });
 
-  it("only learns facts from user turns", () => {
+  it("only learns facts from user turns", async () => {
     const store = SemanticStore.open(tmpDir());
-    store.ingestTurn(turn("I prefer tabs over spaces.", { role: "assistant" }));
+    await store.ingestTurn(turn("I prefer tabs over spaces.", { role: "assistant" }));
     expect(store.activeFacts()).toHaveLength(0);
   });
 
-  it("profile floors are per fact kind and configurable (PLAN 2.1)", () => {
+  it("profile floors are per fact kind and configurable (PLAN 2.1)", async () => {
     const store = SemanticStore.open(tmpDir());
-    store.ingestTurn(turn("My name is Brian.", { entryId: "e1", timestamp: "2024-01-01T00:00:00.000Z" }));
+    await store.ingestTurn(turn("My name is Brian.", { entryId: "e1", timestamp: "2024-01-01T00:00:00.000Z" }));
     // ~26 months later: effective strength ≈ 0.9·2^(-790/365) ≈ 0.20.
     const now = "2026-03-01T00:00:00.000Z";
     const defaultFloors = store.profile(now);
@@ -185,16 +148,16 @@ describe("semantic store belief dynamics", () => {
     const lowered = store.profile(now, { floor: 0.3, identityFloor: 0.15, directiveFloor: 0.3 });
     expect(lowered.identity.some((f) => f.object === "Brian")).toBe(true);
     // The generic floor did not move: a preference of the same age stays out.
-    store.ingestTurn(turn("I love rye bread.", { entryId: "e2", timestamp: "2024-01-01T00:00:00.000Z" }));
+    await store.ingestTurn(turn("I love rye bread.", { entryId: "e2", timestamp: "2024-01-01T00:00:00.000Z" }));
     expect(
       store.profile(now, { floor: 0.3, identityFloor: 0.15, directiveFloor: 0.3 }).preferences,
     ).toHaveLength(0);
   });
 
-  it("redacts facts when all their evidence is redacted", () => {
+  it("redacts facts when all their evidence is redacted", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
-    store.ingestTurn(turn("I love dark roast coffee.", { entryId: "e1" }));
+    await store.ingestTurn(turn("I love dark roast coffee.", { entryId: "e1" }));
     const result = store.redactBySources((s) => s.entryId === "e1");
     expect(result.facts).toBeGreaterThanOrEqual(1);
     expect(store.activeFacts().some((f) => f.objectNorm.includes("dark roast"))).toBe(false);
@@ -243,10 +206,10 @@ function userTurn(text: string, timestamp: string, entryId = "e1"): Turn {
 }
 
 describe("dormant profile section (RECALL 2)", () => {
-  it("active facts below their floor land in dormant, sorted strongest-first", () => {
+  it("active facts below their floor land in dormant, sorted strongest-first", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ltm-sem-"));
     const store = SemanticStore.open(dir);
-    store.ingestTurn(userTurn("I work at Initech.", "2026-01-01T00:00:00.000Z"));
+    await store.ingestTurn(userTurn("I work at Initech.", "2026-01-01T00:00:00.000Z"));
     const now = "2026-09-28T00:00:00.000Z"; // works_at attribute decayed below 0.3
 
     const profile = store.profile(now);
@@ -256,10 +219,10 @@ describe("dormant profile section (RECALL 2)", () => {
     expect(dormant!.object).toBe("Initech");
   });
 
-  it("above-floor facts never appear in dormant", () => {
+  it("above-floor facts never appear in dormant", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ltm-sem-"));
     const store = SemanticStore.open(dir);
-    store.ingestTurn(userTurn("I work at Initech.", "2026-01-01T00:00:00.000Z"));
+    await store.ingestTurn(userTurn("I work at Initech.", "2026-01-01T00:00:00.000Z"));
     const profile = store.profile("2026-01-02T00:00:00.000Z"); // fresh
     expect(profile.attributes.some((f) => f.predicate === "works_at")).toBe(true);
     expect(profile.dormant.some((f) => f.predicate === "works_at")).toBe(false);
@@ -267,10 +230,10 @@ describe("dormant profile section (RECALL 2)", () => {
 });
 
 describe("recordRecall rehearsal persistence (RECALL 3)", () => {
-  it("bumps in memory and persists at powers of two (like bumpAccess)", () => {
+  it("bumps in memory and persists at powers of two (like bumpAccess)", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
-    store.ingestTurn(turn("I work at Initech.", { timestamp: "2026-01-01T00:00:00.000Z" }));
+    await store.ingestTurn(turn("I work at Initech.", { timestamp: "2026-01-01T00:00:00.000Z" }));
     const id = store.activeFacts().find((f) => f.predicate === "works_at")!.id;
 
     for (let i = 0; i < 3; i++) store.recordRecall(id);
@@ -286,11 +249,11 @@ describe("recordRecall rehearsal persistence (RECALL 3)", () => {
     store.recordRecall("no-such-fact"); // must not throw
   });
 
-  it("is a no-op for a superseded fact (RECALL 3)", () => {
+  it("is a no-op for a superseded fact (RECALL 3)", async () => {
     const store = SemanticStore.open(tmpDir());
     // "name" is a single-valued slot: the second ingest supersedes the first.
-    store.ingestTurn(turn("My name is Brian.", { entryId: "e1", timestamp: "2026-01-01T00:00:00.000Z" }));
-    store.ingestTurn(turn("My name is Bob.", { entryId: "e2", timestamp: "2026-02-01T00:00:00.000Z" }));
+    await store.ingestTurn(turn("My name is Brian.", { entryId: "e1", timestamp: "2026-01-01T00:00:00.000Z" }));
+    await store.ingestTurn(turn("My name is Bob.", { entryId: "e2", timestamp: "2026-02-01T00:00:00.000Z" }));
 
     const superseded = store.allFacts().find((f) => f.predicate === "name" && f.supersededBy);
     expect(superseded).toBeDefined();

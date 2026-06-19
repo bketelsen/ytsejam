@@ -1,6 +1,6 @@
 /**
- * Semantic memory store: durable facts about the user plus an entity store,
- * persisted to facts.jsonl / entities.jsonl (latest-wins snapshots).
+ * Semantic memory store: durable facts about the user, persisted to
+ * facts.jsonl (latest-wins snapshots).
  *
  * Belief dynamics:
  * - Reinforcement: re-asserting a fact raises strength asymptotically toward
@@ -14,7 +14,6 @@
 
 import path from "node:path";
 import type {
-  EntityRecord,
   FactKind,
   ProfileFloors,
   ProfileSummary,
@@ -24,12 +23,12 @@ import type {
 } from "../types.ts";
 import { JsonlLog } from "../store/jsonl-log.ts";
 import {
-  extractEntities,
   extractFacts,
   factId,
   normalizeObject,
   slug,
 } from "./extract.ts";
+import { RegexFactExtractor, type FactExtractor } from "./fact-extractor.ts";
 
 const REINFORCE = 0.4;
 /** Identity predicates that hold a single value; a new value supersedes. */
@@ -59,44 +58,39 @@ export function effectiveStrength(fact: SemanticFact, now: string): number {
 
 export class SemanticStore {
   private facts: Map<string, SemanticFact>;
-  private entities: Map<string, EntityRecord>;
   private factLog: JsonlLog<SemanticFact>;
-  private entityLog: JsonlLog<EntityRecord>;
+  private factExtractor: FactExtractor;
 
-  private constructor(
-    factLog: JsonlLog<SemanticFact>,
-    entityLog: JsonlLog<EntityRecord>,
-  ) {
+  private constructor(factLog: JsonlLog<SemanticFact>, factExtractor: FactExtractor) {
     this.factLog = factLog;
-    this.entityLog = entityLog;
     this.facts = factLog.load();
-    this.entities = entityLog.load();
+    this.factExtractor = factExtractor;
   }
 
-  static open(storeDir: string): SemanticStore {
+  static open(
+    storeDir: string,
+    factExtractor: FactExtractor = new RegexFactExtractor(),
+  ): SemanticStore {
     return new SemanticStore(
       new JsonlLog<SemanticFact>(path.join(storeDir, "facts.jsonl")),
-      new JsonlLog<EntityRecord>(path.join(storeDir, "entities.jsonl")),
+      factExtractor,
     );
   }
 
   // -- ingestion -----------------------------------------------------------
 
-  /** Learn facts and entities from one turn. Facts come from user turns only. */
-  ingestTurn(turn: Turn): void {
+  /** Learn facts from one turn. Facts come from user turns only. */
+  async ingestTurn(turn: Turn, projectTag?: string): Promise<void> {
     const source: SourceRef = { sessionId: turn.sessionId, entryId: turn.entryId };
     if (turn.rootSessionId && turn.rootSessionId !== turn.sessionId) {
       source.rootSessionId = turn.rootSessionId;
     }
 
     if (turn.role === "user") {
-      for (const candidate of extractFacts(turn.text)) {
-        this.assertFact(candidate.kind, candidate.predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp);
+      for (const candidate of await this.factExtractor.extract(turn.text)) {
+        const tag = candidate.scope === "project" && projectTag ? projectTag : undefined;
+        this.assertFact(candidate.kind, candidate.predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp, tag);
       }
-    }
-
-    for (const candidate of extractEntities(turn.text)) {
-      this.observeEntity(candidate.name, candidate.key, candidate.kind, source, turn.timestamp);
     }
   }
 
@@ -108,9 +102,10 @@ export class SemanticStore {
     initialStrength: number,
     source: SourceRef,
     at: string,
+    projectTag?: string,
   ): void {
     const objectNorm = normalizeObject(object);
-    const id = factId({ kind, predicate, polarity }, objectNorm);
+    const id = factId({ kind, predicate, polarity }, objectNorm, projectTag);
     const existing = this.facts.get(id);
 
     if (existing && existing.state !== "redacted") {
@@ -143,6 +138,7 @@ export class SemanticStore {
       lastSeenAt: at,
       sources: [source],
       state: "active",
+      ...(projectTag !== undefined ? { projectTag } : {}),
     };
     this.facts.set(id, fact);
     this.factLog.append(fact);
@@ -167,76 +163,27 @@ export class SemanticStore {
     }
   }
 
-  private observeEntity(
-    name: string,
-    norm: string,
-    kind: EntityRecord["kind"],
-    source: SourceRef,
-    at: string,
-  ): void {
-    const id = `ent-${slug(norm)}`;
-    const existing = this.entities.get(id);
-    if (existing && existing.state !== "redacted") {
-      const updated: EntityRecord = {
-        ...existing,
-        kind: existing.kind === "other" && kind !== "other" ? kind : existing.kind,
-        // Prefer a capitalized display form once one is observed.
-        name: existing.name === existing.norm && name !== norm ? name : existing.name,
-        mentionCount: existing.mentionCount + 1,
-        lastSeenAt: at,
-        sessionIds: existing.sessionIds.includes(source.rootSessionId ?? source.sessionId)
-          ? existing.sessionIds
-          : [...existing.sessionIds, source.rootSessionId ?? source.sessionId],
-        sources: dedupeSources([...existing.sources, source]),
-      };
-      this.entities.set(id, updated);
-      this.entityLog.append(updated);
-      return;
-    }
-    if (existing?.state === "redacted") return; // stays forgotten
-    const record: EntityRecord = {
-      id,
-      name,
-      norm,
-      kind,
-      mentionCount: 1,
-      firstSeenAt: at,
-      lastSeenAt: at,
-      // Entities associate with the fork ROOT's session — the user the
-      // knowledge belongs to — while sources keep the literal location.
-      sessionIds: [source.rootSessionId ?? source.sessionId],
-      sources: [source],
-      state: "active",
-    };
-    this.entities.set(id, record);
-    this.entityLog.append(record);
-  }
-
   // -- reads ----------------------------------------------------------------
 
   allFacts(): SemanticFact[] {
     return [...this.facts.values()];
   }
 
-  allEntities(): EntityRecord[] {
-    return [...this.entities.values()];
-  }
-
   activeFacts(): SemanticFact[] {
     return this.allFacts().filter((f) => f.state === "active" && !f.supersededBy);
-  }
-
-  activeEntities(): EntityRecord[] {
-    return this.allEntities().filter((e) => e.state === "active");
   }
 
   profile(
     now: string,
     floors: ProfileFloors = { floor: 0.3, identityFloor: 0.3, directiveFloor: 0.3 },
+    activeProjectTag?: string,
   ): ProfileSummary {
     const floorFor = (f: SemanticFact): number =>
       f.kind === "identity" ? floors.identityFloor : f.kind === "directive" ? floors.directiveFloor : floors.floor;
-    const all = this.activeFacts().sort(
+    const scoped = this.activeFacts().filter(
+      (f) => !f.projectTag || f.projectTag === activeProjectTag,
+    );
+    const all = scoped.sort(
       (a, b) => effectiveStrength(b, now) - effectiveStrength(a, now),
     );
     const facts = all.filter((f) => effectiveStrength(f, now) >= floorFor(f));
@@ -247,9 +194,6 @@ export class SemanticStore {
       directives: facts.filter((f) => f.kind === "directive"),
       attributes: facts.filter((f) => f.kind === "attribute"),
       dormant,
-      topEntities: this.activeEntities()
-        .sort((a, b) => b.mentionCount - a.mentionCount)
-        .slice(0, 12),
     };
   }
 
@@ -271,65 +215,133 @@ export class SemanticStore {
 
   // -- maintenance -----------------------------------------------------------
 
-  /** Collapse semantic append-only logs to one latest-wins snapshot per id. */
-  compactLogs(): { facts: number; entities: number } {
-    this.factLog.compact(this.facts.values());
-    this.entityLog.compact(this.entities.values());
-    return { facts: this.facts.size, entities: this.entities.size };
+  /**
+   * Restore exact fact records, overwriting whatever the store currently holds
+   * for those ids. Used to recover from a faulty redaction/purge (D3): the
+   * caller supplies the pre-damage records (e.g. from a store backup) and this
+   * appends them verbatim, so the log's latest-wins load resolves them as the
+   * live state. Facts NOT named here are untouched — restoring the wiped set
+   * cannot clobber surviving facts whose ids are absent from `records`.
+   *
+   * This is a verbatim restore, NOT a re-derivation: strength, mentionCount,
+   * sources, and timestamps are taken from the supplied record as-is. Records
+   * missing a string id are skipped (and counted) rather than corrupting the log.
+   */
+  restoreFacts(records: Iterable<SemanticFact>): { restored: number; skipped: number } {
+    let restored = 0;
+    let skipped = 0;
+    for (const fact of records) {
+      if (typeof fact.id !== "string" || !fact.id) {
+        skipped++;
+        continue;
+      }
+      this.facts.set(fact.id, fact);
+      this.factLog.append(fact);
+      restored++;
+    }
+    return { restored, skipped };
   }
 
+  /** Collapse the semantic append-only log to one latest-wins snapshot per id. */
+  compactLogs(): { facts: number } {
+    this.factLog.compact(this.facts.values());
+    return { facts: this.facts.size };
+  }
+
+  /**
+   * Redact active facts the extractor no longer reproduces from their sources.
+   *
+   * Two-phase: a read-only decision pass computes the redaction set, then a
+   * guarded commit pass applies it. `maxPurgeFraction` (default 0.5) is a
+   * circuit-breaker — if the decision pass would redact more than this share
+   * of active facts, the purge ABORTS without mutating anything and returns
+   * `aborted` with the offending fraction. A systemic resolver failure (no
+   * readable sources) looks like "everything is stale"; the fraction guard,
+   * together with the per-fact fail-safe below, prevents that from wiping the
+   * store. Pass `dryRun: true` to compute the set without committing.
+   */
   purgeStaleFacts(
     readTurnText: (sessionId: string, entryId: string) => string | undefined,
     now: string,
-  ): { kept: number; purged: string[] } {
-    let kept = 0;
-    const purged: string[] = [];
+    opts: { maxPurgeFraction?: number; dryRun?: boolean } = {},
+  ): {
+    kept: number;
+    purged: string[];
+    aborted?: { reason: "fraction"; fraction: number; limit: number; active: number };
+  } {
+    const maxPurgeFraction = opts.maxPurgeFraction ?? 0.5;
+    const active: SemanticFact[] = [];
+    const toPurge: string[] = [];
 
+    // Decision pass — read-only, no mutation.
     for (const fact of this.facts.values()) {
       if (fact.state !== "active" || fact.supersededBy) continue;
+      active.push(fact);
       const reproduced = new Set<string>();
+      let anySourceReadable = false;
       for (const source of fact.sources) {
         const text = readTurnText(source.sessionId, source.entryId);
         if (text === undefined) continue;
+        anySourceReadable = true;
         for (const candidate of extractFacts(text)) {
-          reproduced.add(
-            factId(candidate, normalizeObject(candidate.object)),
-          );
+          reproduced.add(factId(candidate, normalizeObject(candidate.object)));
         }
       }
-
-      if (reproduced.has(fact.id)) {
-        kept++;
-      } else {
-        const tombstone: SemanticFact = {
-          ...fact,
-          object: "",
-          objectNorm: "",
-          sources: [],
-          strength: 0,
-          state: "redacted",
-        };
-        this.facts.set(fact.id, tombstone);
-        this.factLog.append(tombstone);
-        purged.push(fact.id);
+      // Fail-safe: only redact when we actually read at least one source and
+      // the extractor no longer produces this fact from it. If NO source was
+      // readable (missing file, unreachable session dir, truncated/unmatched
+      // entryId), we have no evidence either way — keep the fact. Treating
+      // "couldn't verify" as "doesn't reproduce" is what wiped the whole
+      // active set under a non-recursive session scan.
+      if (!reproduced.has(fact.id) && anySourceReadable) {
+        toPurge.push(fact.id);
       }
     }
 
-    if (purged.length > 0) this.factLog.compact(this.facts.values());
+    // Circuit-breaker: refuse to commit a mass redaction.
+    const fraction = active.length === 0 ? 0 : toPurge.length / active.length;
+    if (toPurge.length > 0 && fraction > maxPurgeFraction) {
+      return {
+        kept: active.length,
+        purged: [],
+        aborted: { reason: "fraction", fraction, limit: maxPurgeFraction, active: active.length },
+      };
+    }
+
+    if (opts.dryRun) {
+      return { kept: active.length - toPurge.length, purged: [...toPurge] };
+    }
+
+    // Commit pass.
+    const purgeSet = new Set(toPurge);
+    for (const fact of active) {
+      if (!purgeSet.has(fact.id)) continue;
+      const tombstone: SemanticFact = {
+        ...fact,
+        object: "",
+        objectNorm: "",
+        sources: [],
+        strength: 0,
+        state: "redacted",
+      };
+      this.facts.set(fact.id, tombstone);
+      this.factLog.append(tombstone);
+    }
+
+    if (toPurge.length > 0) this.factLog.compact(this.facts.values());
     void now;
-    return { kept, purged };
+    return { kept: active.length - toPurge.length, purged: [...toPurge] };
   }
 
   // -- redaction -------------------------------------------------------------
 
   /**
-   * Remove knowledge derived from the given source turns. A fact or entity
-   * loses the matching sources; one with no remaining evidence is redacted
-   * outright. Logs are compacted so removed evidence doesn't linger on disk.
+   * Remove knowledge derived from the given source turns. A fact loses the
+   * matching sources; one with no remaining evidence is redacted outright.
+   * The log is compacted so removed evidence doesn't linger on disk.
    */
-  redactBySources(match: (s: SourceRef) => boolean): { facts: number; entities: number } {
+  redactBySources(match: (s: SourceRef) => boolean): { facts: number } {
     let factsRedacted = 0;
-    let entitiesRedacted = 0;
 
     for (const fact of this.facts.values()) {
       if (fact.state === "redacted") continue;
@@ -350,71 +362,8 @@ export class SemanticStore {
       }
     }
 
-    for (const entity of this.entities.values()) {
-      if (entity.state === "redacted") continue;
-      const remaining = entity.sources.filter((s) => !match(s));
-      if (remaining.length === entity.sources.length) continue;
-      if (remaining.length === 0) {
-        this.entities.set(entity.id, {
-          ...entity,
-          name: "",
-          norm: "",
-          sources: [],
-          sessionIds: [],
-          mentionCount: 0,
-          state: "redacted",
-        });
-        entitiesRedacted++;
-      } else {
-        this.entities.set(entity.id, {
-          ...entity,
-          sources: remaining,
-          mentionCount: remaining.length,
-          sessionIds: [...new Set(remaining.map((s) => s.rootSessionId ?? s.sessionId))],
-        });
-      }
-    }
-
     this.factLog.compact(this.facts.values());
-    this.entityLog.compact(this.entities.values());
-    return { facts: factsRedacted, entities: entitiesRedacted };
-  }
-
-  /** Redact a specific entity by name (and facts referencing it). */
-  redactEntity(name: string): { facts: number; entities: number } {
-    const norm = name.toLowerCase().trim();
-    let factsRedacted = 0;
-    let entitiesRedacted = 0;
-    for (const entity of this.entities.values()) {
-      if (entity.state === "redacted" || entity.norm !== norm) continue;
-      this.entities.set(entity.id, {
-        ...entity,
-        name: "",
-        norm: "",
-        sources: [],
-        sessionIds: [],
-        mentionCount: 0,
-        state: "redacted",
-      });
-      entitiesRedacted++;
-    }
-    for (const fact of this.facts.values()) {
-      if (fact.state === "redacted") continue;
-      if (fact.objectNorm === norm || fact.objectNorm.includes(norm)) {
-        this.facts.set(fact.id, {
-          ...fact,
-          object: "",
-          objectNorm: "",
-          sources: [],
-          strength: 0,
-          state: "redacted",
-        });
-        factsRedacted++;
-      }
-    }
-    this.factLog.compact(this.facts.values());
-    this.entityLog.compact(this.entities.values());
-    return { facts: factsRedacted, entities: entitiesRedacted };
+    return { facts: factsRedacted };
   }
 }
 

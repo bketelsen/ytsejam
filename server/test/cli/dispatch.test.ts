@@ -194,6 +194,20 @@ describe("runCli", () => {
     expect(ltmPurgeFacts).toHaveBeenCalledTimes(1);
     expect(vi.mocked(ltmPurgeFacts).mock.calls[0]![0]).toEqual({
       sessionsDir: "/tmp/fixture",
+      dryRun: false,
+      force: false,
+    });
+  });
+
+  it("routes `ltm purge-facts <dir> --dry-run --force` with both flags set", async () => {
+    expect(
+      await runCli(["ltm", "purge-facts", "/tmp/fixture", "--dry-run", "--force"]),
+    ).toBe(0);
+    expect(ltmPurgeFacts).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmPurgeFacts).mock.calls[0]![0]).toEqual({
+      sessionsDir: "/tmp/fixture",
+      dryRun: true,
+      force: true,
     });
   });
 

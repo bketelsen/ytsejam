@@ -1,13 +1,13 @@
 /**
- * Preference-learning and entity-extraction heuristics.
+ * Preference-learning heuristics.
  *
  * Deliberately lexical and deterministic: regex patterns over user turns
  * yield candidate facts; the semantic store handles reinforcement, decay,
- * and contradiction (see graph.ts). An LLM extractor can be layered on later
- * behind the same FactCandidate/EntityCandidate shapes.
+ * and contradiction. An LLM extractor can be layered on later behind the
+ * same FactCandidate shape.
  */
 
-import type { EntityKind, FactKind } from "../types.ts";
+import type { FactKind } from "../types.ts";
 
 export interface FactCandidate {
   kind: FactKind;
@@ -16,14 +16,8 @@ export interface FactCandidate {
   polarity: 1 | -1;
   /** Initial belief for a first sighting; reinforcement raises it. */
   initialStrength: number;
-}
-
-export interface EntityCandidate {
-  /** Display form, preferring a capitalized surface form when one was seen. */
-  name: string;
-  /** Normalized lowercase identity — the ONLY thing entities are keyed by. */
-  key: string;
-  kind: EntityKind;
+  /** Scope of this fact; absent/undefined is treated as "global". */
+  scope?: "global" | "project";
 }
 
 // ---------------------------------------------------------------------------
@@ -48,8 +42,13 @@ export function slug(s: string): string {
   return s.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
 
-export function factId(c: Pick<FactCandidate, "kind" | "predicate" | "polarity">, objectNorm: string): string {
-  return `fact-${c.kind}-${c.predicate}-${slug(objectNorm)}-${c.polarity > 0 ? "p" : "n"}`;
+export function factId(
+  c: Pick<FactCandidate, "kind" | "predicate" | "polarity">,
+  objectNorm: string,
+  projectTag?: string,
+): string {
+  const base = `fact-${c.kind}-${c.predicate}-${slug(objectNorm)}-${c.polarity > 0 ? "p" : "n"}`;
+  return projectTag ? `${base}@${slug(projectTag)}` : base;
 }
 
 function clean(s: string): string {
@@ -207,17 +206,7 @@ export function extractFacts(text: string): FactCandidate[] {
 }
 
 // ---------------------------------------------------------------------------
-// Entity extraction
-
-const TECH_LEXICON = new Set(
-  (
-    "typescript javascript python rust go golang java kotlin swift ruby php c c++ c# " +
-    "react vue svelte angular node nodejs deno bun vite vitest jest webpack postgres " +
-    "postgresql sqlite mysql redis docker kubernetes linux macos windows git github " +
-    "gitlab vscode vim emacs neovim tailwind hono express django flask rails graphql " +
-    "rest grpc aws gcp azure terraform ansible nginx anthropic claude openai"
-  ).split(" "),
-);
+// Relationship-extraction support (used by relationshipFacts above)
 
 const CAP_STOPLIST = new Set(
   (
@@ -228,16 +217,11 @@ const CAP_STOPLIST = new Set(
     "Thursday Friday Saturday Sunday January February March April May June July " +
     "August September October November December " +
     // Sentence-opening conversational fillers ("Happy to help", "Good
-    // question", "Got it", …). Safe to stoplist because the list is only
-    // consulted positionally — leading words of a capitalized span and
-    // relationship-name captures — so mid-span uses still extract ("Pretty
-    // Good Privacy" keeps "Good"). "Let's" needs no entry: the entity regex
-    // has no apostrophe in its char class, so it already tokenizes as the
-    // stoplisted "Let". Deliberate tradeoff: the same set also gates the
-    // person-name captures in the relationship regex paths below, so a name
-    // that collides with a filler — "my dog Right", a friend called "Cool" —
-    // is dropped as a person entity; we accept that loss to keep filler noise
-    // out of the profile.
+    // question", "Got it", …). The set gates the person-name capture in the
+    // relationship regex path (relationshipFacts) — a relationship name that
+    // collides with a filler ("my dog Right") is dropped; we accept that
+    // loss to keep filler noise out of learned facts. Consulted positionally
+    // (leading word of a capture), so mid-span uses are unaffected.
     "Happy Good Great Absolutely Definitely Got Sounds Looks Glad Cool Right Awesome Welcome"
   ).split(" "),
 );
@@ -245,66 +229,4 @@ const CAP_STOPLIST = new Set(
 const RELATIONSHIP =
   /\b[Mm]y\s+(sister|brother|mom|mother|dad|father|wife|husband|partner|friend|boss|manager|colleague|coworker|son|daughter|cousin|aunt|uncle|dog|cat)(?:'s)?(?:\s+(?:is\s+(?:named|called)\s+|name\s+is\s+)?)([A-Z][\w'-]*)/g;
 
-/** Third-person variants only feed entity extraction, never user facts. */
-const RELATIONSHIP_OTHERS =
-  /\b(?:[Hh]is|[Hh]er|[Tt]heir)\s+(?:sister|brother|mom|mother|dad|father|wife|husband|partner|friend|boss|manager|colleague|coworker|son|daughter|cousin|aunt|uncle|dog|cat)(?:'s)?(?:\s+(?:is\s+(?:named|called)\s+|name\s+is\s+)?)([A-Z][\w'-]*)/g;
-
 const RELATION_CANONICAL: Record<string, string> = { mom: "mother", dad: "father" };
-
-export function extractEntities(text: string): EntityCandidate[] {
-  const out = new Map<string, EntityCandidate>();
-  // Candidates are indexed by normalized key only; the display name and the
-  // kind upgrade independently of which pattern fired first, so the result
-  // does not depend on regex execution order (PLAN.md Task 2.4):
-  // - a specific kind (person/tech/…) beats the generic "other" guess;
-  // - a capitalized surface form beats an all-lowercase one for display.
-  const add = (name: string, kind: EntityKind) => {
-    const trimmed = name.trim();
-    if (trimmed.length < 2 || trimmed.length > 80) return;
-    const key = trimmed.toLowerCase();
-    const existing = out.get(key);
-    if (!existing) {
-      out.set(key, { name: trimmed, key, kind });
-      return;
-    }
-    const betterKind = existing.kind === "other" && kind !== "other" ? kind : existing.kind;
-    const betterName =
-      existing.name === existing.key && trimmed !== key ? trimmed : existing.name;
-    if (betterKind !== existing.kind || betterName !== existing.name) {
-      out.set(key, { name: betterName, key, kind: betterKind });
-    }
-  };
-
-  for (const m of text.matchAll(/`([^`\n]+)`/g)) add(m[1], "code");
-  for (const m of text.matchAll(/https?:\/\/[^\s)>\]]+/g)) add(m[0].replace(/[.,;]+$/, ""), "url");
-  for (const m of text.matchAll(/\b[\w.+-]+@[\w-]+\.[\w.]+\b/g)) add(m[0], "email");
-  for (const m of text.matchAll(/(?:^|[\s("'])((?:~|\.{1,2})?\/[\w.-]+(?:\/[\w.-]+)+)/g)) add(m[1], "path");
-
-  RELATIONSHIP.lastIndex = 0;
-  for (const m of text.matchAll(RELATIONSHIP)) {
-    if (!CAP_STOPLIST.has(m[2])) add(m[2], "person");
-  }
-  RELATIONSHIP_OTHERS.lastIndex = 0;
-  for (const m of text.matchAll(RELATIONSHIP_OTHERS)) {
-    if (!CAP_STOPLIST.has(m[1])) add(m[1], "person");
-  }
-
-  for (const m of text.matchAll(/\b([A-Z][a-zA-Z0-9+#.]{1,30}(?:\s+[A-Z][a-zA-Z0-9+#.]{1,30}){0,2})\b/g)) {
-    // Strip leading stoplisted words instead of rejecting the whole match —
-    // otherwise "The Grafana dashboard" swallows Grafana entirely, because
-    // the regex consumes "The Grafana" as one span and never revisits it.
-    const words = m[1].split(/\s+/);
-    while (words.length > 0 && CAP_STOPLIST.has(words[0])) words.shift();
-    if (words.length === 0) continue;
-    const name = words.join(" ");
-    add(name, TECH_LEXICON.has(name.toLowerCase()) ? "tech" : "other");
-  }
-
-  // Lowercase tech terms ("i use typescript") still count as tech entities;
-  // add() upgrades kind/display if the term was already seen another way.
-  for (const token of text.toLowerCase().match(/\b[a-z][a-z0-9+#.]{1,30}\b/g) ?? []) {
-    if (TECH_LEXICON.has(token)) add(token, "tech");
-  }
-
-  return [...out.values()];
-}

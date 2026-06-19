@@ -200,13 +200,46 @@ export function useApp() {
   }, []);
 
   const newSession = useCallback(
-    async (model?: string) => {
+    async (model?: string, cwd?: string) => {
       const { session } = await client.createSession(model);
       setSessions((prev) => [session, ...prev]);
-      await selectSession(session.id);
+      if (cwd) {
+        try {
+          const res = await client.setSessionCwd(session.id, cwd);
+          // setCurrentCwd is set inside selectSession, so pass the resolved
+          // path down and apply it after selectSession resolves below.
+          await selectSession(session.id);
+          setCurrentCwd(res.cwd);
+        } catch {
+          await selectSession(session.id);
+        }
+      } else {
+        await selectSession(session.id);
+      }
       return session;
     },
     [selectSession],
+  );
+
+  // Whether the workdir picker is open for the pending new-chat request.
+  const [workdirPickerOpen, setWorkdirPickerOpen] = useState(false);
+  // Pending new-chat model selection while the picker is open.
+  const pendingNewSessionModelRef = useRef<string | undefined>(undefined);
+
+  // Called by UI new-chat buttons. Opens the workdir picker instead of
+  // immediately creating a session.
+  const requestNewSession = useCallback((model?: string) => {
+    pendingNewSessionModelRef.current = model;
+    setWorkdirPickerOpen(true);
+  }, []);
+
+  // Called by the WorkdirPicker onConfirm callback.
+  const confirmNewSession = useCallback(
+    async (cwd: string) => {
+      setWorkdirPickerOpen(false);
+      await newSession(pendingNewSessionModelRef.current, cwd);
+    },
+    [newSession],
   );
 
   const send = useCallback(
@@ -244,6 +277,10 @@ export function useApp() {
     setCurrentCwd,
     selectSession,
     newSession,
+    requestNewSession,
+    confirmNewSession,
+    workdirPickerOpen,
+    setWorkdirPickerOpen,
     send,
     respondToApproval,
     setApprovalMode,

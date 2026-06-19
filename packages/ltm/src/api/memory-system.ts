@@ -1,6 +1,6 @@
 /**
  * MemorySystem — the public facade. Owns the episodic and semantic stores,
- * the ingestion pipeline, the derived indexes/graph, and the user-control
+ * the ingestion pipeline, the derived indexes, and the user-control
  * surface (inspect / explain / redact / export).
  *
  * Lifecycle: open() loads the JSONL store and rebuilds derived state;
@@ -13,7 +13,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type {
-  EntityRecord,
   EpisodicRecord,
   LtmConfig,
   ProfileSummary,
@@ -29,6 +28,7 @@ import type {
 } from "../types.ts";
 import { mergeConfig, type LtmConfigPatch } from "../types.ts";
 import { HashEmbedder, type Embedder } from "../embedding/embedder.ts";
+import type { FactExtractor } from "../semantic/fact-extractor.ts";
 import { VectorIndex } from "../embedding/vector-index.ts";
 import { EpisodicStore } from "../episodic/store.ts";
 import {
@@ -39,7 +39,6 @@ import {
 } from "../episodic/consolidate.ts";
 import { retention } from "../episodic/decay.ts";
 import { SemanticStore } from "../semantic/store.ts";
-import { PreferenceGraph } from "../semantic/graph.ts";
 import { Retriever, packToBudget } from "../retrieval/retriever.ts";
 import { promoteFacts } from "../retrieval/promote.ts";
 import { IngestPipeline, type IngestReport } from "../pipeline/ingest.ts";
@@ -54,6 +53,8 @@ export interface MemorySystemOptions {
   /** Directory for the memory store's JSONL files. */
   storeDir: string;
   embedder?: Embedder;
+  /** Fact extractor for user turns. Defaults to the regex extractor. */
+  factExtractor?: FactExtractor;
   config?: LtmConfigPatch;
   summarizer?: Summarizer;
   readOptions?: ReadSessionOptions;
@@ -93,7 +94,6 @@ export class MemorySystem {
   private readonly pipeline: IngestPipeline;
   private readonly auditLog: JsonlLog<AuditRecord>;
   private retriever: Retriever;
-  private graph: PreferenceGraph;
   private readonly clock: () => string;
   private readonly retrievalLog?: string;
   private readonly readOptions?: ReadSessionOptions;
@@ -110,7 +110,7 @@ export class MemorySystem {
     this.retrievalLog = opts.retrievalLog ?? process.env.LTM_RETRIEVAL_LOG;
     this.readOptions = opts.readOptions;
     this.episodic = EpisodicStore.open(this.storeDir);
-    this.semantic = SemanticStore.open(this.storeDir);
+    this.semantic = SemanticStore.open(this.storeDir, opts.factExtractor);
     this.auditLog = new JsonlLog<AuditRecord>(
       path.join(this.storeDir, "redactions.jsonl"),
     );
@@ -123,11 +123,9 @@ export class MemorySystem {
       config: this.config,
       readOptions: opts.readOptions,
     });
-    this.graph = this.rebuildGraph();
     this.retriever = new Retriever({
       store: this.episodic,
       embedder: this.embedder,
-      graph: this.graph,
       config: this.config,
     });
   }
@@ -182,36 +180,26 @@ export class MemorySystem {
     }
   }
 
-  private rebuildGraph(): PreferenceGraph {
-    this.graph = PreferenceGraph.build(
-      this.semantic.allFacts(),
-      this.episodic.all(),
-    );
-    return this.graph;
-  }
-
   /** Rebuild every derived structure after a mutation of the stores. */
   private rebuildDerived(): void {
-    this.rebuildGraph();
     this.retriever = new Retriever({
       store: this.episodic,
       embedder: this.embedder,
-      graph: this.graph,
       config: this.config,
     });
   }
 
   // -- ingestion ------------------------------------------------------------
 
-  async ingestSessionFile(filePath: string): Promise<IngestReport> {
-    const report = await this.pipeline.ingestFile(filePath);
+  async ingestSessionFile(filePath: string, opts?: { projectTag?: string }): Promise<IngestReport> {
+    const report = await this.pipeline.ingestFile(filePath, opts);
     if (report.recordsCreated > 0 || report.turnsIngested > 0)
       this.rebuildDerived();
     return report;
   }
 
-  async ingestSessionDir(dir: string): Promise<IngestReport> {
-    const report = await this.pipeline.ingestDir(dir);
+  async ingestSessionDir(dir: string, opts?: { projectTag?: string }): Promise<IngestReport> {
+    const report = await this.pipeline.ingestDir(dir, opts);
     if (report.recordsCreated > 0 || report.turnsIngested > 0)
       this.rebuildDerived();
     return report;
@@ -278,7 +266,7 @@ export class MemorySystem {
         text: obs.text,
         timestamp: obs.timestamp,
       };
-      this.semantic.ingestTurn(turn);
+      await this.semantic.ingestTurn(turn);
     }
 
     this.rebuildDerived();
@@ -324,13 +312,40 @@ export class MemorySystem {
     return vectors.sampleDimension();
   }
 
+  /**
+   * True on-disk distribution of stored embedding dimensions, counted
+   * directly from records (NOT through VectorIndex, which now refuses
+   * off-dimension vectors). Surfaces D2 contamination: the majority dimension
+   * is the live one; any minority bucket is dead weight excluded from
+   * retrieval, awaiting re-embed. `primary` is the most common dimension.
+   */
+  dimensionReport(): { primary: number | null; counts: Record<number, number>; total: number } {
+    const counts: Record<number, number> = {};
+    let total = 0;
+    for (const record of this.episodic.all()) {
+      if (!record.embedding || record.embedding.length === 0) continue;
+      const d = record.embedding.length;
+      counts[d] = (counts[d] ?? 0) + 1;
+      total++;
+    }
+    let primary: number | null = null;
+    let best = -1;
+    for (const [d, n] of Object.entries(counts)) {
+      if (n > best) {
+        best = n;
+        primary = Number(d);
+      }
+    }
+    return { primary, counts, total };
+  }
+
   async retrieve(
     query: string,
     opts: RetrieveOptions = {},
   ): Promise<RetrievalResult> {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
-    const profile = this.semantic.profile(now, this.config.profile);
+    const profile = this.semantic.profile(now, this.config.profile, opts.activeProjectTag);
     const ranked = await this.retriever.rank(
       query,
       k,
@@ -354,7 +369,6 @@ export class MemorySystem {
           lexical: 0,
           recency: 0,
           salience: record.salience, // = fact.strength
-          graph: 0,
           retention: 1,
           total: 1,
         },
@@ -456,8 +470,8 @@ export class MemorySystem {
     return lines.join("\n").trim();
   }
 
-  profile(now?: string): ProfileSummary {
-    return this.semantic.profile(now ?? this.clock(), this.config.profile);
+  profile(now?: string, activeProjectTag?: string): ProfileSummary {
+    return this.semantic.profile(now ?? this.clock(), this.config.profile, activeProjectTag);
   }
 
   // -- maintenance ------------------------------------------------------------
@@ -468,7 +482,6 @@ export class MemorySystem {
     created: number;
     folded: number;
     factsCompacted: number;
-    entitiesCompacted: number;
   }> {
     const now = opts.now ?? this.clock();
     const result = await consolidate(
@@ -485,13 +498,17 @@ export class MemorySystem {
       created: result.created.length,
       folded: result.consolidatedChildren,
       factsCompacted: semanticCompacted.facts,
-      entitiesCompacted: semanticCompacted.entities,
     };
   }
 
   async purgeStaleFacts(
     sessionsDir: string,
-  ): Promise<{ kept: number; purged: string[] }> {
+    opts: { maxPurgeFraction?: number; dryRun?: boolean } = {},
+  ): Promise<{
+    kept: number;
+    purged: string[];
+    aborted?: { reason: "fraction"; fraction: number; limit: number; active: number };
+  }> {
     const sessionFiles = new Map<string, string>();
     for (const file of listSessionFiles(sessionsDir)) {
       const sessionId = readSessionId(file);
@@ -514,11 +531,11 @@ export class MemorySystem {
       }
       return sessions
         .get(sessionId)
-        ?.turns.find((turn) => turn.entryId === entryId)?.text;
+        ?.turns.find((turn) => entryIdMatches(turn.entryId, entryId))?.text;
     };
 
-    const result = this.semantic.purgeStaleFacts(resolver, this.clock());
-    if (result.purged.length > 0) this.rebuildDerived();
+    const result = this.semantic.purgeStaleFacts(resolver, this.clock(), opts);
+    if (result.purged.length > 0 && !opts.dryRun) this.rebuildDerived();
     return result;
   }
 
@@ -540,10 +557,6 @@ export class MemorySystem {
     return this.semantic.allFacts();
   }
 
-  listEntities(): EntityRecord[] {
-    return this.semantic.allEntities();
-  }
-
   getRecord(id: string): EpisodicRecord | undefined {
     return this.episodic.get(id);
   }
@@ -562,7 +575,6 @@ export class MemorySystem {
       meanRetention: number;
     };
     facts: { total: number; active: number };
-    entities: { total: number; active: number };
   } {
     const at = now ?? this.clock();
     const records = this.episodic.all();
@@ -585,10 +597,6 @@ export class MemorySystem {
         total: this.semantic.allFacts().length,
         active: this.semantic.activeFacts().length,
       },
-      entities: {
-        total: this.semantic.allEntities().length,
-        active: this.semantic.activeEntities().length,
-      },
     };
   }
 
@@ -596,14 +604,12 @@ export class MemorySystem {
   export(): {
     episodic: EpisodicRecord[];
     facts: SemanticFact[];
-    entities: EntityRecord[];
   } {
     return {
       episodic: this.episodic
         .all()
         .map((r) => ({ ...r, embedding: undefined })),
       facts: this.semantic.allFacts(),
-      entities: this.semantic.allEntities(),
     };
   }
 
@@ -639,7 +645,6 @@ export class MemorySystem {
     const result: RedactionResult = {
       episodicRedacted: 0,
       factsRedacted: 0,
-      entitiesRedacted: 0,
       consolidatedRebuilt: 0,
     };
 
@@ -657,12 +662,8 @@ export class MemorySystem {
       }
     }
 
-    // Propagate to semantic memory.
-    if ("entity" in selector) {
-      const r = this.semantic.redactEntity(selector.entity);
-      result.factsRedacted += r.facts;
-      result.entitiesRedacted += r.entities;
-    }
+    // Propagate to semantic memory: facts derived from the redacted source
+    // turns lose that evidence (and are tombstoned if no evidence remains).
     if (redactedSources.length > 0) {
       const keys = new Set(
         redactedSources.map((s) => `${s.sessionId}/${s.entryId}`),
@@ -671,7 +672,6 @@ export class MemorySystem {
         keys.has(`${s.sessionId}/${s.entryId}`),
       );
       result.factsRedacted += r.facts;
-      result.entitiesRedacted += r.entities;
     }
 
     // Rebuild consolidated summaries that included a redacted child.
@@ -746,6 +746,21 @@ export class MemorySystem {
       a.id.localeCompare(b.id),
     );
   }
+}
+
+/**
+ * Match a stored source entryId against a session turn's entryId.
+ *
+ * Source refs may carry a truncated id (older writes stored an 8-char prefix
+ * while the session turn carries the full id), so a shorter stored ref matches
+ * by prefix; equal-length refs must match exactly. Empty refs never match.
+ */
+function entryIdMatches(turnEntryId: string, storedEntryId: string): boolean {
+  if (!storedEntryId || !turnEntryId) return false;
+  if (storedEntryId.length < turnEntryId.length) {
+    return turnEntryId.startsWith(storedEntryId);
+  }
+  return turnEntryId === storedEntryId;
 }
 
 /** Whether a pid refers to a live process (EPERM = alive but not ours). */

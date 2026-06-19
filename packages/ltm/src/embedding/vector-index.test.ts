@@ -47,18 +47,22 @@ describe("VectorIndex", () => {
     expect(index.similarity("missing", [1, 0])).toBe(0);
   });
 
-  it("pins dimension mismatch behavior to overlapping dimensions without throwing", () => {
+  it("refuses off-dimension vectors so search never compares across dimensions (D2)", () => {
     const index = new VectorIndex();
 
-    index.set("short", [0, 1]);
-    index.set("long", [1, 0, 999]);
+    index.set("short", [0, 1]); // establishes 2-dim
+    index.set("long", [1, 0, 999]); // 3-dim — REFUSED, not truncated
 
+    // The off-dimension vector was never stored, so search is safe and only
+    // sees the 2-dim vector. The old behavior truncated [1,0,999] to [1,0]
+    // and scored a garbage 1.0 — that silent truncation was D2.
+    expect(index.size).toBe(1);
+    expect(index.has("long")).toBe(false);
     expect(() => index.search([1, 0], 2)).not.toThrow();
-    expect(index.similarity("long", [1, 0])).toBe(1);
-    expect(index.similarity("short", [0, 1, 999])).toBe(1);
-    expect(index.search([1, 0], 2)).toEqual([
-      { id: "long", score: 1 },
-      { id: "short", score: 0 },
-    ]);
+    expect(index.search([1, 0], 2)).toEqual([{ id: "short", score: 0 }]);
+
+    // similarity() against an off-dimension query throws rather than
+    // truncating, because cosine now refuses unequal lengths.
+    expect(() => index.similarity("short", [0, 1, 999])).toThrow(/dimension mismatch/);
   });
 });

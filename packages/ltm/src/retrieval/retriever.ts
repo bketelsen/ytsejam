@@ -1,9 +1,8 @@
 /**
- * Hybrid retrieval: per query, candidates come from the vector index, the
- * BM25 index, and graph activation; each candidate is scored as a weighted
- * blend of
+ * Hybrid retrieval: per query, candidates come from the vector index and the
+ * BM25 index; each candidate is scored as a weighted blend of
  *
- *   vector cosine + BM25 (normalized) + recency + salience×retention + graph
+ *   vector cosine + BM25 (normalized) + recency + salience×retention
  *
  * then re-ranked with MMR for diversity and packed into a token budget.
  * Every returned item carries its full score breakdown — the same numbers
@@ -20,11 +19,34 @@ import type { Embedder } from "../embedding/embedder.ts";
 import { cosine } from "../embedding/embedder.ts";
 import { VectorIndex } from "../embedding/vector-index.ts";
 import { Bm25Index } from "./lexical.ts";
-import type { PreferenceGraph } from "../semantic/graph.ts";
 import { retention, ageDays } from "../episodic/decay.ts";
 import type { EpisodicStore } from "../episodic/store.ts";
 
 const CANDIDATE_POOL = 50;
+
+/**
+ * The most common embedding dimension across a set of records, or null when
+ * none carry an embedding. Used to pin the vector index to the live
+ * dimension even when legacy off-dimension contaminants appear first in
+ * insertion order. Ties resolve to the first dimension reaching the max
+ * count (deterministic over a stable record order).
+ */
+export function majorityEmbeddingDim(records: EpisodicRecord[]): number | null {
+  const counts = new Map<number, number>();
+  for (const r of records) {
+    if (!r.embedding || r.embedding.length === 0) continue;
+    counts.set(r.embedding.length, (counts.get(r.embedding.length) ?? 0) + 1);
+  }
+  let best: number | null = null;
+  let bestCount = -1;
+  for (const [dim, n] of counts) {
+    if (n > bestCount) {
+      bestCount = n;
+      best = dim;
+    }
+  }
+  return best;
+}
 
 /**
  * Vector-channel normalization: mean-relative spread over the candidate
@@ -55,17 +77,22 @@ interface RankedMemory extends RetrievedMemory {
 export interface RetrieverDeps {
   store: EpisodicStore;
   embedder: Embedder;
-  graph: PreferenceGraph;
   config: LtmConfig;
 }
 
 export class Retriever {
-  private vectors = new VectorIndex();
+  private vectors: VectorIndex;
   private lexical = new Bm25Index();
   private readonly deps: RetrieverDeps;
 
   constructor(deps: RetrieverDeps) {
     this.deps = deps;
+    // Fix the vector index to the MAJORITY embedding dimension before
+    // admitting anything. A store may hold legacy off-dimension contaminants
+    // (e.g. hash-fallback 256-dim records); if insertion order put one first,
+    // a first-seen index would pin to the minority dimension and refuse the
+    // real ones. Majority-dim makes the live dimension win regardless of order.
+    this.vectors = new VectorIndex(majorityEmbeddingDim(deps.store.all()) ?? undefined);
     for (const record of deps.store.all()) this.admit(record);
   }
 
@@ -98,12 +125,11 @@ export class Retriever {
     includeConsolidated = false,
     filterTags?: string[],
   ): Promise<RetrievedMemory[]> {
-    const { store, embedder, graph, config } = this.deps;
+    const { store, embedder, config } = this.deps;
     const queryVector = await embedder.embed(query);
 
     const vectorHits = this.vectors.search(queryVector, CANDIDATE_POOL);
     const lexicalHits = this.lexical.search(query, CANDIDATE_POOL);
-    const graphBoosts = graph.activate(query);
 
     // Both content channels are normalized so the configured weights compare
     // like with like (PLAN 2.2). Lexical normalizes to its pool max (BM25
@@ -144,7 +170,6 @@ export class Retriever {
     const candidateIds = new Set<string>([
       ...vectorById.keys(),
       ...lexicalById.keys(),
-      ...graphBoosts.keys(),
     ]);
 
     const scored: RankedMemory[] = [];
@@ -175,13 +200,15 @@ export class Retriever {
       const breakdown: ScoreBreakdown = {
         vector:
           vectorById.get(id) ??
-          (record.embedding
+          // Guard: only score embeddings that match the query dimension. An
+          // off-dimension stored vector (legacy hash fallback) contributes 0
+          // rather than reaching the now-throwing cosine.
+          (record.embedding && record.embedding.length === queryVector.length
             ? spreadNormalize(cosine(queryVector, record.embedding), meanVector, maxVector)
             : 0),
         lexical: lexicalById.get(id) ?? 0,
         recency: Math.pow(2, -ageDays(record.timestamp, now) / config.recencyHalfLifeDays),
         salience: record.salience,
-        graph: graphBoosts.get(id) ?? 0,
         retention: ret,
         total: 0,
       };
@@ -189,8 +216,7 @@ export class Retriever {
         w.vector * breakdown.vector +
         w.lexical * breakdown.lexical +
         w.recency * breakdown.recency +
-        w.salience * breakdown.salience * ret +
-        w.graph * breakdown.graph;
+        w.salience * breakdown.salience * ret;
       scored.push({ record, score: breakdown.total, breakdown, ...(stale ? { stale: true } : {}) });
     }
 
@@ -211,6 +237,10 @@ export class Retriever {
         if (candidate.record.embedding) {
           for (const s of selected) {
             if (!s.record.embedding) continue;
+            // Skip cross-dimension pairs (legacy off-dim embeddings) — they
+            // are not comparable; treat as no similarity rather than throwing.
+            if (s.record.embedding.length !== candidate.record.embedding.length)
+              continue;
             maxSim = Math.max(maxSim, cosine(candidate.record.embedding, s.record.embedding));
           }
         }

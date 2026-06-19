@@ -8,7 +8,7 @@
 // Bump CACHE_VERSION when the SW's caching policy changes (NOT on every deploy
 // — Vite asset hashes already cover content changes).
 
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 const CACHE_NAME = `ytsejam-shell-${CACHE_VERSION}`;
 
 // Precached on install — guarantees a navigation-fallback target even when
@@ -104,18 +104,40 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      // For navigations (`/`, `/?action=tasks`, `/some/spa/path`), fall back
-      // to the cached `/` shell when the exact URL isn't cached. Without
-      // this, cold-launching the PWA via a shortcut (`/?action=new`) after
-      // only ever warming via `/` (start_url) is a cache miss → offline →
-      // OS error page, defeating the offline-shell tier's whole point.
-      // ignoreSearch on cache.match is the moral equivalent but isn't
-      // widely supported; explicit fallback is simpler and portable.
-      let cached = await cache.match(req);
-      if (!cached && req.mode === "navigate") {
-        cached = await cache.match("/");
+
+      // NAVIGATIONS → NETWORK-FIRST. The HTML shell references Vite-hashed
+      // bundles, so a STALE cached shell points the app at old/missing asset
+      // hashes after a deploy (sw.js is unchanged on a normal deploy, so the
+      // SW never reinstalls and a stale-while-revalidate shell would serve the
+      // old bundle until a second load / hard refresh — the stale-bundle bug).
+      // Always try the network so an online client gets the fresh index.html
+      // immediately; fall back to the cached `/` shell only when offline. We
+      // store the response under "/" (the canonical shell key) so the offline
+      // fallback works regardless of the `?action=…` query string.
+      if (req.mode === "navigate") {
+        try {
+          const res = await fetch(req);
+          if (isCacheable(res)) {
+            cache.put("/", res.clone()).catch((err) => {
+              console.warn("[sw] shell cache.put failed:", err);
+            });
+          }
+          return res;
+        } catch {
+          // Offline: serve the cached shell (exact URL, then the `/` fallback
+          // — covers cold PWA launch via a `/?action=…` shortcut) so the SPA
+          // still renders and shows the disconnected indicator.
+          const shell = (await cache.match(req)) || (await cache.match("/"));
+          if (shell) return shell;
+          throw new Error("offline and no cached app shell");
+        }
       }
 
+      // NON-NAVIGATION (Vite-hashed assets, icons, manifest) →
+      // stale-while-revalidate. Hashed asset URLs are immutable, so a cache
+      // hit is always correct; the background refresh keeps non-hashed
+      // resources (icons/manifest) warm.
+      const cached = await cache.match(req);
       if (cached) {
         // Refresh in background so the cache stays warm with the latest bytes.
         // NOTE: this nested waitUntil is legal ONLY because we're still
@@ -148,15 +170,10 @@ self.addEventListener("fetch", (event) => {
         }
         return res;
       } catch (err) {
-        // Offline + cold cache for a navigation: serve the cached `/`
-        // shell so the SPA can at least render and show the disconnected
-        // WS indicator. For non-navigation misses (a sub-resource fetch
-        // failing offline), there's nothing useful to return — rethrow
-        // so the browser surfaces the failure to the caller.
-        if (req.mode === "navigate") {
-          const shell = await cache.match("/");
-          if (shell) return shell;
-        }
+        // Non-navigation miss offline (e.g. a sub-resource fetch failing):
+        // nothing useful to return — rethrow so the browser surfaces the
+        // failure. (Navigations are handled network-first above, with their
+        // own cached-`/`-shell offline fallback.)
         throw err;
       }
     })(),

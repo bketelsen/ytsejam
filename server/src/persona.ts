@@ -47,11 +47,12 @@ export function composeSystemPrompt(
     now?: Date;
     cogSection?: string;
     skillsSection?: string;
+    memorySection?: string;
     contextFiles?: string;
   },
 ): string {
   const now = opts.now ?? new Date();
-  const extras = [opts.cogSection, opts.skillsSection]
+  const extras = [opts.cogSection, opts.skillsSection, opts.memorySection]
     .filter((s): s is string => Boolean(s?.trim()))
     .map((s) => `\n\n${s.trim()}`)
     .join("");

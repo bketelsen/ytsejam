@@ -108,7 +108,7 @@ describe("recall", () => {
             tags: ["stale-test"],
           } as any,
           score: 0.5,
-          breakdown: { vector: 0, lexical: 0, recency: 0, salience: 0, graph: 0, decay: 1, total: 0.5 } as any,
+          breakdown: { vector: 0, lexical: 0, recency: 0, salience: 0, decay: 1, total: 0.5 } as any,
           stale: true,
         },
       ],
@@ -141,7 +141,7 @@ describe("recall", () => {
             tags: ["fresh-test"],
           } as any,
           score: 0.9,
-          breakdown: { vector: 0, lexical: 0, recency: 0, salience: 0, graph: 0, decay: 1, total: 0.9 } as any,
+          breakdown: { vector: 0, lexical: 0, recency: 0, salience: 0, decay: 1, total: 0.9 } as any,
           // stale absent — fresh active item
         },
       ],

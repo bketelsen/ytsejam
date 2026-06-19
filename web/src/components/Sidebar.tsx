@@ -112,7 +112,7 @@ export function Sidebar({
           ⚙
         </Button>
       </div>
-      <nav className="flex-1 overflow-y-auto px-2 pb-2">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {sessions.map((s) => (
           <div
             key={s.id}

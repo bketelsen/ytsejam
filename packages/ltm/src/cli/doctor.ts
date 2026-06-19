@@ -20,42 +20,75 @@ interface RawRecord {
   json: Record<string, unknown>;
 }
 
-interface LogScan {
+export interface LogScan {
   file: string;
   records: RawRecord[];
   malformed: number[];
 }
 
-const LOG_FILES = ["episodic.jsonl", "facts.jsonl", "entities.jsonl", "redactions.jsonl"];
+const LOG_FILES = ["episodic.jsonl", "facts.jsonl", "redactions.jsonl"];
+
+/** Byte chunk size for streamed log scans (mirrors JsonlLog's reader). */
+const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Immutable per-id fields; two snapshots disagreeing on these = collision. */
 const IDENTITY_FIELDS: Record<string, string[]> = {
   "episodic.jsonl": ["kind", "sessionId", "entryId"],
   "facts.jsonl": ["kind", "predicate", "polarity"],
-  "entities.jsonl": ["norm"],
 };
 
-function scanLog(filePath: string): LogScan | undefined {
-  let text: string;
+export function scanLog(filePath: string): LogScan | undefined {
+  let fd: number;
   try {
-    text = fs.readFileSync(filePath, "utf8");
-  } catch {
-    return undefined;
+    fd = fs.openSync(filePath, "r");
+  } catch (err) {
+    // A missing log is "nothing to scan". Any OTHER open error is real —
+    // surface it rather than silently skipping the file (the D4 trap: a log
+    // larger than V8's max string would throw under readFileSync and a bare
+    // catch made doctor report a clean bill of health on an unreadable store).
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
   }
   const scan: LogScan = { file: path.basename(filePath), records: [], malformed: [] };
-  text.split("\n").forEach((line, i) => {
-    if (!line.trim()) return;
-    try {
-      const json = JSON.parse(line) as Record<string, unknown>;
-      if (typeof json.id === "string" && json.id) {
-        scan.records.push({ id: json.id, line: i + 1, json });
-      } else {
-        scan.malformed.push(i + 1);
+  try {
+    // Stream the file in byte chunks so a multi-GB log is never one V8 string.
+    // Line numbers stay 1-based over EVERY physical line (blanks included), so
+    // malformed-line reporting matches the file exactly.
+    const buffer = Buffer.allocUnsafe(SCAN_CHUNK_BYTES);
+    const decoder = new TextDecoder("utf8");
+    let carry = "";
+    let lineNo = 0;
+    let bytesRead: number;
+    const handle = (line: string): void => {
+      lineNo++;
+      if (!line.trim()) return;
+      try {
+        const json = JSON.parse(line) as Record<string, unknown>;
+        if (typeof json.id === "string" && json.id) {
+          scan.records.push({ id: json.id, line: lineNo, json });
+        } else {
+          scan.malformed.push(lineNo);
+        }
+      } catch {
+        scan.malformed.push(lineNo);
       }
-    } catch {
-      scan.malformed.push(i + 1);
+    };
+    while ((bytesRead = fs.readSync(fd, buffer, 0, SCAN_CHUNK_BYTES, null)) > 0) {
+      carry += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+      let nl: number;
+      while ((nl = carry.indexOf("\n")) !== -1) {
+        handle(carry.slice(0, nl));
+        carry = carry.slice(nl + 1);
+      }
     }
-  });
+    carry += decoder.decode();
+    // A trailing line without a final newline is still a line; an empty tail
+    // (file ended on "\n") is not. This matches `String.split("\n")` minus the
+    // phantom empty element split produces after a trailing newline.
+    if (carry.length > 0) handle(carry);
+  } finally {
+    fs.closeSync(fd);
+  }
   return scan;
 }
 

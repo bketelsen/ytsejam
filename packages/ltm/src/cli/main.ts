@@ -49,6 +49,8 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
       pattern: { type: "string" },
       record: { type: "string" },
       fix: { type: "boolean" },
+      force: { type: "boolean" },
+      "dry-run": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -106,12 +108,12 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
         }
         const k = values.k ? Number(values.k) : 8;
         const ranked = await mem.explain(query, k);
-        out(`rank  total  vec   lex   rec   sal   grf   ret   id`);
+        out(`rank  total  vec   lex   rec   sal   ret   id`);
         ranked.forEach((item, i) => {
           const b = item.breakdown;
           const f = (x: number) => x.toFixed(2);
           out(
-            `${String(i + 1).padStart(4)}  ${f(b.total)}  ${f(b.vector)}  ${f(b.lexical)}  ${f(b.recency)}  ${f(b.salience)}  ${f(b.graph)}  ${f(b.retention)}  ${item.record.id}${
+            `${String(i + 1).padStart(4)}  ${f(b.total)}  ${f(b.vector)}  ${f(b.lexical)}  ${f(b.recency)}  ${f(b.salience)}  ${f(b.retention)}  ${item.record.id}${
               item.stale
                 ? " [stale]"
                 : "state" in item.record && item.record.state === "consolidated"
@@ -136,9 +138,6 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
         section("attributes", profile.attributes);
         section("preferences", profile.preferences);
         section("directives", profile.directives);
-        if (profile.topEntities.length) {
-          out(`top entities: ${profile.topEntities.map((e) => `${e.name}(${e.mentionCount})`).join(", ")}`);
-        }
         return 0;
       }
       case "consolidate": {
@@ -152,7 +151,20 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
           out("purge-facts: missing <sessions-dir>");
           return 2;
         }
-        const result = await mem.purgeStaleFacts(dir);
+        const result = await mem.purgeStaleFacts(dir, {
+          dryRun: Boolean(values["dry-run"]),
+          maxPurgeFraction: values.force ? 1 : undefined,
+        });
+        if (result.aborted) {
+          out(
+            `aborted: would redact ${Math.round(
+              result.aborted.fraction * 100,
+            )}% of ${result.aborted.active} active facts (limit ` +
+              `${Math.round(result.aborted.limit * 100)}%); nothing changed. ` +
+              `Re-run with --dry-run to inspect or --force to override.`,
+          );
+          return 1;
+        }
         out(`kept ${result.kept}, purged ${result.purged.length}`);
         for (const id of result.purged) out(id);
         return 0;
@@ -173,8 +185,8 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
         }
         const result = await mem.redact(selector);
         out(
-          `redacted: ${result.episodicRedacted} episodic, ${result.factsRedacted} facts, ` +
-            `${result.entitiesRedacted} entities; ${result.consolidatedRebuilt} summaries rebuilt`,
+          `redacted: ${result.episodicRedacted} episodic, ${result.factsRedacted} facts; ` +
+            `${result.consolidatedRebuilt} summaries rebuilt`,
         );
         return 0;
       }
@@ -186,7 +198,6 @@ export async function runCli(argv: string[], out: (s: string) => void = console.
             `mean retention ${stats.episodic.meanRetention.toFixed(2)}`,
         );
         out(`facts: ${stats.facts.active}/${stats.facts.total} active`);
-        out(`entities: ${stats.entities.active}/${stats.entities.total} active`);
         return 0;
       }
       case "export": {

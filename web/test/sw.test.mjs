@@ -154,8 +154,9 @@ test("fetch handler bypasses cross-origin requests", (t) => {
   );
 });
 
-// Cache-first behavior is the offline-shell contract: open the shell cache and
-// attempt a cache match before going to network on misses.
+// The shell cache is opened up front so both strategies share it: navigations
+// are network-first (tested below), while non-navigation assets are served
+// cache-first — open the shell cache, then attempt a cache match.
 test("fetch handler opens CACHE_NAME before matching the request", (t) => {
   if (skipIfSwMissing(t)) return;
   const src = readSwCodeOnly();
@@ -166,27 +167,31 @@ test("fetch handler opens CACHE_NAME before matching the request", (t) => {
   assert.ok(openIdx < matchIdx, "cache-first ordering requires caches.open(CACHE_NAME) before cache.match(req)");
 });
 
-// The critical shortcut-launch fix: navigation requests that miss exact URL
-// matching still need to fall back to the cached root shell.
-test("navigation cache miss falls back to cached root shell", (t) => {
+// Navigations are NETWORK-FIRST: the HTML shell references Vite-hashed
+// bundles, so serving a stale cached shell after a deploy points the app at
+// old/missing asset hashes (the stale-bundle bug — sw.js is unchanged on a
+// normal deploy, so a stale-while-revalidate shell would serve the old bundle
+// until a hard refresh). An online client must always fetch the fresh shell.
+test("navigation requests are network-first", (t) => {
   if (skipIfSwMissing(t)) return;
   const src = readSwCodeOnly();
   assert.match(
     src,
-    /let\s+cached\s*=\s*await\s+cache\.match\(req\)\s*;[\s\S]*?if\s*\(\s*!cached\s*&&\s*req\.mode\s*===\s*["']navigate["']\s*\)\s*{\s*cached\s*=\s*await\s+cache\.match\(["']\/["']\)/,
-    "navigation cache miss must fall back to cache.match('/')",
+    /if\s*\(\s*req\.mode\s*===\s*["']navigate["']\s*\)\s*{[\s\S]*?await\s+fetch\(\s*req\s*\)/,
+    "navigation handling must try fetch(req) first (network-first), before any cached shell",
   );
 });
 
-// Offline + network failure on a navigation should still render the shell;
-// there are two semantic navigate guards: miss fallback and catch fallback.
-test("navigation network failure catch serves cached root shell", (t) => {
+// Offline navigation must still render: when the network fetch fails, the
+// navigate branch falls back to the cached `/` shell (covers cold PWA launch
+// via a /?action=… shortcut too).
+test("navigation network failure falls back to the cached root shell", (t) => {
   if (skipIfSwMissing(t)) return;
   const src = readSwCodeOnly();
-  const navigateChecks = src.match(/req\.mode\s*===\s*["']navigate["']/g) ?? [];
-  assert.ok(
-    navigateChecks.length >= 2,
-    "fetch handler must check req.mode === 'navigate' in both cache-miss and network-fail fallback paths",
+  assert.match(
+    src,
+    /req\.mode\s*===\s*["']navigate["'][\s\S]*?catch[\s\S]*?cache\.match\(\s*["']\/["']\s*\)/,
+    "navigation network failure must fall back to cache.match('/') for the offline shell",
   );
 });
 

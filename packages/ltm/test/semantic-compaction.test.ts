@@ -15,37 +15,39 @@ function lineCount(file: string): number {
 }
 
 describe("semantic log compaction", () => {
-  it("collapses repeated entity snapshots without losing latest-wins content", () => {
+  it("collapses repeated fact snapshots without losing latest-wins content", async () => {
     const dir = tmpDir();
     const store = SemanticStore.open(dir);
 
     for (let i = 0; i < 50; i++) {
       const turn: Turn = {
-        sessionId: "s-grafana",
+        sessionId: "s-coffee",
         entryId: `e${i}`,
         role: "user",
-        text: "I checked the Grafana dashboard.",
+        text: "I love dark roast coffee.",
         timestamp: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
       };
-      store.ingestTurn(turn);
+      await store.ingestTurn(turn);
     }
 
-    const entitiesPath = path.join(dir, "entities.jsonl");
-    expect(lineCount(entitiesPath)).toBeGreaterThan(1);
+    const factsPath = path.join(dir, "facts.jsonl");
+    // Reinforcement appends a fresh snapshot per re-assertion, so the log
+    // grows past one line before compaction.
+    expect(lineCount(factsPath)).toBeGreaterThan(1);
 
-    const before = store.allEntities().find((e) => e.norm === "grafana");
+    const before = store.activeFacts().find((f) => f.objectNorm.includes("dark roast"));
     expect(before).toBeDefined();
     expect(before!.mentionCount).toBe(50);
     expect(before!.sources).toHaveLength(50);
 
     const counts = store.compactLogs();
-    expect(counts).toEqual({ facts: store.allFacts().length, entities: store.allEntities().length });
+    expect(counts).toEqual({ facts: store.allFacts().length });
 
-    const distinctEntityIds = new Set(store.allEntities().map((e) => e.id)).size;
-    expect(lineCount(entitiesPath)).toBe(distinctEntityIds);
+    const distinctFactIds = new Set(store.allFacts().map((f) => f.id)).size;
+    expect(lineCount(factsPath)).toBe(distinctFactIds);
 
     const reopened = SemanticStore.open(dir);
-    const after = reopened.allEntities().find((e) => e.norm === "grafana");
+    const after = reopened.activeFacts().find((f) => f.objectNorm.includes("dark roast"));
     expect(after).toBeDefined();
     expect(after!.mentionCount).toBe(50);
     expect(after!.sources).toHaveLength(50);

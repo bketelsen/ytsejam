@@ -20,28 +20,6 @@ async function freshSystem(seed = 5) {
 }
 
 describe("redaction API", () => {
-  it("redacting an entity removes it from retrieval, profile, and disk", async () => {
-    const { mem, storeDir } = await freshSystem();
-
-    const before = await mem.retrieve("What is my sister's name?", { k: 5, dryRun: true });
-    expect(before.items.some((i) => i.record.text.includes("Alice"))).toBe(true);
-
-    const result = await mem.redact({ entity: "Alice" });
-    expect(result.episodicRedacted).toBeGreaterThan(0);
-    expect(result.entitiesRedacted).toBeGreaterThanOrEqual(1);
-
-    const after = await mem.retrieve("What is my sister's name?", { k: 5, dryRun: true });
-    expect(after.items.some((i) => i.record.text.includes("Alice"))).toBe(false);
-    expect(mem.listEntities().filter((e) => e.norm === "alice" && e.state === "active")).toHaveLength(0);
-
-    // Nothing on disk may still contain the redacted content.
-    for (const file of ["episodic.jsonl", "facts.jsonl", "entities.jsonl", "redactions.jsonl"]) {
-      const p = path.join(storeDir, file);
-      if (!fs.existsSync(p)) continue;
-      expect(fs.readFileSync(p, "utf8")).not.toContain("Alice");
-    }
-  });
-
   it("redacting a session tombstones all its records and derived facts lose evidence", async () => {
     const { mem, truth } = await freshSystem();
     const target = truth.sessionIds[0];
@@ -112,13 +90,12 @@ describe("redaction API", () => {
 
     const { items } = await reopened.retrieve("What's my dog called?", { k: 5, dryRun: true });
     expect(items.some((i) => i.record.text.includes("Biscuit"))).toBe(false);
-    expect(reopened.listEntities().some((e) => e.norm === "biscuit" && e.state === "active")).toBe(false);
     // The episodic tombstones survived the round trip too.
     expect(
       reopened.listEpisodic().some((r) => r.state !== "redacted" && r.text.includes("Biscuit")),
     ).toBe(false);
     // And the on-disk logs never re-acquired the content.
-    for (const file of ["episodic.jsonl", "facts.jsonl", "entities.jsonl"]) {
+    for (const file of ["episodic.jsonl", "facts.jsonl"]) {
       expect(fs.readFileSync(path.join(storeDir, file), "utf8")).not.toContain("Biscuit");
     }
   });

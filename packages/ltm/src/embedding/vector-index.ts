@@ -12,8 +12,46 @@ export interface VectorHit {
 
 export class VectorIndex {
   private vectors = new Map<string, number[]>();
+  private dim: number | null;
+  private warnedMismatch = false;
 
+  /**
+   * @param expectedDim When provided, the index dimension is fixed up front
+   *   (rather than established by the first inserted vector). Callers that
+   *   know the canonical dimension — e.g. the majority dimension of a store
+   *   that may hold legacy off-dimension contaminants — pass it so insertion
+   *   order can't pin the index to a minority dimension.
+   */
+  constructor(expectedDim?: number) {
+    this.dim = expectedDim ?? null;
+  }
+
+  /**
+   * Insert/replace a vector. The first non-empty vector establishes the
+   * index dimension (unless fixed via the constructor); any vector of a
+   * different length is REFUSED (skipped, warned once) rather than stored. A
+   * mixed-dimension index is the D2 contamination: `cosine` would silently
+   * truncate to the shorter length and score garbage. Keeping the index
+   * single-dimension means search() never compares across dimensions. Legacy
+   * off-dimension records (e.g. hash-embedder fallbacks) are simply excluded
+   * from retrieval until they are re-embedded — strictly better than a
+   * corrupt score.
+   */
   set(id: string, vector: number[]): void {
+    if (vector.length === 0) return;
+    if (this.dim === null) {
+      this.dim = vector.length;
+    } else if (vector.length !== this.dim) {
+      if (!this.warnedMismatch) {
+        this.warnedMismatch = true;
+        console.warn(
+          `[ltm] VectorIndex: refusing ${vector.length}-dim vector(s); index is ${this.dim}-dim. ` +
+            `Off-dimension records are excluded from retrieval until re-embedded.`,
+        );
+      }
+      this.vectors.delete(id); // ensure a stale same-id entry can't linger
+      return;
+    }
     this.vectors.set(id, vector);
   }
 

@@ -211,7 +211,7 @@ export async function ltmDoctor(
  * reproduces from their source turns. Requires the server to be stopped.
  */
 export async function ltmPurgeFacts(
-  opts: LtmCliOpts & { sessionsDir?: string } = {},
+  opts: LtmCliOpts & { sessionsDir?: string; dryRun?: boolean } = {},
 ): Promise<number> {
   const out = opts.stdout ?? ((line) => console.log(line));
   const err = opts.stderr ?? ((line) => console.error(line));
@@ -271,8 +271,30 @@ export async function ltmPurgeFacts(
   }
 
   try {
-    const result = await ltm.purgeStaleFacts(sessionsDir);
-    out(`kept ${result.kept}, purged ${result.purged.length}`);
+    const dryRun = (opts as { dryRun?: boolean }).dryRun ?? false;
+    const result = await ltm.purgeStaleFacts(sessionsDir, {
+      dryRun,
+      // --force lifts the mass-redaction circuit-breaker (1 = no limit).
+      maxPurgeFraction: opts.force ? 1 : undefined,
+    });
+    if (result.aborted) {
+      err(
+        `[ltm purge-facts] ABORTED — would redact ${Math.round(
+          result.aborted.fraction * 100,
+        )}% of ${result.aborted.active} active facts ` +
+          `(limit ${Math.round(result.aborted.limit * 100)}%). Nothing was changed.\n` +
+          `  This usually means the session sources could not be read (wrong\n` +
+          `  <sessions-dir>, or facts whose source turns are gone), NOT that the\n` +
+          `  facts are actually stale. Verify <sessions-dir> points at the real\n` +
+          `  sessions tree, re-run with --dry-run to inspect, and only pass\n` +
+          `  --force if you are certain a large redaction is correct.`,
+      );
+      return 1;
+    }
+    out(
+      `${dryRun ? "[dry-run] would keep" : "kept"} ${result.kept}, ` +
+        `${dryRun ? "would purge" : "purged"} ${result.purged.length}`,
+    );
     for (const id of result.purged) out(id);
     return 0;
   } finally {
