@@ -74,4 +74,6 @@ export const client = {
     api<{ task: TaskRow; messages: ChatMessage[] }>(`/api/tasks/${id}/transcript`),
   listSchedules: () => api<{ schedules: ScheduleRow[] }>("/api/schedules"),
   cancelSchedule: (id: string) => api<{ ok: true }>(`/api/schedules/${id}`, { method: "DELETE" }),
+  workdirSuggestions: () =>
+    api<{ knownProjects: { path: string; label: string }[]; recent: string[] }>("/api/workdirs/suggestions"),
 };

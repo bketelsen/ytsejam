@@ -13,6 +13,6 @@ export interface FactExtractor {
 /** Default/offline extractor: wraps the legacy regex extractFacts. */
 export class RegexFactExtractor implements FactExtractor {
   async extract(text: string): Promise<FactCandidate[]> {
-    return extractFacts(text);
+    return extractFacts(text).map((c) => ({ ...c, scope: "global" as const }));
   }
 }

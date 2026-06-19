@@ -80,7 +80,7 @@ export class SemanticStore {
   // -- ingestion -----------------------------------------------------------
 
   /** Learn facts from one turn. Facts come from user turns only. */
-  async ingestTurn(turn: Turn): Promise<void> {
+  async ingestTurn(turn: Turn, projectTag?: string): Promise<void> {
     const source: SourceRef = { sessionId: turn.sessionId, entryId: turn.entryId };
     if (turn.rootSessionId && turn.rootSessionId !== turn.sessionId) {
       source.rootSessionId = turn.rootSessionId;
@@ -88,7 +88,8 @@ export class SemanticStore {
 
     if (turn.role === "user") {
       for (const candidate of await this.factExtractor.extract(turn.text)) {
-        this.assertFact(candidate.kind, candidate.predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp);
+        const tag = candidate.scope === "project" && projectTag ? projectTag : undefined;
+        this.assertFact(candidate.kind, candidate.predicate, candidate.object, candidate.polarity, candidate.initialStrength, source, turn.timestamp, tag);
       }
     }
   }
@@ -101,9 +102,10 @@ export class SemanticStore {
     initialStrength: number,
     source: SourceRef,
     at: string,
+    projectTag?: string,
   ): void {
     const objectNorm = normalizeObject(object);
-    const id = factId({ kind, predicate, polarity }, objectNorm);
+    const id = factId({ kind, predicate, polarity }, objectNorm, projectTag);
     const existing = this.facts.get(id);
 
     if (existing && existing.state !== "redacted") {
@@ -136,6 +138,7 @@ export class SemanticStore {
       lastSeenAt: at,
       sources: [source],
       state: "active",
+      ...(projectTag !== undefined ? { projectTag } : {}),
     };
     this.facts.set(id, fact);
     this.factLog.append(fact);
@@ -173,10 +176,14 @@ export class SemanticStore {
   profile(
     now: string,
     floors: ProfileFloors = { floor: 0.3, identityFloor: 0.3, directiveFloor: 0.3 },
+    activeProjectTag?: string,
   ): ProfileSummary {
     const floorFor = (f: SemanticFact): number =>
       f.kind === "identity" ? floors.identityFloor : f.kind === "directive" ? floors.directiveFloor : floors.floor;
-    const all = this.activeFacts().sort(
+    const scoped = this.activeFacts().filter(
+      (f) => !f.projectTag || f.projectTag === activeProjectTag,
+    );
+    const all = scoped.sort(
       (a, b) => effectiveStrength(b, now) - effectiveStrength(a, now),
     );
     const facts = all.filter((f) => effectiveStrength(f, now) >= floorFor(f));

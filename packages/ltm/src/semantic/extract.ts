@@ -16,6 +16,8 @@ export interface FactCandidate {
   polarity: 1 | -1;
   /** Initial belief for a first sighting; reinforcement raises it. */
   initialStrength: number;
+  /** Scope of this fact; absent/undefined is treated as "global". */
+  scope?: "global" | "project";
 }
 
 // ---------------------------------------------------------------------------
@@ -40,8 +42,13 @@ export function slug(s: string): string {
   return s.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
 
-export function factId(c: Pick<FactCandidate, "kind" | "predicate" | "polarity">, objectNorm: string): string {
-  return `fact-${c.kind}-${c.predicate}-${slug(objectNorm)}-${c.polarity > 0 ? "p" : "n"}`;
+export function factId(
+  c: Pick<FactCandidate, "kind" | "predicate" | "polarity">,
+  objectNorm: string,
+  projectTag?: string,
+): string {
+  const base = `fact-${c.kind}-${c.predicate}-${slug(objectNorm)}-${c.polarity > 0 ? "p" : "n"}`;
+  return projectTag ? `${base}@${slug(projectTag)}` : base;
 }
 
 function clean(s: string): string {

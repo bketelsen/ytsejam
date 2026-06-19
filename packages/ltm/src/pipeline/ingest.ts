@@ -66,7 +66,7 @@ export class IngestPipeline {
     fs.writeFileSync(this.statePath, JSON.stringify(this.state, null, 2));
   }
 
-  async ingestFile(filePath: string): Promise<IngestReport> {
+  async ingestFile(filePath: string, opts?: { projectTag?: string }): Promise<IngestReport> {
     const session = readSessionFile(filePath, this.deps.readOptions);
     // Subagent sessions fork off a parent; knowledge learned there belongs
     // to the root session's user, so every turn carries the fork root
@@ -89,7 +89,7 @@ export class IngestPipeline {
       seen.add(turn.entryId);
       report.turnsIngested++;
 
-      await this.deps.semantic.ingestTurn(turn);
+      await this.deps.semantic.ingestTurn(turn, opts?.projectTag);
       newRecords.push(...(await this.turnToRecords(turn)));
     }
 
@@ -102,11 +102,11 @@ export class IngestPipeline {
     return report;
   }
 
-  async ingestDir(dir: string): Promise<IngestReport> {
+  async ingestDir(dir: string, opts?: { projectTag?: string }): Promise<IngestReport> {
     const totals: IngestReport = { sessionsSeen: 0, turnsIngested: 0, recordsCreated: 0, warnings: [] };
     for (const file of listSessionFiles(dir)) {
       try {
-        const report = await this.ingestFile(file);
+        const report = await this.ingestFile(file, opts);
         totals.sessionsSeen += report.sessionsSeen;
         totals.turnsIngested += report.turnsIngested;
         totals.recordsCreated += report.recordsCreated;

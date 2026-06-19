@@ -6,6 +6,7 @@ import { HealthIcon } from "./components/HealthIcon";
 import { ApprovalToggle } from "./components/ApprovalToggle";
 import { Settings } from "./components/Settings";
 import { TasksDialog } from "./components/TasksDialog";
+import { WorkdirPicker } from "./components/WorkdirPicker";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { getToken } from "./lib/api";
 import { useApp } from "./useApp";
@@ -38,17 +39,17 @@ function Main() {
   // body per token — wasteful today, and a re-fire trap if any future
   // branch ever fails to clear the URL synchronously.
   const handlerStateRef = useRef({
-    newSession: app.newSession,
+    requestNewSession: app.requestNewSession,
     openTasks: () => setTasksOpen(true),
     openSettings: () => setSettingsOpen(true),
   });
-  handlerStateRef.current.newSession = app.newSession;
+  handlerStateRef.current.requestNewSession = app.requestNewSession;
   useEffect(() => {
     const handleAction = () => {
       const action = new URLSearchParams(window.location.search).get("action");
       if (!action) return;
       const s = handlerStateRef.current;
-      if (action === "new") void s.newSession();
+      if (action === "new") s.requestNewSession();
       else if (action === "tasks") s.openTasks();
       else if (action === "settings") s.openSettings();
       else return; // unknown action -> leave URL untouched for debugging
@@ -85,7 +86,7 @@ function Main() {
   const sidebarProps = {
     sessions: app.sessions,
     currentId: app.currentId,
-    onNew: () => void app.newSession(),
+    onNew: () => app.requestNewSession(),
     onArchived: () => void app.refreshSessions(),
     onOpenSettings: () => setSettingsOpen(true),
     onOpenTasks: () => setTasksOpen(true),
@@ -142,6 +143,11 @@ function Main() {
       />
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} currentSessionId={app.currentId} />
       <TasksDialog open={tasksOpen} onOpenChange={setTasksOpen} tasks={app.tasks} />
+      <WorkdirPicker
+        open={app.workdirPickerOpen}
+        onOpenChange={app.setWorkdirPickerOpen}
+        onConfirm={(dir) => void app.confirmNewSession(dir)}
+      />
     </div>
   );
 }

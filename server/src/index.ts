@@ -37,6 +37,11 @@ import * as memory from "./memory/index.ts";
 import { LtmReconciler } from "./memory/bridge/ltm-reconciler.ts";
 import { checkDimensionMismatch, createLtmEmbedder, parseLtmEmbedderMode } from "./memory/embedder.ts";
 import { CopilotFactExtractor } from "./memory/fact-extractor.ts";
+import { buildMemorySection } from "./memory/memory-section.ts";
+import { recall } from "./memory/recall.ts";
+import { projectTagForWorkdir } from "./memory/active-project.ts";
+import { loadManifest } from "./memory/domain/manifest.ts";
+import { memoryRoot } from "./memory/index.ts";
 import { runCli } from "./cli/dispatch.ts";
 
 // CLI short-circuit: if argv matches a CLI subcommand, run it and exit
@@ -46,6 +51,11 @@ const cliExit = await runCli(process.argv.slice(2));
 if (cliExit !== null) process.exit(cliExit);
 
 const config = loadConfig();
+
+// Loaded once at boot; restart to pick up domains.yml changes (it's config, like the rest).
+const domainManifest = (() => {
+  try { return loadManifest(memoryRoot()); } catch { return []; }
+})();
 
 // Ensure dataDir exists before sqlite tries to create its file
 fs.mkdirSync(config.dataDir, { recursive: true });
@@ -113,6 +123,25 @@ const manager = new AgentManager({
   skills,
   approvalCoordinator,
   ltm: () => memory.getLtm(),
+  activeProjectTag: (sessionId) =>
+    projectTagForWorkdir(
+      domainManifest,
+      resolveWorkdir(workdirs, sessionId, config.dataDir),
+    ),
+  recallSection: async (sessionId, query) => {
+    const ltm = memory.getLtm();
+    const domains = domainManifest;
+    const workdir = resolveWorkdir(workdirs, sessionId, config.dataDir);
+    return buildMemorySection(
+      {
+        profile: () => ltm?.profile(undefined, projectTagForWorkdir(domains, workdir) ?? undefined),
+        recall,
+        activeProjectTag: () => projectTagForWorkdir(domains, workdir),
+      },
+      sessionId,
+      query,
+    );
+  },
 });
 
 taskManager = new TaskManager({
@@ -379,7 +408,7 @@ try {
   console.warn(`memory health check failed: ${(err as Error).message} — memory disabled until it recovers`);
 }
 
-const { app, injectWebSocket, wss } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills, approvalCoordinator });
+const { app, injectWebSocket, wss } = createApp({ manager, taskManager, scheduler, indexer, bus, persona, config, authStore, workdirs, skills, approvalCoordinator, memoryRootDir: memoryRoot() });
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
   const allInterfaces = info.address === "0.0.0.0" || info.address === "::";
   const displayHost = allInterfaces ? "<all interfaces>" : info.address;

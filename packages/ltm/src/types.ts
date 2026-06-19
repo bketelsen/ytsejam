@@ -152,6 +152,8 @@ export interface SemanticFact {
   /** Set when a newer contradictory fact replaced this one. */
   supersededBy?: string;
   state: RecordState;
+  /** Resolved project tag (e.g. "projects:ytsejam"); absent = global. */
+  projectTag?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +253,12 @@ export interface RetrieveOptions {
    * are not tag-scoped. Default: no filtering.
    */
   filterTags?: string[];
+  /**
+   * Active project tag for scoping the semantic profile.
+   * When set, profile() includes globals + facts whose projectTag matches.
+   * When absent, only global facts (no projectTag) are included.
+   */
+  activeProjectTag?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ export interface Domain {
   path: string;
   label?: string;
   type?: string;
+  workingDir?: string;
   triggers?: string[];
   files?: string[];
   subdomains?: Domain[];

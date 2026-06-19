@@ -191,15 +191,15 @@ export class MemorySystem {
 
   // -- ingestion ------------------------------------------------------------
 
-  async ingestSessionFile(filePath: string): Promise<IngestReport> {
-    const report = await this.pipeline.ingestFile(filePath);
+  async ingestSessionFile(filePath: string, opts?: { projectTag?: string }): Promise<IngestReport> {
+    const report = await this.pipeline.ingestFile(filePath, opts);
     if (report.recordsCreated > 0 || report.turnsIngested > 0)
       this.rebuildDerived();
     return report;
   }
 
-  async ingestSessionDir(dir: string): Promise<IngestReport> {
-    const report = await this.pipeline.ingestDir(dir);
+  async ingestSessionDir(dir: string, opts?: { projectTag?: string }): Promise<IngestReport> {
+    const report = await this.pipeline.ingestDir(dir, opts);
     if (report.recordsCreated > 0 || report.turnsIngested > 0)
       this.rebuildDerived();
     return report;
@@ -345,7 +345,7 @@ export class MemorySystem {
   ): Promise<RetrievalResult> {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
-    const profile = this.semantic.profile(now, this.config.profile);
+    const profile = this.semantic.profile(now, this.config.profile, opts.activeProjectTag);
     const ranked = await this.retriever.rank(
       query,
       k,
@@ -470,8 +470,8 @@ export class MemorySystem {
     return lines.join("\n").trim();
   }
 
-  profile(now?: string): ProfileSummary {
-    return this.semantic.profile(now ?? this.clock(), this.config.profile);
+  profile(now?: string, activeProjectTag?: string): ProfileSummary {
+    return this.semantic.profile(now ?? this.clock(), this.config.profile, activeProjectTag);
   }
 
   // -- maintenance ------------------------------------------------------------

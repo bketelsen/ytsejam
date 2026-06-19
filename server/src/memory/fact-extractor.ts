@@ -16,6 +16,8 @@ const SYSTEM_PROMPT = [
   "Examples — EMIT: 'my name is Brian' -> {kind:identity,predicate:name,object:Brian}.",
   "EMIT: 'I prefer my own harness' -> {kind:preference,predicate:prefers,object:my own harness}.",
   "DO NOT EMIT: 'let's defer this right now', 'I'll fire these off before bed', 'use the current state'.",
+  "Set scope=project for facts specific to the current codebase/repo/task (e.g. a build/test/deploy rule for this project);",
+  "scope=global for identity and general preferences. Default to global.",
 ].join(" ");
 
 const TOOL = {
@@ -40,6 +42,7 @@ const TOOL = {
               object: { type: "string" },
               polarity: { type: "integer", enum: [1, -1] },
               confidence: { type: "number" },
+              scope: { type: "string", enum: ["global", "project"] },
             },
           },
         },
@@ -154,7 +157,7 @@ export class CopilotFactExtractor implements FactExtractor {
     const out: FactCandidate[] = [];
     for (const f of facts) {
       if (!f || typeof f !== "object") continue;
-      const { kind, predicate, object, polarity, confidence } = f as Record<string, unknown>;
+      const { kind, predicate, object, polarity, confidence, scope } = f as Record<string, unknown>;
       if (typeof kind !== "string" || !VALID_KINDS.has(kind)) continue;
       if (typeof predicate !== "string" || !predicate) continue;
       if (typeof object !== "string" || !object.trim()) continue;
@@ -166,6 +169,7 @@ export class CopilotFactExtractor implements FactExtractor {
         object: object.trim(),
         polarity,
         initialStrength: Math.min(0.95, Math.max(0.5, confidence)),
+        scope: scope === "project" ? "project" : "global",
       });
     }
     return out;

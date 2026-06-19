@@ -23,7 +23,7 @@ describe("CopilotFactExtractor", () => {
     ]))));
     const out = await ext.extract("hi");
     expect(out).toEqual([
-      { kind: "identity", predicate: "name", object: "Brian", polarity: 1, initialStrength: 0.9 },
+      { kind: "identity", predicate: "name", object: "Brian", polarity: 1, initialStrength: 0.9, scope: "global" },
     ]);
   });
 
@@ -86,7 +86,7 @@ describe("CopilotFactExtractor", () => {
     const ext = new CopilotFactExtractor({ getApiKey, fetchImpl });
     const out = await ext.extract("my name is Brian");
     expect(out).toEqual([
-      { kind: "identity", predicate: "name", object: "Brian", polarity: 1, initialStrength: 0.9 },
+      { kind: "identity", predicate: "name", object: "Brian", polarity: 1, initialStrength: 0.9, scope: "global" },
     ]);
     expect(keyCallCount).toBeGreaterThanOrEqual(2);
   });
@@ -98,5 +98,26 @@ describe("CopilotFactExtractor", () => {
       { kind: "identity", predicate: "name", object: "Brian", polarity: 2, confidence: 0.9 },
     ]))));
     expect(await ext.extract("hi")).toEqual([]);
+  });
+
+  it("maps scope:project from tool response to candidate scope:project", async () => {
+    const ext = new CopilotFactExtractor(opts(fakeFetch(toolResponse([
+      { kind: "directive", predicate: "test-command", object: "npm test", polarity: 1, confidence: 0.9, scope: "project" },
+    ]))));
+    const out = await ext.extract("always run npm test for this repo");
+    expect(out).toHaveLength(1);
+    expect(out[0].scope).toBe("project");
+  });
+
+  it("defaults scope to global when scope is missing or invalid in tool response", async () => {
+    const ext = new CopilotFactExtractor(opts(fakeFetch(toolResponse([
+      { kind: "identity", predicate: "name", object: "Brian", polarity: 1, confidence: 0.9 },
+      { kind: "preference", predicate: "prefers", object: "vim", polarity: 1, confidence: 0.9, scope: "bogus" },
+    ]))));
+    const out = await ext.extract("my name is Brian, I prefer vim");
+    expect(out).toHaveLength(2);
+    for (const c of out) {
+      expect(c.scope).toBe("global");
+    }
   });
 });
