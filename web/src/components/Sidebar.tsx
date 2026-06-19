@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, ArchiveRestore, Pencil } from "lucide-react";
+import { Archive, ArchiveRestore, Pencil, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { client } from "@/lib/api";
 import type { SessionRow } from "@/lib/types";
@@ -19,6 +19,7 @@ export function Sidebar({
   onNew,
   onArchived,
   onOpenSettings,
+  onOpenTerminal,
   onOpenTasks,
   runningTasks,
 }: {
@@ -29,6 +30,7 @@ export function Sidebar({
   /** Called after archive/unarchive completes so the active list can refresh. */
   onArchived: (id: string) => void;
   onOpenSettings: () => void;
+  onOpenTerminal: () => void;
   onOpenTasks: () => void;
   runningTasks: number;
 }) {
@@ -107,6 +109,9 @@ export function Sidebar({
         </Button>
         <Button variant="outline" onClick={onOpenTasks}>
           Tasks{runningTasks > 0 ? ` (${runningTasks})` : ""}
+        </Button>
+        <Button variant="outline" size="icon" onClick={onOpenTerminal} aria-label="Open terminal" title="Open terminal">
+          <Terminal className="size-4" />
         </Button>
         <Button variant="outline" onClick={onOpenSettings}>
           ⚙

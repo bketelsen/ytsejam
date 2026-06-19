@@ -16,6 +16,7 @@ import type { PersonaStore } from "./persona.ts";
 import type { SchedulerService } from "./scheduler.ts";
 import type { SkillSummary, SkillsStore } from "./skills.ts";
 import type { TaskManager } from "./task-manager.ts";
+import { createTerminalSession, type TerminalSession } from "./terminal.ts";
 import type { WorkdirStore } from "./workdirs.ts";
 import { recentWorkdirs } from "./workdirs.ts";
 import { loadManifest } from "./memory/domain/manifest.ts";
@@ -32,6 +33,9 @@ const APPROVAL_PREFIX_SKILLS: SkillSummary[] = [
     triggers: ["careful", "require approval", "ask approval"],
   },
 ];
+
+const PUBLIC_API_PATHS = new Set(["/api/login", "/api/ws", "/api/terminal/ws"]);
+const WS_OPEN = 1;
 
 export interface AppDeps {
   manager: AgentManager;
@@ -88,9 +92,9 @@ export function createApp(deps: AppDeps) {
     return c.json({ ok: true });
   });
 
-  // auth for everything else under /api (login + ws exempt; ws does its own query-token check)
+  // auth for everything else under /api (login + ws exempt; ws routes do their own query-token check)
   app.use("/api/*", async (c, next) => {
-    if (c.req.path === "/api/login" || c.req.path === "/api/ws") return next();
+    if (PUBLIC_API_PATHS.has(c.req.path)) return next();
     const header = c.req.header("authorization");
     const token = header?.startsWith("Bearer ") ? header.slice(7) : c.req.query("token");
     if (token !== config.authToken) return c.json({ error: "unauthorized" }, 401);
@@ -110,14 +114,14 @@ export function createApp(deps: AppDeps) {
       return {
         onOpen: (_evt, ws) => {
           unsubscribeBus = deps.bus.subscribe((event: ServerEvent) => {
-            if (shouldSendWsEvent(event, subscribed) && ws.readyState === 1 /* OPEN */) {
+            if (shouldSendWsEvent(event, subscribed) && ws.readyState === WS_OPEN) {
               ws.send(JSON.stringify(event));
             }
           });
           // Seed the client map on every reconnect. The real per-session
           // catch-up snapshot is sent after subscribe, when the server knows
           // which session this socket is viewing.
-          if (deps.approvalCoordinator && ws.readyState === 1 /* OPEN */) {
+          if (deps.approvalCoordinator && ws.readyState === WS_OPEN) {
             ws.send(JSON.stringify({
               type: "pending_approvals",
               approvals: [],
@@ -129,7 +133,7 @@ export function createApp(deps: AppDeps) {
             const msg = JSON.parse(String(evt.data));
             if (msg.type === "subscribe" && typeof msg.sessionId === "string") {
               subscribed = msg.sessionId;
-              if (deps.approvalCoordinator && ws.readyState === 1 /* OPEN */) {
+              if (deps.approvalCoordinator && ws.readyState === WS_OPEN) {
                 const approvals = deps.approvalCoordinator
                   .list()
                   .filter((approval) => approval.sessionId === subscribed);
@@ -148,6 +152,56 @@ export function createApp(deps: AppDeps) {
           }
         },
         onClose: () => unsubscribeBus?.(),
+      };
+    }),
+  );
+
+  app.get(
+    "/api/terminal/ws",
+    upgradeWebSocket((c) => {
+      if (c.req.query("token") !== config.authToken) {
+        return {
+          onOpen: (_evt, ws) => ws.close(4401, "unauthorized"),
+        };
+      }
+      let session: TerminalSession | null = null;
+      return {
+        onOpen: (_evt, ws) => {
+          session = createTerminalSession({
+            cols: 80,
+            rows: 24,
+            onData: (data) => {
+              if (ws.readyState === WS_OPEN) ws.send(JSON.stringify({ type: "output", data }));
+            },
+            onExit: (code) => {
+              if (ws.readyState === WS_OPEN) {
+                ws.send(JSON.stringify({ type: "exit", code }));
+                ws.close();
+              }
+            },
+          });
+        },
+        onMessage: (evt) => {
+          if (!session) return;
+          try {
+            const msg = JSON.parse(String(evt.data));
+            if (msg.type === "input" && typeof msg.data === "string") {
+              session.write(msg.data);
+            } else if (
+              msg.type === "resize" &&
+              Number.isFinite(msg.cols) &&
+              Number.isFinite(msg.rows)
+            ) {
+              session.resize(Math.max(1, Math.floor(msg.cols)), Math.max(1, Math.floor(msg.rows)));
+            }
+          } catch {
+            // ignore malformed terminal frames
+          }
+        },
+        onClose: () => {
+          session?.kill();
+          session = null;
+        },
       };
     }),
   );

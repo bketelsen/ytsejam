@@ -23,3 +23,4 @@ import "./slash-overlay.test.mjs";
 import "./chat-slash.test.mjs";
 
 import "./workdir-picker.test.mjs";
+import "./quake-terminal.test.mjs";

@@ -62,8 +62,12 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout.
 - **`server.ts`** — `createApp()` builds the Hono app: bearer-token auth on `/api/*`, the REST routes
   (sessions, messages, tasks, schedules, persona, models, cwd, archive, **memory health**), the
-  `/api/ws` WebSocket (per-client session subscription + lightweight global liveness events), and
-  static serving of `web/dist` with SPA fallback.
+  `/api/ws` WebSocket (per-client session subscription + lightweight global liveness events), the
+  `/api/terminal/ws` WebSocket (query-token-gated raw PTY I/O frames), and static serving of
+  `web/dist` with SPA fallback.
+- **`terminal.ts`** — owns interactive PTY sessions via `node-pty`: spawns the user's shell in
+  `os.homedir()`, forwards output, handles input/resize, and reaps the process on socket close. The
+  web side is `QuakeTerminal` + `lib/terminal-ws.ts`, opened from the left rail or `Ctrl+``.
 - **`manager.ts`** — `AgentManager` owns chat sessions: opens/caches a pi `AgentHarness` per session,
   composes the system prompt each turn, forwards harness events to the bus, mirrors metadata into the
   index, generates titles, drives compaction (idle, inner-loop via the `context` event hook, and the
@@ -167,22 +171,24 @@ React 19 SPA, Vite build, Tailwind v4 + shadcn/ui. The server serves the built `
 
 - **`App.tsx`** — top-level layout (sidebar + chat + settings/tasks dialogs); gates on login.
   Renders the WebSocket + LTM **health icons** in the chat header (`Plug` for WS, `Brain` for LTM,
-  gray/green/red outline by state).
+  gray/green/red outline by state), and owns the quake-style terminal open state / `Ctrl+`` hotkey.
 - **`useApp.ts`** — the app state hook: holds sessions/messages/streaming/tasks plus the WS and LTM
   health states, opens the WebSocket, routes `ServerEvent`s into React state (streaming assistant
   tokens, session metadata incl. live `compacting` flag, task updates, archive/unarchive,
   `compaction_start`/`compaction_end` lifecycle), polls `/api/memory/health` for the brain-icon
   state, and exposes `send`/`selectSession`/`newSession`.
-- **`components/`** — `Sidebar` (session list + new/archived/settings/tasks; per-row compaction
+- **`components/`** — `Sidebar` (session list + new/archived/settings/tasks/terminal; per-row compaction
   indicator), `Chat` (transcript + composer + per-session cwd editor + task-transcript dialog +
   in-flight compaction pill), `Message` (renders a transcript message, incl. tool calls/results,
-  markdown), `TaskCard`/`TasksDialog` (delegated-task status + transcript), `Settings` (persona
-  editor, model picker, schedules), `Login`, `HealthIcon` (the WS + LTM status indicators), and
-  generated shadcn primitives in `components/ui/`.
+  markdown), `QuakeTerminal` (top `Sheet` + xterm renderer for `/api/terminal/ws`),
+  `TaskCard`/`TasksDialog` (delegated-task status + transcript), `Settings` (persona editor, model
+  picker, schedules), `Login`, `HealthIcon` (the WS + LTM status indicators), and generated shadcn
+  primitives in `components/ui/`.
 - **`lib/`** — `api.ts` (typed REST client + bearer token in `localStorage`, plus
   `getMemoryHealth`), `ws.ts` (auto-reconnecting WebSocket with per-session subscribe + connect
-  watchdog), `types.ts` (shared row/event types mirroring the server, incl. `HealthState` SSOT and
-  the compaction-lifecycle events), `time.ts`, `utils.ts`.
+  watchdog), `terminal-ws.ts` (lazy terminal WebSocket helper for xterm input/output/resize),
+  `types.ts` (shared row/event types mirroring the server, incl. `HealthState` SSOT and the
+  compaction-lifecycle events), `time.ts`, `utils.ts`.
 
 UI styling rule (`web/CLAUDE.md`): **only shadcn semantic theme tokens**, never raw Tailwind palette
 classes — enforced by `web/test/theme.test.mjs` in the gate.
