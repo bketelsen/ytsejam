@@ -4,6 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { HealthIcon } from "./components/HealthIcon";
 import { ApprovalToggle } from "./components/ApprovalToggle";
+import { QuakeTerminal } from "./components/QuakeTerminal";
 import { Settings } from "./components/Settings";
 import { TasksDialog } from "./components/TasksDialog";
 import { WorkdirPicker } from "./components/WorkdirPicker";
@@ -22,6 +23,7 @@ function Main() {
   const app = useApp();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // PWA manifest shortcuts (manifest.webmanifest > shortcuts) deep-link via
@@ -61,6 +63,17 @@ function Main() {
     return () => window.removeEventListener("popstate", handleAction);
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && (e.key === "`" || e.key === "~")) {
+        e.preventDefault();
+        setTerminalOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const runningTasks = Object.values(app.tasks).filter(
     (t) => t.status === "running" || t.status === "pending",
   ).length;
@@ -89,6 +102,7 @@ function Main() {
     onNew: () => app.requestNewSession(),
     onArchived: () => void app.refreshSessions(),
     onOpenSettings: () => setSettingsOpen(true),
+    onOpenTerminal: () => setTerminalOpen(true),
     onOpenTasks: () => setTasksOpen(true),
     runningTasks,
   };
@@ -141,6 +155,7 @@ function Main() {
           </>
         }
       />
+      <QuakeTerminal open={terminalOpen} onOpenChange={setTerminalOpen} />
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} currentSessionId={app.currentId} />
       <TasksDialog open={tasksOpen} onOpenChange={setTasksOpen} tasks={app.tasks} />
       <WorkdirPicker
