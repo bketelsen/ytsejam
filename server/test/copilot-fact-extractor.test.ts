@@ -42,6 +42,29 @@ describe("CopilotFactExtractor", () => {
     expect(await ext.extract("hi")).toEqual([]);
   });
 
+  it("debug: logs a fact summary when facts are extracted", async () => {
+    const lines: string[] = [];
+    const ext = new CopilotFactExtractor(opts(fakeFetch(toolResponse([
+      { kind: "identity", predicate: "name", object: "Brian", polarity: 1, confidence: 0.9 },
+    ])), { debug: true, log: (m: string) => lines.push(m) }));
+    await ext.extract("my name is Brian");
+    expect(lines.some((l) => l.includes("1 fact(s)") && l.includes("name=Brian"))).toBe(true);
+  });
+
+  it("debug: logs '0 facts' when extraction succeeds but finds nothing", async () => {
+    const lines: string[] = [];
+    const ext = new CopilotFactExtractor(opts(fakeFetch(toolResponse([])), { debug: true, log: (m: string) => lines.push(m) }));
+    await ext.extract("just some task chatter");
+    expect(lines.some((l) => l.includes("0 facts"))).toBe(true);
+  });
+
+  it("debug: logs a skip line with the reason on failure", async () => {
+    const lines: string[] = [];
+    const ext = new CopilotFactExtractor(opts(fakeFetch({ error: "boom" }, 500), { debug: true, log: (m: string) => lines.push(m) }));
+    await ext.extract("hi");
+    expect(lines.some((l) => l.includes("skipped") && l.includes("HTTP 500"))).toBe(true);
+  });
+
   it("returns [] when fetch throws", async () => {
     const throwing = (async () => { throw new Error("network"); }) as unknown as typeof fetch;
     const ext = new CopilotFactExtractor(opts(throwing));

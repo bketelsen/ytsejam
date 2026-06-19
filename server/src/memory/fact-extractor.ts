@@ -57,6 +57,10 @@ export interface CopilotFactExtractorOptions {
   confidenceFloor?: number;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /** When true, log every extraction outcome (facts found / 0 facts / skipped). */
+  debug?: boolean;
+  /** Log sink for debug/skip lines; defaults to console.log. Injectable for tests. */
+  log?: (msg: string) => void;
 }
 
 export class CopilotFactExtractor implements FactExtractor {
@@ -65,6 +69,8 @@ export class CopilotFactExtractor implements FactExtractor {
   private readonly url: string;
   private readonly floor: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly debug: boolean;
+  private readonly log: (msg: string) => void;
   private warned = false;
 
   private warnOnce(msg: string): void {
@@ -73,35 +79,52 @@ export class CopilotFactExtractor implements FactExtractor {
     console.warn(`[ltm fact-extractor] ${msg} Falling back to NO extraction (skip) for failed turns.`);
   }
 
+  /** A turn produced no facts because extraction failed. In debug mode log
+   *  every skip with its reason; otherwise warn once per process. Returns []. */
+  private skip(reason: string): FactCandidate[] {
+    if (this.debug) this.log(`[ltm fact-extractor] skipped (${reason})`);
+    else this.warnOnce(`${reason}.`);
+    return [];
+  }
+
   constructor(opts: CopilotFactExtractorOptions) {
     this.getApiKey = opts.getApiKey;
     this.model = opts.model ?? DEFAULT_MODEL;
     this.url = `${opts.baseUrl ?? DEFAULT_BASE_URL}/chat/completions`;
     this.floor = opts.confidenceFloor ?? 0.6;
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.debug = opts.debug ?? false;
+    this.log = opts.log ?? ((m) => console.log(m));
   }
 
   async extract(text: string): Promise<FactCandidate[]> {
+    const snippet = text.replace(/\s+/g, " ").slice(0, 50);
     try {
       let apiKey = await this.getApiKey();
-      if (!apiKey) { this.warnOnce("Copilot API key unavailable."); return []; }
+      if (!apiKey) return this.skip("no copilot creds");
       let res = await this.post(text, apiKey);
       if (res.status === 401) {
         apiKey = await this.getApiKey();
-        if (!apiKey) return [];
+        if (!apiKey) return this.skip("no copilot creds after 401");
         res = await this.post(text, apiKey);
       }
-      if (!res.ok) { this.warnOnce(`Copilot returned HTTP ${res.status}.`); return []; }
+      if (!res.ok) return this.skip(`HTTP ${res.status}`);
       const body = (await res.json()) as {
         choices?: { message?: { tool_calls?: { function?: { arguments?: string } }[] } }[];
       };
       const args = body.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
-      if (!args) return [];
+      if (!args) return this.skip("no tool call in response");
       const parsed = JSON.parse(args) as { facts?: unknown };
-      return this.toCandidates(parsed.facts);
+      const facts = this.toCandidates(parsed.facts);
+      if (this.debug) {
+        const summary = facts.length
+          ? `${facts.length} fact(s): ${facts.map((f) => `${f.predicate}=${f.object}`).join("; ")}`
+          : "0 facts";
+        this.log(`[ltm fact-extractor] ${summary} from "${snippet}"`);
+      }
+      return facts;
     } catch (err) {
-      this.warnOnce(`extraction threw: ${(err as Error).message}.`);
-      return [];
+      return this.skip(`threw: ${(err as Error).message}`);
     }
   }
 

@@ -184,6 +184,7 @@ try {
   const factExtractor = new CopilotFactExtractor({
     getApiKey: () => resolveApiKey("github-copilot", authStore),
     model: process.env.YTSEJAM_LTM_FACT_MODEL,
+    debug: process.env.YTSEJAM_LTM_FACT_DEBUG === "1",
   });
   ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder, factExtractor });
   const mismatch = checkDimensionMismatch(ltm.indexDimension(), embedderResult);
