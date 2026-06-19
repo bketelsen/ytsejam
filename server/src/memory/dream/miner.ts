@@ -50,6 +50,26 @@ export interface MinerDeps {
   timeoutMs?: number;
 }
 
+const nonEmptyStr = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
+
+/**
+ * Validate an `add.fact` / `merge.canonical` payload from the LLM before it is
+ * cast and used downstream (the JSON schema constrains the call, but a
+ * hallucinated/partial object could still slip through). `requireSource` is
+ * true for `add` (needs a citing sourceRef), false for `merge`'s canonical.
+ */
+function isValidFactPayload(v: unknown, requireSource = true): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  if (!nonEmptyStr(o.kind) || !nonEmptyStr(o.predicate) || !nonEmptyStr(o.object)) return false;
+  if (o.polarity !== 1 && o.polarity !== -1) return false;
+  if (requireSource) {
+    const s = o.sourceRef as Record<string, unknown> | undefined;
+    if (!s || typeof s !== "object" || !nonEmptyStr(s.sessionId) || !nonEmptyStr(s.entryId)) return false;
+  }
+  return true;
+}
+
 export async function mineProposals(deps: MinerDeps): Promise<Proposal[]> {
   if (deps.userTurns.length === 0 && deps.facts.length === 0) return [];
   const apiKey = await deps.getApiKey();
@@ -96,7 +116,10 @@ export async function mineProposals(deps: MinerDeps): Promise<Proposal[]> {
     const confidence = typeof r.confidence === "number" ? r.confidence : 0;
     if (confidence < deps.minConfidence) continue;
     const factIds = Array.isArray(r.factIds) ? (r.factIds.filter((x) => typeof x === "string") as string[]) : [];
-    if (kind === "add" && !r.add) continue;
+    // Structurally validate the LLM payload before trusting it downstream: an
+    // `add` needs a well-formed fact, a `merge` needs a well-formed canonical.
+    if (kind === "add" && !isValidFactPayload(r.add)) continue;
+    if (kind === "merge" && !isValidFactPayload(r.canonical, false)) continue;
     if ((kind === "drop" || kind === "merge" || kind === "resolve") && factIds.length === 0) continue;
     const p: Proposal = {
       id: deps.idFor(`${kind}:${factIds.join(",")}:${JSON.stringify(r.add ?? "")}`),

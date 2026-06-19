@@ -457,6 +457,25 @@ export class SemanticStore {
   }
 
   /**
+   * Union additional source refs into an active fact (provenance carry-forward
+   * — e.g. when a dream `merge` folds several facts into a canonical one, the
+   * canonical should inherit the originals' source turns so a later
+   * source-based redaction still cascades to it). Returns false if the fact is
+   * absent/redacted or no new sources were added.
+   */
+  attachSources(id: string, sources: SourceRef[]): boolean {
+    const fact = this.facts.get(id);
+    if (!fact || fact.state !== "active") return false;
+    const merged = dedupeSources([...fact.sources, ...sources]);
+    if (merged.length === fact.sources.length) return false;
+    const updated: SemanticFact = { ...fact, sources: merged };
+    this.facts.set(id, updated);
+    this.factLog.append(updated);
+    this.factLog.compact(this.facts.values());
+    return true;
+  }
+
+  /**
    * Rewrite each active fact's predicate to its canonical form; when the
    * canonical id collides with an existing active fact, merge into the
    * stronger one (union sources, max mentionCount/strength, keep latest object)

@@ -169,4 +169,30 @@ describe("applyProposals", () => {
       warnSpy.mockRestore();
     } finally { ltm.close(); }
   });
+
+  it("merge carries the originals' source turns onto the canonical fact", async () => {
+    const root = tmp();
+    const ltm = MemorySystem.open({ storeDir: path.join(root, "ltm") });
+    try {
+      // Two originals from distinct source origins.
+      await ltm.recordObservation({ text: "I am working on alpha", timestamp: now(), origin: "cog:alpha", learnFacts: true });
+      await ltm.recordObservation({ text: "I am working on beta", timestamp: now(), origin: "cog:beta", learnFacts: true });
+      const ids = ltm.listFacts().filter((f) => f.predicate === "works_on" && f.state === "active").map((f) => f.id);
+      expect(ids.length).toBe(2);
+
+      const store = new ProposalStore(path.join(root, "dream"));
+      store.save([{ id: "pm3", kind: "merge", factIds: ids,
+        canonical: { kind: "attribute", predicate: "works_on", object: "ytsejam", polarity: 1 as const },
+        rationale: "dupes", confidence: 0.9, status: "pending" }]);
+
+      await applyProposals({ ltm, store, now }, ["pm3"]);
+
+      const canon = ltm.listFacts().find((f) => f.state === "active" && f.object === "ytsejam");
+      expect(canon).toBeDefined();
+      const sessionIds = new Set(canon!.sources.map((s) => s.sessionId));
+      // inherited both originals' provenance (plus its own synthetic dream source)
+      expect(sessionIds.has("cog:alpha")).toBe(true);
+      expect(sessionIds.has("cog:beta")).toBe(true);
+    } finally { ltm.close(); }
+  });
 });

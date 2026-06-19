@@ -691,6 +691,11 @@ export class MemorySystem {
     return this.semantic.redactFactById(id);
   }
 
+  /** Union source refs into an active fact (dream merge provenance carry-forward). */
+  attachFactSources(id: string, sources: SourceRef[]): boolean {
+    return this.semantic.attachSources(id, sources);
+  }
+
   /**
    * Forget memories matching the selector. Episodic records are tombstoned
    * (text + embedding destroyed, logs compacted); semantic facts/entities

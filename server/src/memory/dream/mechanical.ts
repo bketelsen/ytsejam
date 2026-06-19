@@ -12,7 +12,8 @@ export interface MechanicalDeps {
 /** Deterministic, reversible maintenance. Backs up facts.jsonl first. */
 export async function runMechanicalPass(deps: MechanicalDeps): Promise<MechanicalSummary> {
   const factsPath = path.join(deps.storeDir, "facts.jsonl");
-  const ts = deps.now().replace(/[-:T]/g, "").slice(0, 15);
+  // YYYYMMDDHHmmss from the ISO clock (digits only — no trailing separator).
+  const ts = deps.now().replace(/\D/g, "").slice(0, 14);
   const backup = `${factsPath}.bak.${ts}`;
   if (fs.existsSync(factsPath)) fs.copyFileSync(factsPath, backup);
 
