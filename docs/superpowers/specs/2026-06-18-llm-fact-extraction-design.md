@@ -8,7 +8,7 @@ LTM's semantic facts are low precision. The current extractor (`packages/ltm/src
 
 ## Goal
 
-Replace regex extraction with a cheap, structured LLM call (`claude-haiku-4.5` via the GitHub Copilot provider) that emits high-precision durable user facts, and re-derive the current fact set clean. Keep regex as a fallback so the `ltm` package stays pure and ingest never breaks.
+Replace regex extraction with a cheap, structured LLM call (`claude-haiku-4.5` via the GitHub Copilot provider) that emits high-precision durable user facts, and re-derive the current fact set clean. The production path is LLM-only: on any extraction failure it **skips** (stores no fact for that turn) rather than substituting regex output — better no fact than a junk fact. `RegexFactExtractor` is retained only as the pure package's offline/test default, never as a production runtime fallback.
 
 ## Constraints
 
@@ -30,7 +30,7 @@ export interface FactExtractor {
 }
 ```
 
-- `RegexFactExtractor implements FactExtractor` — wraps today's `extractFacts` (sync → `async`). This is the **default** (tests, CLI, offline) and the **fallback**.
+- `RegexFactExtractor implements FactExtractor` — wraps today's `extractFacts` (sync → `async`). This is the **package default** used only when no extractor is injected (tests, standalone CLI, offline). It is **not** a production runtime fallback — the server path is LLM-only with skip-on-failure.
 - The interface is `async` so an LLM impl fits without further signature churn.
 
 ### 2. `SemanticStore` takes an injected extractor
@@ -60,11 +60,11 @@ input_schema: {
 - **Decoding:** low temperature; `tool_choice` forcing the tool.
 - **Mapping:** `confidence → initialStrength` (clamped into the strength range the regex path uses). `kind/predicate/object/polarity` map straight to `FactCandidate`.
 - **Threshold:** drop candidates below a confidence floor (default 0.6, configurable).
-- **Fallback (critical):** any failure — missing copilot creds, network/timeout, non-200, malformed/missing tool call, schema-invalid output — logs once and falls back to `RegexFactExtractor.extract(text)`. Ingest must never throw because of extraction.
+- **Skip on failure (critical):** any failure — missing copilot creds, network/timeout, non-200, malformed/missing tool call, schema-invalid output — logs once and returns `[]` (no facts for that turn). It does **not** delegate to regex. Ingest must never throw because of extraction. Anything missed during an outage is recovered by the next re-derivation.
 
 ### 4. Wiring — `server/src/index.ts`
 
-Where the server builds the embedder (~line 170), also build the `CopilotFactExtractor` (reusing the copilot api-key resolver) and pass it: `MemorySystem.open({ storeDir, embedder, factExtractor })`. When copilot creds are absent, construction yields a `RegexFactExtractor` instead (same opt-down posture as the embedder's hash fallback, but for correctness rather than dimension).
+Where the server builds the embedder (~line 170), also build the `CopilotFactExtractor` (reusing the copilot api-key resolver) and pass it: `MemorySystem.open({ storeDir, embedder, factExtractor })`. The production server always injects `CopilotFactExtractor`; missing creds are handled by its skip-on-failure path (no facts), not by substituting regex. `RegexFactExtractor` remains the package default only when no extractor is injected (tests, standalone `packages/ltm` CLI, offline eval).
 
 ### 5. One-shot re-derivation — `scripts/ltm-rederive-facts.ts` (new)
 
@@ -90,17 +90,18 @@ Downstream of `assertFact` is untouched.
 
 | Failure | Behavior |
 |---|---|
-| No copilot creds at startup | server builds `RegexFactExtractor`; logs the opt-down once |
-| Copilot call fails / times out / non-200 | per-call fallback to regex; warn once |
-| Malformed or missing tool output | discard, fall back to regex |
+| No copilot creds | `CopilotFactExtractor.extract` returns `[]`; warn once. No regex substitution. |
+| Copilot call fails / times out / non-200 | return `[]` for that turn; warn once. Missed facts recovered by next re-derivation. |
+| Malformed or missing tool output | discard, return `[]` |
 | Confidence < floor | candidate dropped |
 | Duplicate fact | existing `factId` dedup → reinforcement, not a new row |
+| Extraction throws | caught; ingest continues (extraction never breaks ingest) |
 
 ## Testing (TDD)
 
 - `RegexFactExtractor` parity: same output as today's `extractFacts` for a battery of inputs (regression guard).
 - `FakeFactExtractor` (deterministic) to test the async, user-gated `ingestTurn` without network.
-- `CopilotFactExtractor` with a **mocked** copilot client: prompt/schema construction, response parsing, confidence→strength mapping, threshold, and every fallback branch. No live model calls in CI.
+- `CopilotFactExtractor` with a **mocked** copilot client: prompt/schema construction, response parsing, confidence→strength mapping, threshold, and every skip-on-failure branch (no creds / non-200 / timeout / malformed → `[]`). No live model calls in CI.
 - `ingestTurn`: user turns extracted; non-user turns skipped.
 - Re-derivation: dry-run output shape against a small fixture of real-looking user turns.
 
