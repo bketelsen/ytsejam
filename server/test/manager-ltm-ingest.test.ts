@@ -42,7 +42,11 @@ describe("AgentManager LTM ingest", () => {
     const expectedSessionPath = join(chatDir, sessionFile!);
 
     expect(row.path).toBe(expectedSessionPath);
-    expect(ltm.ingestSessionFile).toHaveBeenCalledWith(expectedSessionPath);
+    // No activeProjectTag wired → opts arg resolves to undefined
+    expect(ltm.ingestSessionFile).toHaveBeenCalledWith(
+      expectedSessionPath,
+      undefined,
+    );
     expect(existsSync(expectedSessionPath)).toBe(true);
   });
 });

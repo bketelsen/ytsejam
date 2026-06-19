@@ -123,6 +123,11 @@ const manager = new AgentManager({
   skills,
   approvalCoordinator,
   ltm: () => memory.getLtm(),
+  activeProjectTag: (sessionId) =>
+    projectTagForWorkdir(
+      domainManifest,
+      resolveWorkdir(workdirs, sessionId, config.dataDir),
+    ),
   recallSection: async (sessionId, query) => {
     const ltm = memory.getLtm();
     const domains = domainManifest;

@@ -122,6 +122,8 @@ export interface AgentManagerOptions {
    * returns null after shutdown detaches LTM via attachLtm(null).
    */
   ltm?: () => LtmIngestSink | null;
+  /** Optional: resolve the active project tag for a session at agent_end ingest. */
+  activeProjectTag?: (sessionId: string) => string | null;
   /**
    * Optional: build the "What you know about the user" + recall block for
    * injection into the per-turn system prompt. Called best-effort; errors are
@@ -473,9 +475,14 @@ export class AgentManager {
         setTimeout(() => void this.maybeGenerateTitle(opened), 0);
       }
       setTimeout(() => {
+        const projectTag =
+          this.opts.activeProjectTag?.(opened.id) ?? undefined;
         void this.opts.ltm
           ?.()
-          ?.ingestSessionFile(opened.metadata.path)
+          ?.ingestSessionFile(
+            opened.metadata.path,
+            projectTag ? { projectTag } : undefined,
+          )
           .catch((err) =>
             console.error(
               `failed to ingest session ${opened.id} into LTM`,
