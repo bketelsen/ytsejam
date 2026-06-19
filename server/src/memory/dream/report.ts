@@ -1,13 +1,17 @@
 import type { Proposal, MechanicalSummary } from "./types.ts";
 
 export function composeReport(
-  date: string, s: MechanicalSummary, proposals: Proposal[], factById: (id: string) => string | undefined,
+  date: string, s: MechanicalSummary | null, proposals: Proposal[], factById: (id: string) => string | undefined,
 ): string {
   const lines: string[] = [];
   lines.push(`── Memory maintenance · ${date} ──`);
-  lines.push(
-    `Autonomous (done): canonicalized ${s.canonicalized}, merged ${s.merged}, folded ${s.folded}, pruned ${s.pruned}, embedded ${s.embedded}.`,
-  );
+  if (s === null) {
+    lines.push("Autonomous: skipped (propose-only).");
+  } else {
+    lines.push(
+      `Autonomous (done): canonicalized ${s.canonicalized}, merged ${s.merged}, folded ${s.folded}, pruned ${s.pruned}, embedded ${s.embedded}.`,
+    );
+  }
   if (proposals.length === 0) {
     lines.push("", "No proposals — nothing needs your review.");
     return lines.join("\n");

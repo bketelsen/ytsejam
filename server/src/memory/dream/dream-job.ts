@@ -85,10 +85,9 @@ export async function runDreamJob(deps: DreamJobDeps): Promise<{ summary: Mechan
     const f = deps.ltm.listFacts().find((x) => x.id === id);
     return f ? `${f.kind}/${f.predicate}=${f.object}` : undefined;
   };
-  const emptySummary: MechanicalSummary = { backup: "", canonicalized: 0, merged: 0, folded: 0, pruned: 0, embedded: 0 };
   const report = composeReport(
     deps.now().slice(0, 10),
-    summary ?? emptySummary,
+    summary,
     proposals,
     factText,
   );

@@ -21,4 +21,10 @@ describe("composeReport", () => {
     const text = composeReport("2026-06-20", summary, [], () => undefined);
     expect(text.toLowerCase()).toContain("no proposals");
   });
+
+  it("shows skipped (propose-only) when summary is null", () => {
+    const text = composeReport("2026-06-20", null, [], () => undefined);
+    expect(text).toContain("skipped (propose-only)");
+    expect(text).not.toContain("canonicalized");
+  });
 });

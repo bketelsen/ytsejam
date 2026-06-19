@@ -92,6 +92,7 @@ describe("runDreamJob", () => {
     const ltm = MemorySystem.open({ storeDir });
     try {
       let mechanicalCalled = false;
+      let posted = "";
       const fetchImpl = fetchReturning({ proposals: [] });
       const out = await runDreamJob({
         ltm,
@@ -101,7 +102,7 @@ describe("runDreamJob", () => {
         dreamDir,
         gatherUserTurns: () => ({ turns: [], newCursorMs: 0 }),
         ensureMaintenanceSession: async () => "maint2",
-        postReport: async () => {},
+        postReport: async (_sid, text) => { posted = text; },
         getApiKey: async () => "tok",
         model: "m",
         minConfidence: 0.6,
@@ -113,6 +114,8 @@ describe("runDreamJob", () => {
       });
       expect(mechanicalCalled).toBe(false);
       expect(out.summary).toBeNull();
+      expect(posted).toContain("skipped (propose-only)");
+      expect(posted).not.toContain("canonicalized");
     } finally {
       ltm.close();
     }
