@@ -199,7 +199,9 @@ User sends message
 
 - **Client disconnects mid-approval**: timeout fires, synthetic denial. If
   client reconnects, server pushes current `approval_resolved` state so any
-  stale card can be cleared.
+  stale card can be cleared. The web client also runs a dropped-resolve watchdog:
+  if a pending approval reaches 5 minutes plus 30 seconds of grace without a
+  resolution event, it clears the card and shows a retry notice.
 - **Multiple clients connected**: any client's approve/deny resolves the
   approval. Others receive `approval_resolved` and dismiss their card.
 - **Mode toggled mid-turn**: turn keeps the mode it started with. New mode

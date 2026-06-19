@@ -123,11 +123,13 @@ function Main() {
         compacting={app.sessions.find((s) => s.id === app.currentId)?.compacting ?? false}
         tasks={app.tasks}
         pendingApprovals={app.pendingApprovals}
+        lostApprovals={app.lostApprovals}
         wsState={app.wsState}
         cwd={app.currentCwd}
         onCwdChange={app.setCurrentCwd}
         onSend={app.send}
         respondToApproval={app.respondToApproval}
+        dismissLostApproval={app.dismissLostApproval}
         onMenuClick={() => setSidebarOpen(true)}
         headerRight={
           <>
