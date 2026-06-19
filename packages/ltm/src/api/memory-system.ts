@@ -191,15 +191,15 @@ export class MemorySystem {
 
   // -- ingestion ------------------------------------------------------------
 
-  async ingestSessionFile(filePath: string): Promise<IngestReport> {
-    const report = await this.pipeline.ingestFile(filePath);
+  async ingestSessionFile(filePath: string, opts?: { projectTag?: string }): Promise<IngestReport> {
+    const report = await this.pipeline.ingestFile(filePath, opts);
     if (report.recordsCreated > 0 || report.turnsIngested > 0)
       this.rebuildDerived();
     return report;
   }
 
-  async ingestSessionDir(dir: string): Promise<IngestReport> {
-    const report = await this.pipeline.ingestDir(dir);
+  async ingestSessionDir(dir: string, opts?: { projectTag?: string }): Promise<IngestReport> {
+    const report = await this.pipeline.ingestDir(dir, opts);
     if (report.recordsCreated > 0 || report.turnsIngested > 0)
       this.rebuildDerived();
     return report;
