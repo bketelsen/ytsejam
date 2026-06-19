@@ -122,6 +122,12 @@ export interface AgentManagerOptions {
    * returns null after shutdown detaches LTM via attachLtm(null).
    */
   ltm?: () => LtmIngestSink | null;
+  /**
+   * Optional: build the "What you know about the user" + recall block for
+   * injection into the per-turn system prompt. Called best-effort; errors are
+   * swallowed (profile-only or empty section is served on failure).
+   */
+  recallSection?: (sessionId: string, query: string) => Promise<string | undefined>;
 }
 
 interface OpenSession {
@@ -313,10 +319,35 @@ export class AgentManager {
             this.opts.skills?.promptSection().catch(() => undefined),
             this.opts.loadContextFiles?.(liveCwd).catch(() => ""),
           ]);
+        // Best-effort: extract the most recent user message from the branch to
+        // use as a recall query. NOTE: the current turn's user message is NOT
+        // yet in the branch when systemPrompt is called (the harness builds the
+        // turn state before appending the user message). We therefore get the
+        // previous turn's user text, which is still useful for project-scoped
+        // recall. On failure or empty branch, query defaults to "" which causes
+        // buildMemorySection to emit profile-only (no recall hits).
+        const latestUser = await opened.session
+          .getBranch()
+          .then((b) =>
+            [...b]
+              .reverse()
+              .find(
+                (e): e is Extract<SessionTreeEntry, { type: "message" }> =>
+                  e.type === "message" &&
+                  (e as Extract<SessionTreeEntry, { type: "message" }>).message
+                    .role === "user",
+              ),
+          )
+          .catch(() => undefined);
+        const query = latestUser ? textBlocksOf(latestUser.message).join(" ") : "";
+        const memorySection = await this.opts
+          .recallSection?.(metadata.id, query)
+          .catch(() => undefined);
         return composeSystemPrompt(persona, {
           dataDir: this.opts.dataDir,
           cogSection,
           skillsSection,
+          memorySection,
           contextFiles,
         });
       },

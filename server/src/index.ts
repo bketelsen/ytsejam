@@ -37,6 +37,11 @@ import * as memory from "./memory/index.ts";
 import { LtmReconciler } from "./memory/bridge/ltm-reconciler.ts";
 import { checkDimensionMismatch, createLtmEmbedder, parseLtmEmbedderMode } from "./memory/embedder.ts";
 import { CopilotFactExtractor } from "./memory/fact-extractor.ts";
+import { buildMemorySection } from "./memory/memory-section.ts";
+import { recall } from "./memory/recall.ts";
+import { projectTagForWorkdir } from "./memory/active-project.ts";
+import { loadManifest } from "./memory/domain/manifest.ts";
+import { memoryRoot } from "./memory/index.ts";
 import { runCli } from "./cli/dispatch.ts";
 
 // CLI short-circuit: if argv matches a CLI subcommand, run it and exit
@@ -113,6 +118,20 @@ const manager = new AgentManager({
   skills,
   approvalCoordinator,
   ltm: () => memory.getLtm(),
+  recallSection: async (sessionId, query) => {
+    const ltm = memory.getLtm();
+    const domains = loadManifest(memoryRoot());
+    const workdir = resolveWorkdir(workdirs, sessionId, config.dataDir);
+    return buildMemorySection(
+      {
+        profile: () => ltm?.profile(),
+        recall,
+        activeProjectTag: () => projectTagForWorkdir(domains, workdir),
+      },
+      sessionId,
+      query,
+    );
+  },
 });
 
 taskManager = new TaskManager({
