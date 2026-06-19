@@ -68,11 +68,11 @@ Where the server builds the embedder (~line 170), also build the `CopilotFactExt
 
 ### 5. One-shot re-derivation — `scripts/ltm-rederive-facts.ts` (new)
 
-Cleans the existing 15 facts using the new extractor. Server **stopped**, backup first.
+Replaces the existing 15 facts with a clean set re-derived by the new extractor. Server **stopped**, backup first. This is a **clean rebuild, not a diff/redact** — facts are a pure projection of user turns, and every real fact's source turn is present in episodic (0 consolidated records as of 2026-06-18), so re-extraction reproduces the good facts and drops the junk by construction. No reconciliation logic.
 
-- Open the store; iterate existing episodic `role:"user"` records; run the LLM extractor over each; collect candidates.
-- Rebuild the active fact set through the normal `assertFact` pipeline (real sources, dedup, contradiction). Redact prior active facts not reproduced by the clean extraction.
-- `--dry-run` prints before/after (which of the 15 survive, what new facts appear) for review **before** any write. Real run requires the dry-run to have been inspected.
+- Open the store; iterate existing episodic `role:"user"` records; run the LLM extractor over each; collect candidates through the normal `assertFact` pipeline (real sources, dedup, contradiction) into a **fresh** fact set.
+- Replace `facts.jsonl` wholesale with the fresh set (the old set is in the step-3 backup).
+- **Safety gate:** `--dry-run` prints the would-be fresh set and explicitly checks that the known-good facts reappear (`name=Brian`, `role`, `prefers=own harness`). If any known-good fact is absent, **abort** and report — do not wipe (signals an extractor or missing-source problem). Real run requires the dry-run gate to pass and to have been inspected.
 - Rate-limited; bounded to user turns (a fraction of the 32k episodic records).
 
 ## Data flow
