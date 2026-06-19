@@ -400,6 +400,52 @@ describe("buildPostCompactionMessages", () => {
     expect(textOf(messages[2])).toBe("kept leaf");
     expect(messages).not.toContain(rootMessage);
   });
+
+  it("preserves branch array order for kept messages even when ids and timestamps sort differently", () => {
+    const rootMessage = {
+      role: "user",
+      content: [{ type: "text", text: "trimmed root" }],
+    } as AgentMessage;
+    const firstKeptMessage = {
+      role: "user",
+      content: [{ type: "text", text: "first kept by branch position" }],
+    } as AgentMessage;
+    const leafMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: "leaf after kept parent" }],
+      stopReason: "stop",
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "test-model",
+    } as AgentMessage;
+    const branchEntries: SessionTreeEntry[] = [
+      {
+        ...messageEntry("z-root", null, rootMessage),
+        timestamp: "2026-06-13T00:00:03.000Z",
+      },
+      {
+        ...messageEntry("m-kept", "z-root", firstKeptMessage),
+        timestamp: "2026-06-13T00:00:02.000Z",
+      },
+      {
+        ...messageEntry("a-leaf", "m-kept", leafMessage),
+        timestamp: "2026-06-13T00:00:01.000Z",
+      },
+    ];
+
+    const messages = buildPostCompactionMessages(
+      "ordered summary",
+      branchEntries,
+      "m-kept",
+      99,
+    );
+
+    expect(messages.map(textOf)).toEqual([
+      "ordered summary",
+      "first kept by branch position",
+      "leaf after kept parent",
+    ]);
+  });
 });
 
 describe("classifyOverflow", () => {
@@ -960,22 +1006,18 @@ describe("snapshotSessionJsonl + pruneOldBackups", () => {
 
   it("restoreSessionFromBackup idempotently overwrites the canonical session file", async () => {
     const backupPath = `${sessionFilePath}.pre-compact-1718193600000`;
-    await writeFile(backupPath, "backup line 1\nbackup line 2\n");
+    const backupContent = "backup line 1\nbackup line 2\n";
+    await writeFile(backupPath, backupContent);
     await writeFile(sessionFilePath, "compacted bad state\n");
 
     await restoreSessionFromBackup(sessionFilePath, backupPath);
-    expect(await readFile(sessionFilePath, "utf8")).toBe(
-      "backup line 1\nbackup line 2\n",
-    );
+    expect(await readFile(sessionFilePath, "utf8")).toBe(backupContent);
 
-    await writeFile(sessionFilePath, "different bad state\n");
+    // Re-running the restore over an already-restored canonical file is a no-op
+    // overwrite: same destination bytes, same untouched backup bytes.
     await restoreSessionFromBackup(sessionFilePath, backupPath);
-    expect(await readFile(sessionFilePath, "utf8")).toBe(
-      "backup line 1\nbackup line 2\n",
-    );
-    expect(await readFile(backupPath, "utf8")).toBe(
-      "backup line 1\nbackup line 2\n",
-    );
+    expect(await readFile(sessionFilePath, "utf8")).toBe(backupContent);
+    expect(await readFile(backupPath, "utf8")).toBe(backupContent);
   });
 
   it("pruneOldBackups keeps the N most recent", async () => {
