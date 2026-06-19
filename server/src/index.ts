@@ -52,6 +52,11 @@ if (cliExit !== null) process.exit(cliExit);
 
 const config = loadConfig();
 
+// Loaded once at boot; restart to pick up domains.yml changes (it's config, like the rest).
+const domainManifest = (() => {
+  try { return loadManifest(memoryRoot()); } catch { return []; }
+})();
+
 // Ensure dataDir exists before sqlite tries to create its file
 fs.mkdirSync(config.dataDir, { recursive: true });
 
@@ -120,7 +125,7 @@ const manager = new AgentManager({
   ltm: () => memory.getLtm(),
   recallSection: async (sessionId, query) => {
     const ltm = memory.getLtm();
-    const domains = loadManifest(memoryRoot());
+    const domains = domainManifest;
     const workdir = resolveWorkdir(workdirs, sessionId, config.dataDir);
     return buildMemorySection(
       {
