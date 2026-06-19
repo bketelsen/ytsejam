@@ -10,6 +10,12 @@ export interface ApprovalRequest {
   createdAt: number;
 }
 
+export interface LostApproval {
+  approvalId: string;
+  toolName: string;
+  toolLabel: string;
+}
+
 export interface PendingApprovalsSnapshot {
   type: "pending_approvals";
   approvals: ApprovalRequest[];

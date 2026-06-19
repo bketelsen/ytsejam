@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { client } from "./lib/api";
+import { watchdogDelayMs } from "./lib/approvalWatchdog";
 import { connectWs } from "./lib/ws";
-import type { ApprovalDecision, ApprovalMode, ApprovalRequest, ChatMessage, HealthState, PendingApprovalsSnapshot, ServerEvent, SessionRow, TaskRow } from "./lib/types";
+import type {
+  ApprovalDecision,
+  ApprovalMode,
+  ApprovalRequest,
+  ChatMessage,
+  HealthState,
+  LostApproval,
+  PendingApprovalsSnapshot,
+  ServerEvent,
+  SessionRow,
+  TaskRow,
+} from "./lib/types";
 
 const LTM_UNHEALTHY_THRESHOLD = 3;
 const LTM_POLL_MS = 10_000;
@@ -16,12 +28,15 @@ export function useApp() {
   const [ltmLastError, setLtmLastError] = useState<string | undefined>(undefined);
   const [tasks, setTasks] = useState<Record<string, TaskRow>>({});
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalRequest>>({});
+  const [lostApprovals, setLostApprovals] = useState<Record<string, LostApproval>>({});
   // Working directory for the currently-open session. Loaded from getSession;
   // the listSessions endpoint does not include it. Undefined while no session
   // is selected or before the per-session fetch resolves.
   const [currentCwd, setCurrentCwd] = useState<string | undefined>(undefined);
   const wsRef = useRef<ReturnType<typeof connectWs> | null>(null);
   const currentIdRef = useRef<string | null>(null);
+  const pendingApprovalsRef = useRef<Record<string, ApprovalRequest>>({});
+  const approvalTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   currentIdRef.current = currentId;
   // Held in a ref so onEvent (memoized once with []) can reach the latest
   // closure — needed for session_unarchived's refresh.
@@ -31,6 +46,57 @@ export function useApp() {
     setSessions((await client.listSessions()).sessions);
   }, []);
   refreshSessionsRef.current = refreshSessions;
+
+  const clearApprovalTimer = useCallback((approvalId: string) => {
+    const timer = approvalTimersRef.current[approvalId];
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      delete approvalTimersRef.current[approvalId];
+    }
+  }, []);
+
+  const clearAllApprovalTimers = useCallback(() => {
+    for (const timer of Object.values(approvalTimersRef.current)) {
+      clearTimeout(timer);
+    }
+    approvalTimersRef.current = {};
+  }, []);
+
+  const replacePendingApprovals = useCallback((next: Record<string, ApprovalRequest>) => {
+    pendingApprovalsRef.current = next;
+    setPendingApprovals(next);
+  }, []);
+
+  const removeLostApproval = useCallback((approvalId: string) => {
+    setLostApprovals((prev) => {
+      if (!(approvalId in prev)) return prev;
+      const next = { ...prev };
+      delete next[approvalId];
+      return next;
+    });
+  }, []);
+
+  const armApprovalWatchdog = useCallback(
+    (request: ApprovalRequest) => {
+      clearApprovalTimer(request.approvalId);
+      const delay = watchdogDelayMs(request.createdAt, Date.now());
+      approvalTimersRef.current[request.approvalId] = setTimeout(() => {
+        delete approvalTimersRef.current[request.approvalId];
+        const existing = pendingApprovalsRef.current[request.approvalId];
+        if (!existing) return;
+        const next = { ...pendingApprovalsRef.current };
+        delete next[request.approvalId];
+        replacePendingApprovals(next);
+        const { approvalId, toolName, toolLabel } = existing;
+        setLostApprovals((prev) => ({
+          ...prev,
+          [approvalId]: { approvalId, toolName, toolLabel },
+        }));
+        wsRef.current?.reconcile();
+      }, delay);
+    },
+    [clearApprovalTimer, replacePendingApprovals],
+  );
 
   const onEvent = useCallback((event: ServerEvent) => {
     if (event.type === "task") {
@@ -89,15 +155,16 @@ export function useApp() {
         toolLabel: event.toolLabel,
         params: event.params,
       };
-      setPendingApprovals((prev) => ({ ...prev, [request.approvalId]: request }));
+      replacePendingApprovals({ ...pendingApprovalsRef.current, [request.approvalId]: request });
+      removeLostApproval(request.approvalId);
+      armApprovalWatchdog(request);
       return;
     }
     if (event.type === "approval_resolved") {
-      setPendingApprovals((prev) => {
-        const next = { ...prev };
-        delete next[event.approvalId];
-        return next;
-      });
+      clearApprovalTimer(event.approvalId);
+      const next = { ...pendingApprovalsRef.current };
+      delete next[event.approvalId];
+      replacePendingApprovals(next);
       return;
     }
     if (event.type === "approval_mode_changed") {
@@ -131,11 +198,28 @@ export function useApp() {
       );
       if (e.type === "agent_end") setStreaming(null);
     }
-  }, []);
+  }, [armApprovalWatchdog, clearApprovalTimer, removeLostApproval, replacePendingApprovals]);
 
   const onPendingApprovals = useCallback((snapshot: PendingApprovalsSnapshot) => {
-    setPendingApprovals(Object.fromEntries(snapshot.approvals.map((a) => [a.approvalId, a])));
-  }, []);
+    const next = Object.fromEntries(snapshot.approvals.map((a) => [a.approvalId, a]));
+    const nextIds = new Set(Object.keys(next));
+    for (const approvalId of Object.keys(approvalTimersRef.current)) {
+      if (!nextIds.has(approvalId)) clearApprovalTimer(approvalId);
+    }
+    replacePendingApprovals(next);
+    setLostApprovals((prev) => {
+      let changed = false;
+      const remaining = { ...prev };
+      for (const approvalId of nextIds) {
+        if (approvalId in remaining) {
+          delete remaining[approvalId];
+          changed = true;
+        }
+      }
+      return changed ? remaining : prev;
+    });
+    for (const approval of snapshot.approvals) armApprovalWatchdog(approval);
+  }, [armApprovalWatchdog, clearApprovalTimer, replacePendingApprovals]);
 
   useEffect(() => {
     wsRef.current = connectWs({
@@ -150,8 +234,11 @@ export function useApp() {
     if ("Notification" in window && Notification.permission === "default") {
       void Notification.requestPermission();
     }
-    return () => wsRef.current?.close();
-  }, [onEvent, onPendingApprovals, refreshSessions]);
+    return () => {
+      clearAllApprovalTimers();
+      wsRef.current?.close();
+    };
+  }, [clearAllApprovalTimers, onEvent, onPendingApprovals, refreshSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -273,6 +360,7 @@ export function useApp() {
     ltmLastError,
     tasks,
     pendingApprovals,
+    lostApprovals,
     currentCwd,
     setCurrentCwd,
     selectSession,
@@ -283,6 +371,7 @@ export function useApp() {
     setWorkdirPickerOpen,
     send,
     respondToApproval,
+    dismissLostApproval: removeLostApproval,
     setApprovalMode,
     refreshSessions,
   };
