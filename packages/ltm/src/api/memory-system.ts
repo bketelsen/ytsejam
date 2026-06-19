@@ -679,6 +679,11 @@ export class MemorySystem {
     return n;
   }
 
+  /** Tombstone one semantic fact by id (used by the dream apply path). */
+  redactFact(id: string): boolean {
+    return this.semantic.redactFactById(id);
+  }
+
   /**
    * Forget memories matching the selector. Episodic records are tombstoned
    * (text + embedding destroyed, logs compacted); semantic facts/entities

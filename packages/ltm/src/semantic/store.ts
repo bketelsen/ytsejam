@@ -442,6 +442,19 @@ export class SemanticStore {
     this.factLog.compact(this.facts.values());
     return { facts: factsRedacted };
   }
+
+  /** Tombstone a single active fact by id. Returns false if absent/already redacted. */
+  redactFactById(id: string): boolean {
+    const fact = this.facts.get(id);
+    if (!fact || fact.state === "redacted") return false;
+    const tombstone: SemanticFact = {
+      ...fact, object: "", objectNorm: "", sources: [], strength: 0, state: "redacted",
+    };
+    this.facts.set(id, tombstone);
+    this.factLog.append(tombstone);
+    this.factLog.compact(this.facts.values());
+    return true;
+  }
 }
 
 function dedupeSources(sources: SourceRef[]): SourceRef[] {
