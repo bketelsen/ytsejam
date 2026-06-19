@@ -14,7 +14,7 @@ import { Indexer } from "./indexer.ts";
 import { AgentManager } from "./manager.ts";
 import { loadLiveCopilotModels } from "./copilot-live-catalog.ts";
 import { resolveModel } from "./models.ts";
-import { PiAuthStore } from "./pi-auth.ts";
+import { PiAuthStore, resolveApiKey } from "./pi-auth.ts";
 import { PersonaStore } from "./persona.ts";
 import { SchedulerService } from "./scheduler.ts";
 import { ScheduleStore } from "./schedules.ts";
@@ -36,6 +36,7 @@ import { MemorySystem } from "ltm";
 import * as memory from "./memory/index.ts";
 import { LtmReconciler } from "./memory/bridge/ltm-reconciler.ts";
 import { checkDimensionMismatch, createLtmEmbedder, parseLtmEmbedderMode } from "./memory/embedder.ts";
+import { CopilotFactExtractor } from "./memory/fact-extractor.ts";
 import { runCli } from "./cli/dispatch.ts";
 
 // CLI short-circuit: if argv matches a CLI subcommand, run it and exit
@@ -180,7 +181,11 @@ try {
       baseUrl: process.env.YTSEJAM_LTM_OLLAMA_URL,
     },
   });
-  ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder });
+  const factExtractor = new CopilotFactExtractor({
+    getApiKey: () => resolveApiKey("github-copilot", authStore),
+    model: process.env.YTSEJAM_LTM_FACT_MODEL,
+  });
+  ltm = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder, factExtractor });
   const mismatch = checkDimensionMismatch(ltm.indexDimension(), embedderResult);
   if (mismatch) {
     throw new Error(mismatch);
