@@ -139,6 +139,16 @@
   * {
     @apply border-border outline-ring/50;
     }
+  /* Fixed app shell: the document itself must never scroll. All scrolling
+     lives in inner panes (e.g. the chat messages list, which is h-dvh-bounded
+     + min-h-0 + overflow-y-auto). Without this, any element that overflows the
+     viewport makes <html> scrollable, and the chat autoscroll's
+     scrollIntoView() — which scrolls every scrollable ancestor — drags the
+     whole window on each new message. Locking overflow here confines
+     scrollIntoView to the inner pane and clips stray overflow harmlessly. */
+  html, body {
+    @apply h-full overflow-hidden;
+    }
   body {
     @apply bg-background text-foreground;
     }
