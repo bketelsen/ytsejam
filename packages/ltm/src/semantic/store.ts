@@ -176,10 +176,14 @@ export class SemanticStore {
   profile(
     now: string,
     floors: ProfileFloors = { floor: 0.3, identityFloor: 0.3, directiveFloor: 0.3 },
+    activeProjectTag?: string,
   ): ProfileSummary {
     const floorFor = (f: SemanticFact): number =>
       f.kind === "identity" ? floors.identityFloor : f.kind === "directive" ? floors.directiveFloor : floors.floor;
-    const all = this.activeFacts().sort(
+    const scoped = this.activeFacts().filter(
+      (f) => !f.projectTag || f.projectTag === activeProjectTag,
+    );
+    const all = scoped.sort(
       (a, b) => effectiveStrength(b, now) - effectiveStrength(a, now),
     );
     const facts = all.filter((f) => effectiveStrength(f, now) >= floorFor(f));

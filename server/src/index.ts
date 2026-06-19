@@ -134,7 +134,7 @@ const manager = new AgentManager({
     const workdir = resolveWorkdir(workdirs, sessionId, config.dataDir);
     return buildMemorySection(
       {
-        profile: () => ltm?.profile(),
+        profile: () => ltm?.profile(undefined, projectTagForWorkdir(domains, workdir) ?? undefined),
         recall,
         activeProjectTag: () => projectTagForWorkdir(domains, workdir),
       },

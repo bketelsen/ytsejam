@@ -345,7 +345,7 @@ export class MemorySystem {
   ): Promise<RetrievalResult> {
     const now = opts.now ?? this.clock();
     const k = opts.k ?? 8;
-    const profile = this.semantic.profile(now, this.config.profile);
+    const profile = this.semantic.profile(now, this.config.profile, opts.activeProjectTag);
     const ranked = await this.retriever.rank(
       query,
       k,
@@ -470,8 +470,8 @@ export class MemorySystem {
     return lines.join("\n").trim();
   }
 
-  profile(now?: string): ProfileSummary {
-    return this.semantic.profile(now ?? this.clock(), this.config.profile);
+  profile(now?: string, activeProjectTag?: string): ProfileSummary {
+    return this.semantic.profile(now ?? this.clock(), this.config.profile, activeProjectTag);
   }
 
   // -- maintenance ------------------------------------------------------------

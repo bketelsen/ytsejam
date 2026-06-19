@@ -253,6 +253,12 @@ export interface RetrieveOptions {
    * are not tag-scoped. Default: no filtering.
    */
   filterTags?: string[];
+  /**
+   * Active project tag for scoping the semantic profile (Task 6).
+   * When set, profile() includes globals + facts whose projectTag matches.
+   * When absent, only global facts (no projectTag) are included.
+   */
+  activeProjectTag?: string;
 }
 
 // ---------------------------------------------------------------------------
