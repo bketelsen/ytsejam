@@ -37,15 +37,30 @@ export function useApp() {
   const currentIdRef = useRef<string | null>(null);
   const pendingApprovalsRef = useRef<Record<string, ApprovalRequest>>({});
   const approvalTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Clobber guard for selectSession: while a transcript snapshot is in flight,
+  // `loadingSessionRef` holds that session id and `loadBufferRef` collects any
+  // `message_end` messages that stream in during the fetch window. After the
+  // snapshot lands we append the buffered ones the snapshot didn't include, so
+  // a message that arrives mid-fetch is no longer overwritten by the snapshot.
+  const loadingSessionRef = useRef<string | null>(null);
+  const loadBufferRef = useRef<ChatMessage[]>([]);
   currentIdRef.current = currentId;
   // Held in a ref so onEvent (memoized once with []) can reach the latest
   // closure — needed for session_unarchived's refresh.
   const refreshSessionsRef = useRef<(() => Promise<void>) | null>(null);
+  // Held in a ref so the WS onReconnect handler (wired once at mount) can reach
+  // the latest selectSession closure to reload the open transcript.
+  const selectSessionRef = useRef<((id: string | null) => Promise<void>) | null>(null);
 
   const refreshSessions = useCallback(async () => {
     setSessions((await client.listSessions()).sessions);
   }, []);
   refreshSessionsRef.current = refreshSessions;
+
+  const loadTasks = useCallback(async () => {
+    const r = await client.listTasks();
+    setTasks(Object.fromEntries(r.tasks.map((t) => [t.id, t])));
+  }, []);
 
   const clearApprovalTimer = useCallback((approvalId: string) => {
     const timer = approvalTimersRef.current[approvalId];
@@ -174,6 +189,10 @@ export function useApp() {
       return;
     }
     // agent events
+    // Defensive: the `agent` variant must carry a nested `event` with a string
+    // `type`. A malformed/partial frame (or a future event type we don't model)
+    // must not throw a TypeError out of onEvent and drop the frame silently.
+    if (event.type !== "agent" || typeof event.event?.type !== "string") return;
     if (event.sessionId !== currentIdRef.current) {
       if (event.event.type === "agent_start" || event.event.type === "agent_end") {
         setSessions((prev) =>
@@ -190,6 +209,13 @@ export function useApp() {
     } else if (e.type === "message_end" && e.message) {
       setStreaming(null);
       setMessages((prev) => [...prev, e.message!]);
+      // If a transcript snapshot for this session is mid-flight, also stash the
+      // message so selectSession can re-append it after the snapshot lands —
+      // otherwise setMessages(snapshot) would clobber it (the snapshot was
+      // materialized before this message was persisted server-side).
+      if (loadingSessionRef.current === event.sessionId) {
+        loadBufferRef.current.push(e.message);
+      }
     } else if (e.type === "agent_start" || e.type === "agent_end") {
       setSessions((prev) =>
         prev.map((s) =>
@@ -226,11 +252,19 @@ export function useApp() {
       onEvent,
       onStatus: (c) => setWsState(c ? "ok" : "bad"),
       onPendingApprovals,
+      onReconnect: () => {
+        // The EventBus has no replay buffer, so anything emitted while we were
+        // disconnected is gone. Refetch authoritative state: session list (titles,
+        // previews, unread, running/compacting flags), tasks, and — if a session
+        // is open — its transcript + cwd (which also re-subscribes via selectSession).
+        void refreshSessionsRef.current?.();
+        void loadTasks();
+        const openId = currentIdRef.current;
+        if (openId) void selectSessionRef.current?.(openId);
+      },
     });
     void refreshSessions();
-    void client.listTasks().then((r) => {
-      setTasks(Object.fromEntries(r.tasks.map((t) => [t.id, t])));
-    });
+    void loadTasks();
     if ("Notification" in window && Notification.permission === "default") {
       void Notification.requestPermission();
     }
@@ -238,7 +272,7 @@ export function useApp() {
       clearAllApprovalTimers();
       wsRef.current?.close();
     };
-  }, [clearAllApprovalTimers, onEvent, onPendingApprovals, refreshSessions]);
+  }, [clearAllApprovalTimers, loadTasks, onEvent, onPendingApprovals, refreshSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -272,19 +306,41 @@ export function useApp() {
     setMessages([]);
     setStreaming(null);
     setCurrentCwd(undefined);
+    // Arm the clobber guard BEFORE subscribe so any message_end that streams in
+    // during the fetch window is captured in the buffer (see onEvent).
+    loadingSessionRef.current = id;
+    loadBufferRef.current = [];
     wsRef.current?.subscribe(id);
     if (id) {
-      const { session, messages } = await client.getSession(id);
-      // user may have switched again while the transcript loaded
-      if (currentIdRef.current !== id) return;
-      // note: a message_end arriving during the fetch can be clobbered by this
-      // snapshot; it self-heals on reselect (messages have no stable id to merge by)
-      setMessages(messages);
-      setCurrentCwd(session.cwd);
-      void client.patchSession(id, { unread: false });
-      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: false } : s)));
+      try {
+        const { session, messages } = await client.getSession(id);
+        // user may have switched again while the transcript loaded
+        if (currentIdRef.current !== id) return;
+        // Merge any message_end that arrived during the fetch and isn't already
+        // in the snapshot, so a message streamed mid-load isn't clobbered by the
+        // snapshot. Messages have no stable id, so dedup structurally.
+        const buffered = loadingSessionRef.current === id ? loadBufferRef.current : [];
+        const merged = buffered.length
+          ? [...messages, ...buffered.filter((b) => !messages.some((m) => sameMessage(m, b)))]
+          : messages;
+        setMessages(merged);
+        setCurrentCwd(session.cwd);
+        void client.patchSession(id, { unread: false });
+        setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: false } : s)));
+      } finally {
+        // Disarm the guard only if we're still the active load (a newer
+        // selectSession may have re-armed it for a different session).
+        if (loadingSessionRef.current === id) {
+          loadingSessionRef.current = null;
+          loadBufferRef.current = [];
+        }
+      }
+    } else {
+      loadingSessionRef.current = null;
+      loadBufferRef.current = [];
     }
   }, []);
+  selectSessionRef.current = selectSession;
 
   const newSession = useCallback(
     async (model?: string, cwd?: string) => {
@@ -381,4 +437,29 @@ function notify(title: string, body: string) {
   if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
     new Notification(title, { body });
   }
+}
+
+/**
+ * Structural equality for the selectSession clobber-merge. Messages have no
+ * stable server id, so we compare the fields that identify a turn output:
+ * role, timestamp, tool-call id, and a cheap content fingerprint. Used only to
+ * avoid double-inserting a buffered message_end that the snapshot already
+ * contains — a false "not equal" at worst shows a transient duplicate that
+ * self-heals on reselect, a false "equal" at worst drops the duplicate (the
+ * snapshot copy wins), so erring toward the snapshot is safe.
+ */
+function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
+  if (a.role !== b.role) return false;
+  if (a.toolCallId !== b.toolCallId) return false;
+  if (a.timestamp !== undefined && b.timestamp !== undefined) {
+    return a.timestamp === b.timestamp;
+  }
+  return contentFingerprint(a) === contentFingerprint(b);
+}
+
+function contentFingerprint(m: ChatMessage): string {
+  if (typeof m.content === "string") return m.content;
+  return m.content
+    .map((c) => c.text ?? c.thinking ?? c.id ?? c.name ?? c.type)
+    .join("\u0000");
 }
