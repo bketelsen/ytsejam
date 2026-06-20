@@ -130,6 +130,7 @@ function Main() {
       </Sheet>
 
       <Chat
+        key={app.currentId ?? "__none__"}
         sessionId={app.currentId}
         messages={app.messages}
         streaming={app.streaming}

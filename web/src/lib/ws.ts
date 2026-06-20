@@ -13,6 +13,16 @@ export function connectWs(handlers: {
   onEvent: (event: ServerEvent) => void;
   onStatus: (connected: boolean) => void;
   onPendingApprovals?: (snapshot: PendingApprovalsSnapshot) => void;
+  /**
+   * Fired when the socket (re)connects AFTER the first successful connect.
+   * The EventBus has no replay buffer (server/src/events.ts), so every event
+   * emitted while the socket was down is lost. The consumer uses this to
+   * refetch authoritative state (session list, tasks, open transcript) so the
+   * UI doesn't sit on stale data after a sleep/Wi-Fi blip or server restart.
+   * NOT fired on the very first connect — initial state is bootstrapped by the
+   * mount effect.
+   */
+  onReconnect?: () => void;
 }): {
   subscribe: (sessionId: string | null) => void;
   reconcile: () => void;
@@ -24,6 +34,9 @@ export function connectWs(handlers: {
   let closed = false;
   let retryMs = 500;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
+  // Distinguishes the first successful connect (bootstrapped by the mount
+  // effect) from later reconnects (which must refetch — onReconnect).
+  let hasConnected = false;
 
   function clearWatchdog() {
     if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
@@ -44,14 +57,34 @@ export function connectWs(handlers: {
       retryMs = 500;
       handlers.onStatus(true);
       if (subscribed) ws?.send(JSON.stringify({ type: "subscribe", sessionId: subscribed }));
+      // First connect is bootstrapped by the mount effect; only a RE-connect
+      // needs to refetch the state missed during the disconnect window.
+      if (hasConnected) handlers.onReconnect?.();
+      hasConnected = true;
     };
     ws.onmessage = (e) => {
-      const msg = JSON.parse(String(e.data));
-      if (msg.type === "pending_approvals") {
-        handlers.onPendingApprovals?.(msg);
+      // A malformed frame (non-JSON) or an unexpected shape must not throw out
+      // of onmessage — that would drop the frame AND log an uncaught error.
+      // The server's own inbound handler is equally defensive (server.ts).
+      let msg: unknown;
+      try {
+        msg = JSON.parse(String(e.data));
+      } catch {
+        return; // ignore unparseable frame
+      }
+      if (typeof msg !== "object" || msg === null || typeof (msg as { type?: unknown }).type !== "string") {
+        return; // ignore frames without a string discriminant
+      }
+      if ((msg as { type: string }).type === "pending_approvals") {
+        handlers.onPendingApprovals?.(msg as PendingApprovalsSnapshot);
         return;
       }
-      handlers.onEvent(msg);
+      try {
+        handlers.onEvent(msg as ServerEvent);
+      } catch (err) {
+        // A handler bug or an unrecognized frame shape must not kill the socket.
+        console.error("ws onEvent failed for frame", msg, err);
+      }
     };
     ws.onclose = () => {
       clearWatchdog(); // clearTimeout(...) lives in clearWatchdog()
