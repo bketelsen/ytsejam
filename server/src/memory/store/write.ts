@@ -2,6 +2,7 @@ import type { WriteResult } from "../types.ts";
 import { validateManifestContent } from "../domain/manifest.ts";
 import { atomicWrite } from "./fs.ts";
 import { maybeAutoCommit } from "./auto-commit.ts";
+import { withFileLock } from "./file-lock.ts";
 import { resolveMemoryPath, validateWholeFileWritePath } from "./paths.ts";
 
 export async function write(path: string, content: string): Promise<WriteResult> {
@@ -13,7 +14,8 @@ export async function write(path: string, content: string): Promise<WriteResult>
   if (rel === "domains.yml") {
     validateManifestContent(content);
   }
-  await atomicWrite(abs, content);
+  // Serialize against concurrent mutations of the same file (lost-update guard).
+  await withFileLock(abs, () => atomicWrite(abs, content));
   await maybeAutoCommit();
   return { bytes: Buffer.byteLength(content) };
 }

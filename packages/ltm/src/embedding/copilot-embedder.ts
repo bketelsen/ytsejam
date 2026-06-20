@@ -12,7 +12,7 @@
  * refresh internally.
  */
 
-import { normalizeUnit, type Embedder } from "./embedder.ts";
+import { normalizeUnit, fetchWithTimeout, DEFAULT_EMBED_TIMEOUT_MS, type Embedder } from "./embedder.ts";
 
 export interface CopilotEmbedderOptions {
   /** Resolves a GitHub Copilot API key/token. Called again for the one 401 retry. */
@@ -27,6 +27,8 @@ export interface CopilotEmbedderOptions {
    * probe is skipped and embed() fails loudly if the wire disagrees.
    */
   dimension?: number;
+  /** Per-request HTTP timeout in ms. Default 30s (DEFAULT_EMBED_TIMEOUT_MS). */
+  timeoutMs?: number;
 }
 
 async function postEmbedding(
@@ -34,20 +36,25 @@ async function postEmbedding(
   model: string,
   text: string,
   apiKey: string,
+  timeoutMs: number,
 ): Promise<Response> {
-  return fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "Copilot-Integration-Id": "vscode-chat",
+  return fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "Copilot-Integration-Id": "vscode-chat",
+      },
+      // Copilot enterprise embeddings REQUIRES input as a string array — sending
+      // a scalar string returns HTTP 400 (verified against the live endpoint
+      // 2026-06-14). OpenAI's API accepts both shapes; Copilot only accepts the
+      // array form.
+      body: JSON.stringify({ input: [text], model }),
     },
-    // Copilot enterprise embeddings REQUIRES input as a string array — sending
-    // a scalar string returns HTTP 400 (verified against the live endpoint
-    // 2026-06-14). OpenAI's API accepts both shapes; Copilot only accepts the
-    // array form.
-    body: JSON.stringify({ input: [text], model }),
-  });
+    timeoutMs,
+  );
 }
 
 async function requireApiKey(getApiKey: () => Promise<string | undefined>): Promise<string> {
@@ -63,11 +70,12 @@ async function requestEmbedding(
   model: string,
   text: string,
   getApiKey: () => Promise<string | undefined>,
+  timeoutMs: number,
 ): Promise<number[]> {
   const url = `${baseUrl}/embeddings`;
   const guardedPost = async (apiKey: string): Promise<Response> => {
     try {
-      return await postEmbedding(url, model, text, apiKey);
+      return await postEmbedding(url, model, text, apiKey, timeoutMs);
     } catch (error) {
       throw new Error(
         `Copilot embed request to ${url} (model ${model}) failed: ${(error as Error).message}.`,
@@ -105,17 +113,20 @@ export class CopilotEmbedder implements Embedder {
   readonly modelName: string;
   private readonly baseUrl: string;
   private readonly getApiKey: () => Promise<string | undefined>;
+  private readonly timeoutMs: number;
 
   private constructor(
     modelName: string,
     baseUrl: string,
     dimension: number,
     getApiKey: () => Promise<string | undefined>,
+    timeoutMs: number,
   ) {
     this.modelName = modelName;
     this.baseUrl = baseUrl;
     this.dimension = dimension;
     this.getApiKey = getApiKey;
+    this.timeoutMs = timeoutMs;
   }
 
   static async create(opts: CopilotEmbedderOptions): Promise<CopilotEmbedder> {
@@ -124,15 +135,16 @@ export class CopilotEmbedder implements Embedder {
       /\/+$/,
       "",
     );
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_EMBED_TIMEOUT_MS;
     if (opts.dimension !== undefined) {
-      return new CopilotEmbedder(model, baseUrl, opts.dimension, opts.getApiKey);
+      return new CopilotEmbedder(model, baseUrl, opts.dimension, opts.getApiKey, timeoutMs);
     }
-    const probe = await requestEmbedding(baseUrl, model, "dimension probe", opts.getApiKey);
-    return new CopilotEmbedder(model, baseUrl, probe.length, opts.getApiKey);
+    const probe = await requestEmbedding(baseUrl, model, "dimension probe", opts.getApiKey, timeoutMs);
+    return new CopilotEmbedder(model, baseUrl, probe.length, opts.getApiKey, timeoutMs);
   }
 
   async embed(text: string): Promise<number[]> {
-    const vector = await requestEmbedding(this.baseUrl, this.modelName, text, this.getApiKey);
+    const vector = await requestEmbedding(this.baseUrl, this.modelName, text, this.getApiKey, this.timeoutMs);
     if (vector.length !== this.dimension) {
       throw new Error(
         `Copilot model ${this.modelName} returned a ${vector.length}-dim vector but this ` +

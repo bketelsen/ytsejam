@@ -116,4 +116,42 @@ describe("MemorySystem retrieve over a mixed-dimension store (D2)", () => {
       mem.close();
     }
   });
+
+  it("primaryIndexDimension() returns the MAJORITY, not the first-sampled record (MEM-H1 boot gate)", () => {
+    // A contaminant of dimension BAD is FIRST on disk, but GOOD is the majority.
+    // indexDimension() samples the first-pinned vector (BAD); primaryIndexDimension()
+    // must return the majority (GOOD) so the boot dimension-mismatch gate keys off
+    // the dimension retrieval actually uses — otherwise the gate compares against a
+    // lone contaminant and can both wrongly pass a mismatched embedder and wrongly
+    // disable LTM under the correct one.
+    const storeDir = path.join(tmp(), "ltm");
+    fs.mkdirSync(storeDir, { recursive: true });
+    const lines = [
+      rec("bad-first", "contaminant seen first", unit(BAD, 9)), // FIRST on disk
+      rec("good-1", "alpha", unit(GOOD, 1)),
+      rec("good-2", "beta", unit(GOOD, 2)),
+      rec("good-3", "gamma", unit(GOOD, 5)),
+    ].map((r) => JSON.stringify(r));
+    fs.writeFileSync(path.join(storeDir, "episodic.jsonl"), `${lines.join("\n")}\n`);
+
+    const mem = MemorySystem.open({ storeDir, embedder: new HashEmbedder(GOOD) });
+    try {
+      // The OLD gate input — first-sampled — returns the contaminant.
+      expect(mem.indexDimension()).toBe(BAD);
+      // The NEW gate input — majority — returns the dimension retrieval uses.
+      expect(mem.primaryIndexDimension()).toBe(GOOD);
+    } finally {
+      mem.close();
+    }
+  });
+
+  it("primaryIndexDimension() is null on an empty store", () => {
+    const storeDir = path.join(tmp(), "ltm");
+    const mem = MemorySystem.open({ storeDir, embedder: new HashEmbedder(GOOD) });
+    try {
+      expect(mem.primaryIndexDimension()).toBeNull();
+    } finally {
+      mem.close();
+    }
+  });
 });

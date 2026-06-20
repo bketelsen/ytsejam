@@ -192,6 +192,38 @@ describe("recall", () => {
     expect(result.dropped).toBe(0);
   });
 
+  // MEM-M3: empty/whitespace query must NOT fan out — cog search("") matches
+  // every line of every file, so without the guard recall("") would inject 5
+  // arbitrary cog lines into the prompt.
+  it("returns an empty envelope for an empty or whitespace query without scanning", async () => {
+    // Seed real content that a "" cog search would otherwise match on every line.
+    for (let i = 0; i < 4; i++) {
+      await recordObservation({
+        domainPath: "cog-meta",
+        text: `empty-guard filler line ${i}`,
+        tags: ["empty-guard"],
+      });
+    }
+    await ltm!.recordObservation({
+      origin: "cog:ltm-only/observations.md#eg",
+      text: "empty-guard ltm filler",
+      tags: ["empty-guard"],
+      timestamp: new Date().toISOString(),
+    });
+
+    // Spy on cog search to prove the guard short-circuits before fan-out.
+    const searchSpy = vi.spyOn(memory, "search");
+    for (const q of ["", "   ", "\n\t"]) {
+      const result = await recall(q);
+      expect(result.hits).toEqual([]);
+      expect(result.cogCount).toBe(0);
+      expect(result.ltmCount).toBe(0);
+      expect(result.dropped).toBe(0);
+    }
+    expect(searchSpy).not.toHaveBeenCalled();
+    searchSpy.mockRestore();
+  });
+
   // Case 7
   it("populates tags on cog hits parsed as observations", async () => {
     await recordObservation({

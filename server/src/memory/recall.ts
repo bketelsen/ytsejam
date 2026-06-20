@@ -99,6 +99,15 @@ export async function recall(
   query: string,
   opts: { filterTags?: string[] } = {},
 ): Promise<RecallResult> {
+  // Empty/whitespace query short-circuit. cog full-text search(") matches EVERY
+  // line of every file (`"".includes("")` is always true), and LTM retrieve on
+  // an empty query is meaningless — so without this guard recall("") injects 5
+  // arbitrary cog lines into the prompt. The LTM side already guards empty
+  // queries internally (#275); this completes it for the cog side + the unified
+  // entry point. Return the same empty envelope as a both-substrates-miss.
+  if (!query.trim()) {
+    return { hits: [], cogCount: 0, ltmCount: 0, dropped: 0 };
+  }
   // 1. Fan out to both substrates, swallowing per-substrate errors.
   const cogRaw = await memory.search(query).catch((err: Error) => {
     console.warn("[recall] cog search failed:", err.message);

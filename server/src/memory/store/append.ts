@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { AppendResult } from "../types.ts";
 import { atomicWrite } from "./fs.ts";
 import { maybeAutoCommit } from "./auto-commit.ts";
+import { withFileLock } from "./file-lock.ts";
 import { rejectIDAsPath, resolveMemoryPath } from "./paths.ts";
 
 const obsLineRE = /^-\s+\d{4}-\d{2}-\d{2}\s+\[.+\]:\s*.+$/;
@@ -11,9 +12,13 @@ export async function append(path: string, text: string, options: { section?: st
   const { abs, rel } = await resolveMemoryPath(path);
   await rejectIDAsPath(rel);
   if (rel.endsWith("observations.md")) validateObsLines(text);
-  const appendResult = options.section
-    ? await appendUnderSection(abs, rel, options.section, text)
-    : await appendAtEOF(abs, text);
+  // Serialize the read-modify-write against concurrent mutations of the SAME
+  // file so a parallel append/patch can't clobber this one (lost update).
+  const appendResult = await withFileLock(abs, () =>
+    options.section
+      ? appendUnderSection(abs, rel, options.section, text)
+      : appendAtEOF(abs, text),
+  );
   await maybeAutoCommit();
   return appendResult;
 }

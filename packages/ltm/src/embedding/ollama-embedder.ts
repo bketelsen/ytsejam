@@ -14,7 +14,7 @@
  *   const embedder = new CachedEmbedder(ollama, cacheDir, "ollama:" + ollama.modelName);
  */
 
-import { normalizeUnit, type Embedder } from "./embedder.ts";
+import { normalizeUnit, fetchWithTimeout, DEFAULT_EMBED_TIMEOUT_MS, type Embedder } from "./embedder.ts";
 
 export interface OllamaEmbedderOptions {
   /** Ollama model name, e.g. "nomic-embed-text:latest". */
@@ -27,6 +27,8 @@ export interface OllamaEmbedderOptions {
    * probe is skipped and embed() fails loudly if the wire disagrees.
    */
   dimension?: number;
+  /** Per-request HTTP timeout in ms. Default 30s (DEFAULT_EMBED_TIMEOUT_MS). */
+  timeoutMs?: number;
 }
 
 /**
@@ -35,15 +37,19 @@ export interface OllamaEmbedderOptions {
  * to the legacy /api/embeddings — that one returns `{embedding: [...]}`
  * (different shape) and its vectors are NOT normalized.
  */
-async function requestEmbedding(baseUrl: string, model: string, text: string): Promise<number[]> {
+async function requestEmbedding(baseUrl: string, model: string, text: string, timeoutMs: number): Promise<number[]> {
   const url = `${baseUrl}/api/embed`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: text }),
-    });
+    res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, input: text }),
+      },
+      timeoutMs,
+    );
   } catch (error) {
     throw new Error(
       `Ollama embed request to ${url} (model ${model}) failed: ${(error as Error).message}. ` +
@@ -70,24 +76,27 @@ export class OllamaEmbedder implements Embedder {
   readonly dimension: number;
   readonly modelName: string;
   private readonly baseUrl: string;
+  private readonly timeoutMs: number;
 
-  private constructor(modelName: string, baseUrl: string, dimension: number) {
+  private constructor(modelName: string, baseUrl: string, dimension: number, timeoutMs: number) {
     this.modelName = modelName;
     this.baseUrl = baseUrl;
     this.dimension = dimension;
+    this.timeoutMs = timeoutMs;
   }
 
   static async create(opts: OllamaEmbedderOptions): Promise<OllamaEmbedder> {
     const baseUrl = (opts.baseUrl ?? "http://localhost:11434").replace(/\/+$/, "");
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_EMBED_TIMEOUT_MS;
     if (opts.dimension !== undefined) {
-      return new OllamaEmbedder(opts.model, baseUrl, opts.dimension);
+      return new OllamaEmbedder(opts.model, baseUrl, opts.dimension, timeoutMs);
     }
-    const probe = await requestEmbedding(baseUrl, opts.model, "dimension probe");
-    return new OllamaEmbedder(opts.model, baseUrl, probe.length);
+    const probe = await requestEmbedding(baseUrl, opts.model, "dimension probe", timeoutMs);
+    return new OllamaEmbedder(opts.model, baseUrl, probe.length, timeoutMs);
   }
 
   async embed(text: string): Promise<number[]> {
-    const vector = await requestEmbedding(this.baseUrl, this.modelName, text);
+    const vector = await requestEmbedding(this.baseUrl, this.modelName, text, this.timeoutMs);
     if (vector.length !== this.dimension) {
       throw new Error(
         `Ollama model ${this.modelName} returned a ${vector.length}-dim vector but this ` +
