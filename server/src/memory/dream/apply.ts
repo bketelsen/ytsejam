@@ -51,8 +51,26 @@ async function applyOne(deps: ApplyDeps, p: Proposal): Promise<boolean> {
   if (p.kind === "drop") {
     return p.factIds[0] ? deps.ltm.redactFact(p.factIds[0]) : false;
   } else if (p.kind === "resolve") {
-    // convention: factIds[0] = keep, factIds[1] = drop
-    return p.factIds[1] ? deps.ltm.redactFact(p.factIds[1]) : false;
+    // convention: factIds[0] = keep, factIds[1] = drop. Redact the drop, never
+    // the keep. Guard against a malformed or LLM-inverted proposal that would
+    // otherwise destroy the fact the user wanted to keep:
+    //   - both ids must be present and distinct (a single shared id means
+    //     "redact drop" would tombstone "keep")
+    //   - both must resolve to a live (non-redacted) fact
+    const keepId = p.factIds[0];
+    const dropId = p.factIds[1];
+    if (!keepId || !dropId || keepId === dropId) {
+      console.warn(`[dream] resolve skipped: needs two distinct keep/drop fact ids (keep=${keepId ?? "∅"}, drop=${dropId ?? "∅"})`);
+      return false;
+    }
+    const facts = deps.ltm.listFacts();
+    const keep = facts.find((f) => f.id === keepId);
+    const drop = facts.find((f) => f.id === dropId);
+    if (!keep || keep.state === "redacted" || !drop || drop.state === "redacted") {
+      console.warn(`[dream] resolve skipped: keep/drop fact missing or already redacted (keep=${keepId}, drop=${dropId})`);
+      return false;
+    }
+    return deps.ltm.redactFact(dropId);
   } else if (p.kind === "add" && p.add) {
     const { predicate, object, polarity } = p.add;
     const isKnownPredicate =
@@ -115,7 +133,17 @@ async function applyOne(deps: ApplyDeps, p: Proposal): Promise<boolean> {
         normalizeObject(f.object) === normalizeObject(object),
     );
     if (canon && carriedSources.length > 0) deps.ltm.attachFactSources(canon.id, carriedSources);
-    for (const id of p.factIds) deps.ltm.redactFact(id);
+    // Redact the originals — but NEVER the canonical itself. Fact ids are
+    // content-addressed (kind+predicate+normalizedObject+polarity), so a
+    // canonical whose normalized object matches one of the merged originals
+    // shares that original's id. Redacting it unconditionally would tombstone
+    // the very fact we just kept (e.g. merge "ytsejam" + "the ytsejam project"
+    // with canonical "ytsejam"), silently destroying the survivor and marking
+    // the proposal applied so it never resurfaces. Skip the canonical id.
+    for (const id of p.factIds) {
+      if (id === canon?.id) continue;
+      deps.ltm.redactFact(id);
+    }
     return true;
   }
 
