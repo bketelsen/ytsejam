@@ -59,6 +59,12 @@ export class ApprovalCoordinator {
           resolve("timeout");
         }
       }, this.timeoutMs);
+      // Don't let a pending approval's timeout timer keep the Node event loop
+      // alive at shutdown. The drain cancels pending approvals explicitly
+      // (manager.abort/abortAll -> cancelSession), but unref() is a belt-and-
+      // suspenders guarantee that a stray pending entry can't hold the process
+      // open for up to timeoutMs.
+      timer.unref?.();
       this.pending.set(approvalId, { resolve, timer, request: fullRequest });
       this.onRequest(fullRequest);
     });
