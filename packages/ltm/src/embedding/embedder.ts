@@ -91,6 +91,37 @@ export function normalizeUnit(vector: number[]): number[] {
   return vector.map((x) => x / norm);
 }
 
+/** Default per-request timeout for HTTP embedders (Copilot/Ollama). */
+export const DEFAULT_EMBED_TIMEOUT_MS = 30_000;
+
+/**
+ * fetch() with a hard timeout via AbortController. Node's fetch has no default
+ * timeout, so a black-holed TCP connection or a stalled proxy would hang the
+ * caller forever — which, on the nightly dream maintenance path, wedges the
+ * whole job (the scheduler's in-flight guard never clears). Always bound an
+ * embedder HTTP call so a hung backend degrades to a thrown error instead of an
+ * indefinite stall. The thrown AbortError is mapped to a clear message by the
+ * caller's existing try/catch.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = DEFAULT_EMBED_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      throw new Error(`request to ${url} timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Cosine similarity of two unit-norm vectors (plain dot product). */
 /**
  * Dot product of two L2-normalized vectors == cosine similarity. Throws on a

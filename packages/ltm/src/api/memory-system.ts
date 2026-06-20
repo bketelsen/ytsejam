@@ -327,6 +327,23 @@ export class MemorySystem {
   }
 
   /**
+   * The dimension the index actually retrieves against: the MAJORITY (primary)
+   * dimension across stored embeddings, or null when the index is empty.
+   *
+   * Prefer this over `indexDimension()` for the boot dimension-mismatch gate.
+   * `indexDimension()` samples whatever vector `VectorIndex` pinned first
+   * (insertion/log order), so a single off-dimension contaminant at the head of
+   * the log makes the gate compare against the wrong dimension — it can both
+   * under-trigger (a hash contaminant lets a hash embedder pass into a
+   * majority-1536 store) and over-trigger (the same contaminant makes the
+   * correct embedder look mismatched and disables LTM wholesale). The primary
+   * dimension is the one retrieval uses, so the gate should key off it.
+   */
+  primaryIndexDimension(): number | null {
+    return this.dimensionReport().primary;
+  }
+
+  /**
    * True on-disk distribution of stored embedding dimensions, counted
    * directly from records (NOT through VectorIndex, which now refuses
    * off-dimension vectors). Surfaces D2 contamination: the majority dimension

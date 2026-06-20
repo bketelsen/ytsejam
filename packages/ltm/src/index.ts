@@ -10,7 +10,7 @@
 export { MemorySystem, type MemorySystemOptions } from "./api/memory-system.ts";
 export { runDoctor } from "./cli/doctor.ts";
 export type { RetrievedMemory, ProfileSummary, RetrievalResult } from "./types.ts";
-export { HashEmbedder, type Embedder, cosine, tokenize } from "./embedding/embedder.ts";
+export { HashEmbedder, type Embedder, cosine, tokenize, fetchWithTimeout, DEFAULT_EMBED_TIMEOUT_MS } from "./embedding/embedder.ts";
 export { CachedEmbedder } from "./embedding/cached-embedder.ts";
 export {
   LocalEmbedder,

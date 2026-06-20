@@ -251,14 +251,18 @@ async function attachLtmBridge(): Promise<boolean> {
       debug: process.env.YTSEJAM_LTM_FACT_DEBUG === "1",
     });
     opened = MemorySystem.open({ storeDir: ltmStoreDir, embedder: embedderResult.embedder, factExtractor });
-    const mismatch = checkDimensionMismatch(opened.indexDimension(), embedderResult);
+    // Gate against the MAJORITY (primary) stored dimension, not a single sampled
+    // record: a lone off-dimension contaminant at the head of the log must not
+    // make the gate compare against the wrong dimension (which can both let a
+    // mismatched embedder through and disable LTM under the correct one).
+    const dimReport = opened.dimensionReport();
+    const mismatch = checkDimensionMismatch(dimReport.primary, embedderResult);
     if (mismatch) {
       throw new Error(mismatch);
     }
     // Surface D2 contamination loudly: if the store holds embeddings of more
     // than one dimension, the minority buckets are excluded from retrieval
     // (VectorIndex refuses off-dimension vectors) and need re-embedding.
-    const dimReport = opened.dimensionReport();
     const dimBuckets = Object.keys(dimReport.counts).length;
     if (dimBuckets > 1) {
       const breakdown = Object.entries(dimReport.counts)
