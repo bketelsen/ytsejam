@@ -195,4 +195,90 @@ describe("applyProposals", () => {
       expect(sessionIds.has("cog:beta")).toBe(true);
     } finally { ltm.close(); }
   });
+
+  it("merge whose canonical id collides with an original keeps the canonical active (regression: C1 data loss)", async () => {
+    const root = tmp();
+    const ltm = MemorySystem.open({ storeDir: path.join(root, "ltm") });
+    try {
+      // Two near-duplicate attribute facts. normalizeObject strips a leading
+      // "the", so "the ytsejam project" and "ytsejam project" share an id, while
+      // "ytsejam" is distinct. We merge all three into canonical "ytsejam" —
+      // whose content-addressed id EQUALS the "I am working on ytsejam" original.
+      await ltm.recordObservation({ text: "I am working on ytsejam", timestamp: now(), origin: "cog:a", learnFacts: true });
+      await ltm.recordObservation({ text: "I am working on the ytsejam project", timestamp: now(), origin: "cog:b", learnFacts: true });
+      const origIds = ltm.listFacts().filter((f) => f.predicate === "works_on" && f.state === "active").map((f) => f.id);
+      expect(origIds.length).toBeGreaterThanOrEqual(2);
+
+      // The canonical object normalizes to the same id as the "ytsejam" original.
+      const canonicalId = origIds.find((id) => id.includes("ytsejam") && !id.includes("project"));
+      expect(canonicalId).toBeDefined();
+      expect(origIds).toContain(canonicalId);
+
+      const store = new ProposalStore(path.join(root, "dream"));
+      store.save([{
+        id: "pm-collide",
+        kind: "merge",
+        factIds: origIds,
+        canonical: { kind: "attribute", predicate: "works_on", object: "ytsejam", polarity: 1 as const },
+        rationale: "fold ytsejam duplicates; canonical collides with an original",
+        confidence: 0.95,
+        status: "pending",
+      }]);
+
+      const res = await applyProposals({ ltm, store, now }, ["pm-collide"]);
+      expect(res.applied).toContain("pm-collide");
+
+      // The canonical MUST survive as an active fact — before the fix the redact
+      // loop tombstoned it because its id was in factIds.
+      const canon = ltm.listFacts().find((f) => f.predicate === "works_on" && f.object === "ytsejam");
+      expect(canon, "canonical fact must still exist").toBeDefined();
+      expect(canon!.state, "canonical fact must remain active, not tombstoned").toBe("active");
+
+      // At least one active works_on fact remains (no silent total loss).
+      expect(ltm.listFacts().some((f) => f.predicate === "works_on" && f.state === "active")).toBe(true);
+    } finally { ltm.close(); }
+  });
+
+  it("resolve redacts the drop and keeps the keep", async () => {
+    const root = tmp();
+    const ltm = MemorySystem.open({ storeDir: path.join(root, "ltm") });
+    try {
+      await ltm.recordObservation({ text: "I like ts", timestamp: now(), learnFacts: true });
+      await ltm.recordObservation({ text: "I like typescript lang", timestamp: now(), learnFacts: true });
+      const ids = ltm.listFacts().filter((f) => f.predicate === "prefers" && f.state === "active").map((f) => f.id);
+      expect(ids.length).toBeGreaterThanOrEqual(2);
+      const [keep, drop] = ids;
+
+      const store = new ProposalStore(path.join(root, "dream"));
+      store.save([{ id: "pr1", kind: "resolve", factIds: [keep, drop], rationale: "dup", confidence: 0.9, status: "pending" }]);
+
+      const res = await applyProposals({ ltm, store, now }, ["pr1"]);
+      expect(res.applied).toEqual(["pr1"]);
+      expect(ltm.listFacts().find((f) => f.id === keep)!.state).toBe("active");
+      expect(ltm.listFacts().find((f) => f.id === drop)!.state).toBe("redacted");
+    } finally { ltm.close(); }
+  });
+
+  it("resolve with a single shared keep/drop id is skipped (does not redact the keep)", async () => {
+    const root = tmp();
+    const ltm = MemorySystem.open({ storeDir: path.join(root, "ltm") });
+    try {
+      await ltm.recordObservation({ text: "I work at Initech", timestamp: now(), learnFacts: true });
+      const fid = ltm.listFacts().find((f) => f.predicate === "works_at")!.id;
+      const store = new ProposalStore(path.join(root, "dream"));
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      // keep === drop: redacting factIds[1] would tombstone the kept fact.
+      store.save([{ id: "pr2", kind: "resolve", factIds: [fid, fid], rationale: "malformed", confidence: 0.9, status: "pending" }]);
+      const res = await applyProposals({ ltm, store, now }, ["pr2"]);
+
+      expect(res.skipped).toContain("pr2");
+      expect(res.applied).not.toContain("pr2");
+      expect(store.get("pr2")!.status).toBe("pending");
+      expect(ltm.listFacts().find((f) => f.id === fid)!.state).toBe("active");
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("resolve skipped"));
+
+      warnSpy.mockRestore();
+    } finally { ltm.close(); }
+  });
 });
