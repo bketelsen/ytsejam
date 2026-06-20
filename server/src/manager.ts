@@ -138,6 +138,20 @@ interface OpenSession {
   session: Session<JsonlSessionMetadata>;
   harness: AgentHarness;
   running: boolean;
+  /**
+   * Per-session turn-start serialization chain. `sendMessage`/`injectMessage`
+   * run their start-decision body through `serializeTurnStart`, which chains on
+   * this tail so only one turn-start executes at a time for a session. Without
+   * it, the check-then-act window between reading `running` and setting it
+   * (across the `await runPendingCompactionAtIdle(...)` yield) lets two idle
+   * turn-starts — e.g. a user message racing a background task report or a
+   * scheduled-prompt injection, both delivered via injectMessage — both pass
+   * the `running` gate, both call prompt(), and the loser throws "busy",
+   * silently dropping its message and flipping `running` back to false mid-run.
+   * Serializing makes the winner fully transition to `running` before the next
+   * start runs, so the next one correctly steers/follows-up instead.
+   */
+  turnStartTail?: Promise<unknown>;
   compacting: boolean;
   /** Mutated per-turn; wrapped tools read via closure to resolve effective mode. */
   currentEffectiveMode: { value: ApprovalMode };
@@ -822,28 +836,49 @@ export class AgentManager {
 
   // ---- messaging ---------------------------------------------------------
 
+  /**
+   * Serialize a per-session turn-start decision so the check-then-act on
+   * `running` is atomic across its internal awaits (notably the idle-compaction
+   * yield). Chains `fn` onto the session's `turnStartTail`; a racing start waits
+   * for the in-flight one to fully transition `running` before it evaluates its
+   * own steer-vs-prompt branch. Errors in `fn` are isolated (via the swallowing
+   * tail) so one failed start never wedges the chain. `turnStartTail` only ever
+   * holds the latest promise, so an idle session retains at most one settled
+   * promise — no unbounded chain growth.
+   */
+  private serializeTurnStart(opened: OpenSession, fn: () => Promise<void>): Promise<void> {
+    const prior = opened.turnStartTail ?? Promise.resolve();
+    // Run fn whether the prior start fulfilled or rejected (.then(fn, fn)), so a
+    // failed predecessor doesn't strand the successor.
+    const next = prior.then(fn, fn);
+    opened.turnStartTail = next.catch(() => {});
+    return next;
+  }
+
   async sendMessage(id: string, text: string): Promise<void> {
     const opened = await this.getOrOpen(id);
     // Per-turn override: /yolo or /careful prefix wins over the persisted session toggle.
     const { override, message } = extractTurnOverride(text);
     const effectiveText = message;
-    if (opened.running) {
-      // Mid-turn steer: do NOT touch currentEffectiveMode — the running turn
-      // keeps its starting mode (locked design decision).
-      await opened.harness.steer(effectiveText);
-      return;
-    }
-    // Fresh turn: resolve effective mode now.
-    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
-    opened.currentEffectiveMode.value = override ?? sessionMode;
-    if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
-    opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
-    opened.currentTurnText = effectiveText; // key this turn's recall on the current message
-    opened.harness.prompt(effectiveText).catch((err) => {
-      // run failures already surface as assistant error messages via events;
-      // this catches pre-run rejections (e.g. "busy") so they don't crash the process
-      console.error(`prompt failed for session ${id}`, err);
-      opened.running = false;
+    return this.serializeTurnStart(opened, async () => {
+      if (opened.running) {
+        // Mid-turn steer: do NOT touch currentEffectiveMode — the running turn
+        // keeps its starting mode (locked design decision).
+        await opened.harness.steer(effectiveText);
+        return;
+      }
+      // Fresh turn: resolve effective mode now.
+      const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+      opened.currentEffectiveMode.value = override ?? sessionMode;
+      if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
+      opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
+      opened.currentTurnText = effectiveText; // key this turn's recall on the current message
+      opened.harness.prompt(effectiveText).catch((err) => {
+        // run failures already surface as assistant error messages via events;
+        // this catches pre-run rejections (e.g. "busy") so they don't crash the process
+        console.error(`prompt failed for session ${id}`, err);
+        opened.running = false;
+      });
     });
   }
 
@@ -856,20 +891,22 @@ export class AgentManager {
     const opened = await this.getOrOpen(id);
     const { override, message } = extractTurnOverride(text);
     const effectiveText = message;
-    if (opened.running) {
-      // Mid-turn followUp: do NOT touch currentEffectiveMode — the running
-      // turn keeps its starting mode (locked design decision).
-      await opened.harness.followUp(effectiveText);
-      return;
-    }
-    const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
-    opened.currentEffectiveMode.value = override ?? sessionMode;
-    if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
-    opened.running = true;
-    opened.currentTurnText = effectiveText; // key this turn's recall on the injected message
-    opened.harness.prompt(effectiveText).catch((err) => {
-      console.error(`task result injection failed for session ${id}`, err);
-      opened.running = false;
+    return this.serializeTurnStart(opened, async () => {
+      if (opened.running) {
+        // Mid-turn followUp: do NOT touch currentEffectiveMode — the running
+        // turn keeps its starting mode (locked design decision).
+        await opened.harness.followUp(effectiveText);
+        return;
+      }
+      const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+      opened.currentEffectiveMode.value = override ?? sessionMode;
+      if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
+      opened.running = true;
+      opened.currentTurnText = effectiveText; // key this turn's recall on the injected message
+      opened.harness.prompt(effectiveText).catch((err) => {
+        console.error(`task result injection failed for session ${id}`, err);
+        opened.running = false;
+      });
     });
   }
 
@@ -919,7 +956,15 @@ export class AgentManager {
 
   async abort(id: string): Promise<void> {
     const opened = this.open.get(id);
-    if (opened) await opened.harness.abort();
+    if (!opened) return;
+    // Resolve any approval this session is blocked on BEFORE awaiting the
+    // harness. A gated tool in ASK mode sits in `await coordinator.request()`,
+    // which the harness's abort signal does NOT interrupt — so harness.abort()'s
+    // waitForIdle() can't settle until the 5-minute approval timeout unless we
+    // cancel the approval here. Denying it lets the tool's execute() return
+    // immediately, the run loop unwinds, and the abort completes promptly.
+    this.opts.approvalCoordinator?.cancelSession(id, "deny");
+    await opened.harness.abort();
   }
 
   /**
@@ -931,6 +976,11 @@ export class AgentManager {
   async abortAll(): Promise<void> {
     const aborts = Array.from(this.open.values()).map(async (opened) => {
       try {
+        // Cancel pending approvals first (see abort() above): without this a
+        // session blocked on an ASK-mode approval would hang the drain on
+        // waitForIdle() until the approval timeout, blowing past systemd's
+        // TimeoutStopSec and forcing a SIGKILL.
+        this.opts.approvalCoordinator?.cancelSession(opened.id, "deny");
         await opened.harness.abort();
       } catch (err) {
         console.warn(
