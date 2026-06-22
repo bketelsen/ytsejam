@@ -169,6 +169,65 @@ describe("apply_patch tool", () => {
     );
   });
 
+  test("rejects two Update sections targeting the same file", async () => {
+    const d = dir();
+    writeFileSync(join(d, "a.txt"), "one\ntwo\n");
+    const tool = createApplyPatchTool(d);
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: a.txt",
+      "-one",
+      "+ONE",
+      "*** Update File: a.txt",
+      "-two",
+      "+TWO",
+      "*** End Patch",
+    ].join("\n");
+    await expect(tool.execute("t1", { patch })).rejects.toThrow(/a\.txt.*more than one/i);
+    // No partial write — the first hunk must not have been applied.
+    expect(readFileSync(join(d, "a.txt"), "utf8")).toBe("one\ntwo\n");
+  });
+
+  test("allows Delete then Add of the same file in one envelope", async () => {
+    const d = dir();
+    writeFileSync(join(d, "a.txt"), "old content\n");
+    const tool = createApplyPatchTool(d);
+    const patch = [
+      "*** Begin Patch",
+      "*** Delete File: a.txt",
+      "*** Add File: a.txt",
+      "+brand new",
+      "*** End Patch",
+    ].join("\n");
+    await tool.execute("t1", { patch });
+    expect(readFileSync(join(d, "a.txt"), "utf8")).toBe("brand new\n");
+  });
+
+  test("@@ heading prefers an exact line over an earlier substring match", async () => {
+    const d = dir();
+    // The first line CONTAINS "target" as a substring and is followed by its
+    // own "  value"; the real anchor is the later line equal to "target"
+    // exactly. A first-match-on-substring anchor would see "  value" twice
+    // (ambiguous) or edit the wrong one; exact-match-first lands correctly.
+    writeFileSync(
+      join(d, "a.txt"),
+      "# target section overview\n  value\ntarget\n  value\n",
+    );
+    const tool = createApplyPatchTool(d);
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: a.txt",
+      "@@ target",
+      "-  value",
+      "+  CHANGED",
+      "*** End Patch",
+    ].join("\n");
+    await tool.execute("t1", { patch });
+    expect(readFileSync(join(d, "a.txt"), "utf8")).toBe(
+      "# target section overview\n  value\ntarget\n  CHANGED\n",
+    );
+  });
+
   test("rejects a malformed envelope", async () => {
     const d = dir();
     const tool = createApplyPatchTool(d);

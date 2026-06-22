@@ -176,7 +176,11 @@ function applyUpdate(content: string, op: Extract<FileOp, { kind: "update" }>): 
     const hunkNo = idx + 1;
     let anchorIdx = 0;
     if (hunk.heading) {
-      const found = work.findIndex((l) => l.trim() === hunk.heading || l.includes(hunk.heading!));
+      // Prefer an exact (trimmed) match so a heading that merely appears as a
+      // substring of an unrelated earlier line cannot anchor wrongly; only fall
+      // back to a substring match when no exact line exists.
+      let found = work.findIndex((l) => l.trim() === hunk.heading);
+      if (found === -1) found = work.findIndex((l) => l.includes(hunk.heading!));
       if (found === -1) {
         throw new Error(`apply_patch: ${op.file} hunk #${hunkNo} @@ heading "${hunk.heading}" not found`);
       }
@@ -200,35 +204,61 @@ interface PlannedWrite {
  * Read the affected files, compute every resulting write in memory, and throw
  * if ANY operation cannot be applied — guaranteeing no file is touched unless
  * the whole patch succeeds.
+ *
+ * A resolved path may be the target of at most one operation, with one
+ * exception: a `Delete File` may be followed by exactly one `Add File` of the
+ * same path. This blocks the silent-clobber case where two `Update File`
+ * sections for the same path each compute against the original on-disk content
+ * (the later write would erase the earlier one's effect), while still allowing
+ * the idiomatic delete-then-recreate.
  */
 export async function planPatch(cwd: string, patch: string): Promise<PlannedWrite[]> {
   const ops = parsePatch(patch);
   const plan: PlannedWrite[] = [];
+  // Tracks the last in-plan action per resolved path so we can reject
+  // conflicting multi-ops without re-reading the (unchanged) disk state.
+  const state = new Map<string, "deleted" | "written">();
+  const dup = (file: string): Error =>
+    new Error(
+      `apply_patch: ${file} is targeted by more than one operation in this patch — combine the hunks or split them into separate calls`,
+    );
+
   for (const op of ops) {
     const target = resolve(cwd, op.file);
+    const prior = state.get(target);
     if (op.kind === "add") {
-      let exists = true;
-      try {
-        await fs.access(target);
-      } catch {
-        exists = false;
+      // A path deleted earlier in this same envelope is addable; otherwise it
+      // must not already exist (in the plan or on disk).
+      if (prior === "written") throw dup(op.file);
+      if (prior !== "deleted") {
+        let exists = true;
+        try {
+          await fs.access(target);
+        } catch {
+          exists = false;
+        }
+        if (exists) throw new Error(`apply_patch: cannot add ${op.file} — file already exists`);
       }
-      if (exists) throw new Error(`apply_patch: cannot add ${op.file} — file already exists`);
+      state.set(target, "written");
       plan.push({ target, action: "add", content: joinLines(op.lines, op.lines.length > 0) });
     } else if (op.kind === "delete") {
+      if (prior !== undefined) throw dup(op.file);
       try {
         await fs.access(target);
       } catch {
         throw new Error(`apply_patch: cannot delete ${op.file} — file not found`);
       }
+      state.set(target, "deleted");
       plan.push({ target, action: "delete", content: null });
     } else {
+      if (prior !== undefined) throw dup(op.file);
       let original: string;
       try {
         original = await fs.readFile(target, "utf8");
       } catch {
         throw new Error(`apply_patch: cannot update ${op.file} — file not found`);
       }
+      state.set(target, "written");
       plan.push({ target, action: "update", content: applyUpdate(original, op) });
     }
   }
@@ -247,8 +277,9 @@ export function createApplyPatchTool(cwd: string): AgentTool<typeof params> {
     label: "Apply patch",
     description: [
       "Apply a multi-hunk, multi-file patch atomically. If ANY hunk fails (context not",
-      "found, ambiguous, or a missing/existing file), NOTHING is written and a structured",
-      "error names the failing file and hunk. Relative paths resolve against the data directory.",
+      "found, ambiguous, a missing/existing file, or two sections targeting one file),",
+      "NOTHING is written and a structured error names the failing file and hunk. Relative",
+      "paths resolve against the data directory.",
       "",
       "Pass a single `patch` string in this context-based envelope (no line numbers):",
       "",
@@ -267,8 +298,19 @@ export function createApplyPatchTool(cwd: string): AgentTool<typeof params> {
       "Rules: each file section starts with `*** Update File:`, `*** Add File:`, or",
       "`*** Delete File:`. In Update sections, ` ` = context, `-` = remove, `+` = add;",
       "include a few unchanged context lines around each change so the location is unique.",
+      "Each Update hunk MUST include at least one context (` `) or removed (`-`) line —",
+      "pure `+`-only hunks are rejected because there is nothing to anchor the insertion to.",
       "Use `@@ heading` when the same context appears more than once. Add File bodies are",
       "all `+` lines. Delete File takes no body.",
+      "A given file may be targeted by only one section (combine its changes into one",
+      "Update), except that a `*** Delete File:` may be followed by an `*** Add File:` of",
+      "the same path to replace it wholesale.",
+      "",
+      "Atomicity: the patch is fully validated before anything is written, so a validation",
+      "failure (bad context, ambiguous match, missing/existing file, conflicting sections)",
+      "writes NOTHING. The commit phase is not transactional against IO faults, however —",
+      "a mid-write error (e.g. ENOSPC or a permission failure) can leave earlier files in",
+      "the patch already written.",
     ].join("\n"),
     parameters: params,
     execute: async (_id, p) => {
