@@ -124,4 +124,43 @@ describe("git tool", () => {
     expect(restored.details).toMatchObject({ exitCode: 0, op: "restore" });
     expect(readFileSync(join(cwd, "file.txt"), "utf8")).toBe("one\n");
   });
+
+  test("checkout rejects leading-dash branch values and preserves dirty files", async () => {
+    const cwd = await initRepo();
+    const tool = createGitTool(cwd);
+    writeFileSync(join(cwd, "file.txt"), "dirty\n");
+
+    await expect(tool.execute("t1", { op: "checkout", branch: "-f" })).rejects.toThrow(/leading-dash/i);
+    expect(readFileSync(join(cwd, "file.txt"), "utf8")).toBe("dirty\n");
+  });
+
+  test("show rejects leading-dash rev values", async () => {
+    const cwd = await initRepo();
+    const tool = createGitTool(cwd);
+
+    await expect(tool.execute("t1", { op: "show", rev: "-s" })).rejects.toThrow(/leading-dash/i);
+  });
+
+  test("branch create rejects leading-dash names", async () => {
+    const cwd = await initRepo();
+    const tool = createGitTool(cwd);
+
+    await expect(
+      tool.execute("t1", { op: "branch", branchMode: "create", branch: "--list" }),
+    ).rejects.toThrow(/leading-dash/i);
+  });
+
+  test("branch switch rejects dash instead of using previous-branch shorthand", async () => {
+    const cwd = await initRepo();
+    const tool = createGitTool(cwd);
+    await tool.execute("create", { op: "branch", branchMode: "create", branch: "feature" });
+    await tool.execute("switch-feature", { op: "branch", branchMode: "switch", branch: "feature" });
+    await tool.execute("switch-main", { op: "branch", branchMode: "switch", branch: "main" });
+
+    await expect(
+      tool.execute("switch-dash", { op: "branch", branchMode: "switch", branch: "-" }),
+    ).rejects.toThrow(/leading-dash/i);
+    const branches = await tool.execute("list", { op: "branch", branchMode: "list" });
+    expect(text(branches)).toContain("* main");
+  });
 });

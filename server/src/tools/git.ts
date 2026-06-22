@@ -23,7 +23,7 @@ const gitParams = Type.Object({
   path: Type.Optional(Type.String({ description: "Optional file path. Relative paths resolve against the session working directory." })),
   staged: Type.Optional(Type.Boolean({ description: "For diff, show staged changes. For restore, restore the staged copy." })),
   count: Type.Optional(Type.Number({ description: `For log, max commits to show. Clamped to ${MAX_LOG_COUNT}.` })),
-  rev: Type.Optional(Type.String({ description: "Revision, commit, or object for show/checkout/restore." })),
+  rev: Type.Optional(Type.String({ description: "Revision, commit, object, or show path expression like HEAD:file.txt for show/checkout/restore. The show op takes file paths through this field." })),
   message: Type.Optional(Type.String({ description: "Commit message for commit." })),
   branchMode: Type.Optional(Type.Union([
     Type.Literal("list"),
@@ -115,6 +115,15 @@ function requireArg(value: string | undefined, name: string, op: string): string
   return value;
 }
 
+function positional(value: string | undefined, name: string, op: string): string[] {
+  // Value-of-option args (commit -m, restore --source) don't need this guard; positionals do.
+  const arg = requireArg(value, name, op);
+  if (arg.startsWith("-")) {
+    throw new Error(`git ${op} rejects leading-dash ${name}: ${arg}`);
+  }
+  return ["--end-of-options", arg];
+}
+
 function commandArgs(cwd: string, root: string, params: any): string[] {
   const spec = pathspec(cwd, root, params.path);
   switch (params.op) {
@@ -129,7 +138,7 @@ function commandArgs(cwd: string, root: string, params: any): string[] {
     case "log":
       return ["log", `--max-count=${boundedCount(params.count)}`, "--oneline", "--decorate"];
     case "show":
-      return ["show", params.rev ?? "HEAD", "--"];
+      return ["show", ...positional(params.rev ?? "HEAD", "rev", "show"), "--"];
     case "add":
       return ["add", "--", spec ?? "."];
     case "restore": {
@@ -141,14 +150,14 @@ function commandArgs(cwd: string, root: string, params: any): string[] {
     }
     case "checkout": {
       const target = params.branch ?? params.rev;
-      if (spec) return ["checkout", target ?? "HEAD", "--", spec];
-      return ["checkout", requireArg(target, "branch or rev", "checkout")];
+      if (spec) return ["checkout", ...positional(target ?? "HEAD", "branch or rev", "checkout"), "--", spec];
+      return ["checkout", ...positional(target, "branch or rev", "checkout")];
     }
     case "branch": {
       const mode = params.branchMode ?? "list";
       if (mode === "list") return ["branch", "--list"];
-      if (mode === "create") return ["branch", requireArg(params.branch, "branch", "branch create")];
-      return ["switch", requireArg(params.branch, "branch", "branch switch")];
+      if (mode === "create") return ["branch", ...positional(params.branch, "branch", "branch create")];
+      return ["switch", ...positional(params.branch, "branch", "branch switch")];
     }
     case "commit":
       return ["commit", "-m", requireArg(params.message, "message", "commit")];
