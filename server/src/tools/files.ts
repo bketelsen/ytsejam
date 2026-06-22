@@ -4,7 +4,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { truncate } from "./shell.ts";
 
-function resolve(cwd: string, p: string): string {
+export function resolveToolPath(cwd: string, p: string): string {
   return path.isAbsolute(p) ? p : path.join(cwd, p);
 }
 
@@ -17,7 +17,7 @@ export function createReadTool(cwd: string): AgentTool<typeof readParams> {
     description: "Read a text file. Relative paths resolve against the data directory.",
     parameters: readParams,
     execute: async (_id, params) => {
-      const text = await fs.readFile(resolve(cwd, params.path), "utf8");
+      const text = await fs.readFile(resolveToolPath(cwd, params.path), "utf8");
       return { content: [{ type: "text", text: truncate(text) }], details: {} };
     },
   };
@@ -32,7 +32,7 @@ export function createWriteTool(cwd: string): AgentTool<typeof writeParams> {
     description: "Write a text file, creating parent directories. Overwrites existing files.",
     parameters: writeParams,
     execute: async (_id, params) => {
-      const target = resolve(cwd, params.path);
+      const target = resolveToolPath(cwd, params.path);
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.writeFile(target, params.content, "utf8");
       return { content: [{ type: "text", text: `Wrote ${target}` }], details: {} };
@@ -53,7 +53,7 @@ export function createEditTool(cwd: string): AgentTool<typeof editParams> {
     description: "Replace an exact unique text occurrence in a file.",
     parameters: editParams,
     execute: async (_id, params) => {
-      const target = resolve(cwd, params.path);
+      const target = resolveToolPath(cwd, params.path);
       const text = await fs.readFile(target, "utf8");
       const count = text.split(params.oldText).length - 1;
       if (count === 0) throw new Error(`oldText not found in ${target}`);
@@ -73,7 +73,7 @@ export function createLsTool(cwd: string): AgentTool<typeof lsParams> {
     description: "List directory entries. Defaults to the data directory.",
     parameters: lsParams,
     execute: async (_id, params) => {
-      const target = resolve(cwd, params.path ?? ".");
+      const target = resolveToolPath(cwd, params.path ?? ".");
       const entries = await fs.readdir(target, { withFileTypes: true });
       const lines = entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).sort();
       return { content: [{ type: "text", text: truncate(lines.join("\n") || "(empty)") }], details: {} };
