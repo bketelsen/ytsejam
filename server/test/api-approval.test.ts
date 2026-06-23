@@ -37,6 +37,7 @@ beforeEach(() => {
       taskConcurrency: 4,
       taskTimeoutMinutes: 15,
       contextFiles: false,
+      defaultApprovalMode: "yolo",
     },
     authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
   };
@@ -142,6 +143,72 @@ describe("approval-mode session API", () => {
       unread: false,
       approvalMode: "yolo",
     });
+  });
+
+  test("PATCH approvalMode=read_only is accepted and persisted", async () => {
+    const row = await createSession();
+    const res = await app.request(`/api/sessions/${row.id}`, {
+      method: "PATCH",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ approvalMode: "read_only" }),
+    });
+    expect(res.status).toBe(200);
+    expect(deps.indexer.getSession(row.id)?.approvalMode).toBe("read_only");
+  });
+
+  test("POST /approval-mode escalates and emits approval_mode_changed", async () => {
+    const row = await createSession();
+    const events: ServerEvent[] = [];
+    const unsubscribe = deps.bus.subscribe((event) => events.push(event));
+    try {
+      const res = await app.request(`/api/sessions/${row.id}/approval-mode`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ mode: "read_only" }),
+      });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as any).mode).toBe("read_only");
+    } finally {
+      unsubscribe();
+    }
+    expect(deps.indexer.getSession(row.id)?.approvalMode).toBe("read_only");
+    expect(events).toContainEqual({ type: "approval_mode_changed", sessionId: row.id, mode: "read_only" });
+
+    const lines = readFileSync(row.path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.some((entry) => entry.type === "set_approval_mode" && entry.mode === "read_only")).toBe(true);
+  });
+
+  test.each(["bogus", null, 1, false, {}, [], "READ_ONLY"])(
+    "POST /approval-mode rejects invalid mode %j",
+    async (mode) => {
+      const row = await createSession();
+      const res = await app.request(`/api/sessions/${row.id}/approval-mode`, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ mode }),
+      });
+      expect(res.status).toBe(400);
+      expect(deps.indexer.getSession(row.id)?.approvalMode).toBe("yolo");
+    },
+  );
+
+  test("POST /approval-mode 404s for an unknown session", async () => {
+    const res = await app.request(`/api/sessions/does-not-exist/approval-mode`, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ mode: "ask" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test("POST /approval-mode requires auth", async () => {
+    const row = await createSession();
+    const res = await app.request(`/api/sessions/${row.id}/approval-mode`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "ask" }),
+    });
+    expect(res.status).toBe(401);
   });
 
   test("ApprovalCoordinator callbacks can bridge through the bus", async () => {

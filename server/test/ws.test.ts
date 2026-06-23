@@ -52,6 +52,7 @@ beforeEach(async () => {
       taskConcurrency: 4,
       taskTimeoutMinutes: 15,
       contextFiles: false,
+      defaultApprovalMode: "yolo",
     },
     authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
     approvalCoordinator,

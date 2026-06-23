@@ -1,4 +1,5 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import type { ApprovalMode } from "./approval/types.ts";
 import type { SessionRow } from "./indexer.ts";
 import type { TaskRow } from "./tasks.ts";
 import type { ScheduleRow } from "./schedules.ts";
@@ -29,7 +30,7 @@ export type ServerEvent =
   | {
       type: "approval_mode_changed";
       sessionId: string;
-      mode: "yolo" | "ask";
+      mode: ApprovalMode;
     };
 
 export class EventBus {

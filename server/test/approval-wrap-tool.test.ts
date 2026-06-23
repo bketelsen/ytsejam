@@ -113,6 +113,64 @@ describe("wrapToolWithApproval", () => {
     expect((result.content[0] as any).text).toBe("User denied this tool call (timeout).");
   });
 
+  test("READ_ONLY mode auto-denies a gated tool WITHOUT a coordinator prompt", async () => {
+    const { coord } = makeCoordinator();
+    let calls = 0;
+    const tool: AgentTool<typeof emptyParams> = {
+      ...makeFakeTool("bash"),
+      execute: async () => { calls++; return { content: [{ type: "text", text: "should not run" }], details: {} }; },
+    };
+    const ctx = { sessionId: "s1", effectiveMode: (): ApprovalMode => "read_only", coordinator: coord };
+    const wrapped = wrapToolWithApproval(tool, ctx);
+    const result = await wrapped.execute("call1", {});
+    // No approval was ever opened.
+    expect(coord.list()).toHaveLength(0);
+    expect(calls).toBe(0);
+    // Denial reuses the ApprovalDenialDetails shape...
+    expect((result as any).details).toEqual({ approval: "deny" });
+    // ...and the message is actionable (read-only + how to escalate).
+    const text = (result.content[0] as any).text as string;
+    expect(text).toContain("read-only");
+    expect(text).toContain("bash");
+    expect(text).toMatch(/escalate|approval mode|ask|yolo/);
+  });
+
+  test("READ_ONLY mode runs an ungated read tool unwrapped", () => {
+    const { coord } = makeCoordinator();
+    const tool = makeFakeTool("read");
+    const ctx = { sessionId: "s1", effectiveMode: (): ApprovalMode => "read_only", coordinator: coord };
+    // Ungated tools are returned by reference (never gated regardless of mode).
+    expect(wrapToolWithApproval(tool, ctx)).toBe(tool);
+  });
+
+  test("READ_ONLY mode runs git read ops and auto-denies git write ops", async () => {
+    const { coord } = makeCoordinator();
+    let calls = 0;
+    const tool: AgentTool<typeof gitParams> = {
+      name: "git",
+      label: "Git",
+      description: "",
+      parameters: gitParams,
+      execute: async (_id, params) => {
+        calls++;
+        return { content: [{ type: "text", text: `ran ${params.op}` }], details: {} };
+      },
+    };
+    const ctx = { sessionId: "s1", effectiveMode: (): ApprovalMode => "read_only", coordinator: coord };
+    const wrapped = wrapToolWithApproval(tool, ctx);
+
+    // Read op runs.
+    expect((await wrapped.execute("read", { op: "status" })).content[0]).toMatchObject({ text: "ran status" });
+    expect(calls).toBe(1);
+
+    // Write op is auto-denied without a prompt and without executing.
+    const denied = await wrapped.execute("write", { op: "commit" });
+    expect(coord.list()).toHaveLength(0);
+    expect(calls).toBe(1);
+    expect((denied as any).details).toEqual({ approval: "deny" });
+    expect((denied.content[0] as any).text).toContain("read-only");
+  });
+
   test("effectiveMode is read at execute time, not wrap time", async () => {
     const { coord, lastId } = makeCoordinator();
     const tool = makeFakeTool("bash");

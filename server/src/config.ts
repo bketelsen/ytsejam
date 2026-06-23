@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { isApprovalMode, type ApprovalMode } from "./approval/types.ts";
 import { defaultPiAuthPath } from "./pi-auth.ts";
 
 export interface Config {
@@ -26,6 +27,13 @@ export interface Config {
    * --no-context-files opt-out.
    */
   contextFiles: boolean;
+  /**
+   * Default approval mode for newly created sessions. Read from
+   * YTSEJAM_DEFAULT_APPROVAL_MODE (yolo|ask|read_only); invalid values fall
+   * back to the shipped default `yolo`. SHIPPED DEFAULT stays `yolo` so
+   * existing behavior is unchanged unless explicitly configured.
+   */
+  defaultApprovalMode: ApprovalMode;
 }
 
 export function sandboxEnabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -59,7 +67,23 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     taskConcurrency: Math.max(1, Number(env.YTSEJAM_TASK_CONCURRENCY ?? 4) || 4),
     taskTimeoutMinutes: Math.max(1, Number(env.YTSEJAM_TASK_TIMEOUT_MIN ?? 15) || 15),
     contextFiles: env.YTSEJAM_CONTEXT_FILES !== "false",
+    defaultApprovalMode: parseDefaultApprovalMode(env.YTSEJAM_DEFAULT_APPROVAL_MODE),
   };
+}
+
+/**
+ * Validate YTSEJAM_DEFAULT_APPROVAL_MODE. Unset → shipped default `yolo`
+ * (preserves current behavior). An invalid value falls back safely to `yolo`
+ * with a warning rather than crashing boot.
+ */
+function parseDefaultApprovalMode(raw: string | undefined): ApprovalMode {
+  if (raw === undefined || raw === "") return "yolo";
+  if (isApprovalMode(raw)) return raw;
+  console.warn(
+    `[config] YTSEJAM_DEFAULT_APPROVAL_MODE="${raw}" is invalid ` +
+      `(expected yolo|ask|read_only); falling back to "yolo".`,
+  );
+  return "yolo";
 }
 
 /**

@@ -27,7 +27,7 @@ const probeParams = Type.Object({});
 
 type ApprovalHarness = ReturnType<typeof makeApprovalHarness>;
 
-function makeApprovalHarness() {
+function makeApprovalHarness(overrides: Record<string, unknown> = {}) {
   const events: ServerEvent[] = [];
   const probeTool: AgentTool<typeof probeParams> = {
     name: "probe_ungated",
@@ -53,7 +53,7 @@ function makeApprovalHarness() {
       events.push({ type: "approval_resolved", approvalId, decision });
     },
   });
-  const made = makeManager(faux, { approvalCoordinator: coordinator, tools: [probeTool] });
+  const made = makeManager(faux, { approvalCoordinator: coordinator, tools: [probeTool], ...overrides });
   made.bus.subscribe((event) => events.push(event));
   return { ...made, coordinator, events, probeTool };
 }
@@ -284,6 +284,113 @@ describe("AgentManager approval-mode tool wrapping", () => {
     expect(h.events.some((event) => event.type === "approval_request")).toBe(false);
   });
 
+
+  test("READ_ONLY session auto-denies bash WITHOUT an approval prompt", async () => {
+    const h = makeApprovalHarness();
+    const marker = writeCommand(h, "readonly-denied", "readonly-denied");
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("bash", { command: marker.command })]),
+      (context: any) => {
+        const last = context.messages.at(-1);
+        expect(last?.role).toBe("toolResult");
+        expect(JSON.stringify(last?.content)).toContain("read-only");
+        return fauxAssistantMessage("understood, read-only");
+      },
+    ]);
+    const row = await h.manager.createSession();
+    await h.manager.setApprovalMode(row.id, "read_only");
+
+    await h.manager.sendMessage(row.id, "delete it");
+    await h.manager.waitForIdle(row.id);
+
+    // bash never ran, and NO approval prompt was ever opened.
+    expect(existsSync(marker.path)).toBe(false);
+    expect(h.events.some((event) => event.type === "approval_request")).toBe(false);
+    expect(h.coordinator.list()).toHaveLength(0);
+    const messages = await h.manager.getMessages(row.id);
+    const denial = messages.find((m: any) => m.role === "toolResult");
+    expect(JSON.stringify((denial as any)?.content)).toContain("read-only");
+  });
+
+  test("runtime change yolo → read_only takes effect for the NEXT tool call", async () => {
+    const h = makeApprovalHarness();
+    const first = writeCommand(h, "ro-first", "first");
+    const second = writeCommand(h, "ro-second", "second");
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("bash", { command: first.command })]),
+      fauxAssistantMessage("first done"),
+      fauxAssistantMessage([fauxToolCall("bash", { command: second.command })]),
+      fauxAssistantMessage("second done"),
+    ]);
+    const row = await h.manager.createSession();
+
+    // Turn 1: default yolo → bash runs.
+    await h.manager.sendMessage(row.id, "first");
+    await h.manager.waitForIdle(row.id);
+    expect(readFileSync(first.path, "utf8")).toBe("first");
+
+    // Escalate to read_only between turns.
+    await h.manager.setApprovalMode(row.id, "read_only");
+    await h.manager.sendMessage(row.id, "second");
+    await h.manager.waitForIdle(row.id);
+
+    // Turn 2: auto-denied, no prompt, file never written.
+    expect(existsSync(second.path)).toBe(false);
+    expect(h.events.some((event) => event.type === "approval_request")).toBe(false);
+    expect(h.coordinator.list()).toHaveLength(0);
+  });
+
+  test("configured default approval mode is applied to new sessions", async () => {
+    const h = makeApprovalHarness({ defaultApprovalMode: "read_only" });
+    const marker = writeCommand(h, "default-ro", "default-ro");
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("bash", { command: marker.command })]),
+      fauxAssistantMessage("done"),
+    ]);
+    const row = await h.manager.createSession();
+    // The new session row carries the configured default, not the shipped yolo.
+    expect(row.approvalMode).toBe("read_only");
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("read_only");
+
+    // And the default actually gates: bash is auto-denied without a prompt.
+    await h.manager.sendMessage(row.id, "go");
+    await h.manager.waitForIdle(row.id);
+    expect(existsSync(marker.path)).toBe(false);
+    expect(h.events.some((event) => event.type === "approval_request")).toBe(false);
+  });
+
+  test("configured default 'read_only' survives an index rebuild (JSONL SSOT)", async () => {
+    const h = makeApprovalHarness({ defaultApprovalMode: "read_only" });
+    const row = await h.manager.createSession();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("read_only");
+
+    // The JSONL (SSOT) must carry the initial mode — the sqlite row is derived
+    // and wiped on rebuild. Without the createSession persistence fix this
+    // entry is absent and the rebuild below re-derives the hardcoded yolo.
+    const lines = readFileSync(row.path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.some((entry) => entry.type === "set_approval_mode" && entry.mode === "read_only")).toBe(true);
+
+    // Simulate a restart: drop the derived index and rebuild from JSONL.
+    await h.manager.rebuildIndex();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("read_only");
+  });
+
+  test("configured default 'ask' survives an index rebuild (JSONL SSOT)", async () => {
+    const h = makeApprovalHarness({ defaultApprovalMode: "ask" });
+    const row = await h.manager.createSession();
+    await h.manager.rebuildIndex();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("ask");
+  });
+
+  test("default 'yolo' writes no set_approval_mode entry and still rebuilds to yolo", async () => {
+    const h = makeApprovalHarness(); // shipped default yolo
+    const row = await h.manager.createSession();
+    const lines = readFileSync(row.path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    // yolo is the derive fallback — no redundant entry is written.
+    expect(lines.some((entry) => entry.type === "set_approval_mode")).toBe(false);
+    await h.manager.rebuildIndex();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("yolo");
+  });
 
   test("manager wrapping preserves ungated tool reference equality", async () => {
     const h = makeApprovalHarness();

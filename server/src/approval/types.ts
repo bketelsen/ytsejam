@@ -1,5 +1,19 @@
-/** Allowed per-session approval modes. */
-export type ApprovalMode = "yolo" | "ask";
+/**
+ * Allowed per-session approval modes.
+ * - `yolo`: gated/mutating tools run without prompting.
+ * - `ask`: gated/mutating tools pause for a human approval prompt.
+ * - `read_only`: gated/mutating tools are auto-DENIED without prompting; only
+ *   non-gated read tools run. Escalate to `ask`/`yolo` to allow mutations.
+ */
+export type ApprovalMode = "yolo" | "ask" | "read_only";
+
+/** All approval modes, in escalation order (safest → most permissive). */
+export const APPROVAL_MODES = ["read_only", "ask", "yolo"] as const;
+
+/** Runtime guard usable by config/route/JSONL validation. */
+export function isApprovalMode(value: unknown): value is ApprovalMode {
+  return value === "yolo" || value === "ask" || value === "read_only";
+}
 
 /**
  * JSONL session entry that persists a per-session approval-mode change.

@@ -147,6 +147,7 @@ const manager = new AgentManager({
   cogBrief,
   skills,
   approvalCoordinator,
+  defaultApprovalMode: config.defaultApprovalMode,
   ltm: () => memory.getLtm(),
   activeProjectTag: (sessionId) =>
     projectTagForWorkdir(

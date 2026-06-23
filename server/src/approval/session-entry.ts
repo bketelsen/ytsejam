@@ -1,5 +1,5 @@
 import type { ApprovalMode } from "./types.ts";
-import { APPROVAL_MODE_DEFAULT } from "./types.ts";
+import { APPROVAL_MODE_DEFAULT, isApprovalMode } from "./types.ts";
 
 /**
  * Walk a session's tree entries newest-first, return the most recent
@@ -8,7 +8,7 @@ import { APPROVAL_MODE_DEFAULT } from "./types.ts";
 export function deriveApprovalMode(entries: ReadonlyArray<{ type: string; mode?: unknown }>): ApprovalMode {
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
-    if (entry?.type === "set_approval_mode" && (entry.mode === "yolo" || entry.mode === "ask")) {
+    if (entry?.type === "set_approval_mode" && isApprovalMode(entry.mode)) {
       return entry.mode;
     }
   }
