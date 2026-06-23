@@ -1,12 +1,66 @@
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import fs, {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { Worker } from "node:worker_threads";
+import { describe, expect, test, vi } from "vitest";
 import { PlanStore, renderPlanSection } from "../src/plans.ts";
 
 function freshStore() {
   const dir = mkdtempSync(join(tmpdir(), "plan-"));
   return new PlanStore(join(dir, "plans"));
+}
+
+function planFile(store: PlanStore, sessionId: string): string {
+  return join(store.storeDir, `${sessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}.jsonl`);
+}
+
+function lockFile(store: PlanStore, sessionId: string): string {
+  return join(store.storeDir, `.${sessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}.jsonl.lock`);
+}
+
+function lineCount(file: string): number {
+  return readFileSync(file, "utf8").split("\n").filter(Boolean).length;
+}
+
+function runWorkerUpdate(args: {
+  storeDir: string;
+  sessionId: string;
+  text: string;
+  moduleUrl: string;
+  barrier: SharedArrayBuffer;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const code = `
+      import { parentPort, workerData } from "node:worker_threads";
+      import { PlanStore } from ${JSON.stringify(args.moduleUrl)};
+
+      const barrier = new Int32Array(workerData.barrier);
+      Atomics.add(barrier, 0, 1);
+      Atomics.notify(barrier, 0);
+      while (Atomics.load(barrier, 1) === 0) Atomics.wait(barrier, 1, 0);
+
+      const store = new PlanStore(workerData.storeDir);
+      store.update(workerData.sessionId, { add: [workerData.text] });
+      parentPort.postMessage("ok");
+    `;
+    const worker = new Worker(code, {
+      eval: true,
+      workerData: args,
+    });
+    worker.once("message", () => resolve());
+    worker.once("error", reject);
+    worker.once("exit", (code) => {
+      if (code !== 0) reject(new Error(`worker exited with code ${code}`));
+    });
+  });
 }
 
 describe("PlanStore.set", () => {
@@ -134,6 +188,127 @@ describe("PlanStore persistence", () => {
 
   test("current() is undefined when nothing was ever set", () => {
     expect(freshStore().current("never")).toBeUndefined();
+  });
+});
+
+describe("PlanStore concurrency", () => {
+  test("reclaims a stale lock with an atomic rename before acquiring", () => {
+    const store = freshStore();
+    const sessionId = "stale-session";
+    mkdirSync(store.storeDir, { recursive: true });
+    const staleLock = lockFile(store, sessionId);
+    writeFileSync(staleLock, "stale-token\n123\nold\n");
+    const old = new Date(Date.now() - 31_000);
+    utimesSync(staleLock, old, old);
+
+    const renameSpy = vi.spyOn(fs, "renameSync");
+    try {
+      expect(store.update(sessionId, { add: ["after stale"] })).toEqual([
+        { id: "p1", text: "after stale", status: "pending" },
+      ]);
+      const staleRenames = renameSpy.mock.calls.filter(
+        ([from, to]) =>
+          from === staleLock &&
+          typeof to === "string" &&
+          to.startsWith(`${staleLock}.`) &&
+          to.endsWith(".stale"),
+      );
+      expect(staleRenames).toHaveLength(1);
+      expect(readdirSync(store.storeDir).filter((name) => name.endsWith(".stale"))).toEqual([]);
+    } finally {
+      renameSpy.mockRestore();
+    }
+  });
+
+  test("serializes overlapping same-session updates so none are lost", async () => {
+    const store = freshStore();
+    const sessionId = "same-session";
+    store.set(sessionId, ["seed"]);
+
+    const workerCount = 48;
+    const barrier = new SharedArrayBuffer(8);
+    const view = new Int32Array(barrier);
+    const moduleUrl = new URL("../src/plans.ts", import.meta.url).href;
+    const updates = Array.from({ length: workerCount }, (_, i) =>
+      runWorkerUpdate({
+        storeDir: store.storeDir,
+        sessionId,
+        text: `worker item ${i}`,
+        moduleUrl,
+        barrier,
+      }),
+    );
+
+    const readyDeadline = Date.now() + 5000;
+    while (Atomics.load(view, 0) < workerCount && Date.now() < readyDeadline) {
+      Atomics.wait(view, 0, Atomics.load(view, 0), 100);
+    }
+    expect(Atomics.load(view, 0)).toBe(workerCount);
+    Atomics.store(view, 1, 1);
+    Atomics.notify(view, 1, workerCount);
+
+    await Promise.all(updates);
+
+    const final = store.current(sessionId) ?? [];
+    expect(final).toHaveLength(workerCount + 1);
+    expect(new Set(final.map((item) => item.text)).size).toBe(workerCount + 1);
+    for (let i = 0; i < workerCount; i += 1) {
+      expect(final.map((item) => item.text)).toContain(`worker item ${i}`);
+    }
+  });
+});
+
+describe("PlanStore compaction", () => {
+  test("compacts a long session log to a bounded file while preserving the latest plan", () => {
+    const store = freshStore();
+    const sessionId = "compact-me";
+    store.set(sessionId, ["seed"]);
+
+    for (let i = 0; i < 225; i += 1) {
+      store.update(sessionId, { add: [`step ${i}`] });
+    }
+
+    const file = planFile(store, sessionId);
+    expect(lineCount(file)).toBeLessThan(50);
+    expect(store.current(sessionId)).toHaveLength(226);
+    expect(store.current(sessionId)?.at(-1)).toEqual({
+      id: "p226",
+      text: "step 224",
+      status: "pending",
+    });
+    expect(readdirSync(store.storeDir).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  test("compacts only the mutated session and leaves other sessions independent", () => {
+    const store = freshStore();
+    store.set("busy", ["seed"]);
+    store.set("quiet", ["a"]);
+    store.update("quiet", { add: ["b"] });
+
+    for (let i = 0; i < 225; i += 1) {
+      store.update("busy", { add: [`busy ${i}`] });
+    }
+
+    expect(lineCount(planFile(store, "busy"))).toBeLessThan(50);
+    expect(lineCount(planFile(store, "quiet"))).toBe(2);
+    expect(store.current("quiet")).toEqual([
+      { id: "p1", text: "a", status: "pending" },
+      { id: "p2", text: "b", status: "pending" },
+    ]);
+  });
+
+  test("still tolerates a corrupt trailing line after compaction", () => {
+    const store = freshStore();
+    const sessionId = "corrupt-after-compact";
+    store.set(sessionId, ["seed"]);
+    for (let i = 0; i < 225; i += 1) {
+      store.update(sessionId, { add: [`step ${i}`] });
+    }
+
+    appendFileSync(planFile(store, sessionId), "not json\n");
+
+    expect(store.current(sessionId)).toHaveLength(226);
+    expect(store.current(sessionId)?.at(-1)?.text).toBe("step 224");
   });
 });
 
