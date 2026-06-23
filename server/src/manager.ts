@@ -19,6 +19,7 @@ import {
 import type { ApprovalCoordinator } from "./approval/coordinator.ts";
 import { extractTurnOverride } from "./approval/prefix.ts";
 import { deriveApprovalMode } from "./approval/session-entry.ts";
+import { APPROVAL_MODE_DEFAULT } from "./approval/types.ts";
 import type { ApprovalMode, SetApprovalModeEntry } from "./approval/types.ts";
 import { wrapToolWithApproval, type ApprovalContext } from "./approval/wrap-tool.ts";
 import type { EventBus } from "./events.ts";
@@ -238,6 +239,28 @@ export class AgentManager {
     return this.opts.defaultApprovalMode ?? "yolo";
   }
 
+  /**
+   * Append a `set_approval_mode` entry to a session's JSONL — the SSOT. The
+   * sqlite session row is DERIVED (wiped + rebuilt from JSONL on boot via
+   * deriveApprovalMode), so the mode must live in the JSONL to survive a
+   * restart/rebuild. Shared by createSession (initial mode) and
+   * setApprovalMode (runtime change) so both write the identical entry shape.
+   */
+  private async appendApprovalModeEntry(
+    session: Session<JsonlSessionMetadata>,
+    mode: ApprovalMode,
+  ): Promise<void> {
+    const storage = session.getStorage();
+    const entry: SetApprovalModeEntry = {
+      type: "set_approval_mode",
+      id: await storage.createEntryId(),
+      parentId: await storage.getLeafId(),
+      timestamp: new Date().toISOString(),
+      mode,
+    };
+    await storage.appendEntry(entry as unknown as SessionTreeEntry);
+  }
+
   private wrapTools(
     baseTools: AgentTool<any>[],
     sessionId: string,
@@ -259,6 +282,16 @@ export class AgentManager {
     const session = await this.repo.create({ cwd: SESSIONS_CWD });
     const metadata = await session.getMetadata();
     await session.appendModelChange(model.provider, model.id);
+    // Persist a NON-DEFAULT initial approval mode to the JSONL SSOT so a
+    // rebuild reconstructs it (deriveApprovalMode walks JSONL, not the derived
+    // sqlite row). yolo is deriveApprovalMode's fallback, so persisting it is
+    // redundant — skipping it keeps the JSONL of default (yolo) sessions
+    // byte-identical to pre-feature behavior. For a security posture this also
+    // ensures read_only/ask can never silently downgrade to yolo on restart.
+    const initialMode = this.defaultApprovalMode();
+    if (initialMode !== APPROVAL_MODE_DEFAULT) {
+      await this.appendApprovalModeEntry(session, initialMode);
+    }
     const row: SessionRow = {
       id: metadata.id,
       path: metadata.path,
@@ -268,7 +301,7 @@ export class AgentManager {
       preview: "",
       unread: false,
       archived: this.opts.isArchived?.(metadata.id) ?? false,
-      approvalMode: this.defaultApprovalMode(),
+      approvalMode: initialMode,
     };
     this.opts.indexer.upsertSession(row);
     this.open.set(metadata.id, this.wire(metadata, session, model));
@@ -1080,15 +1113,7 @@ export class AgentManager {
 
   async setApprovalMode(id: string, mode: ApprovalMode): Promise<void> {
     const opened = await this.getOrOpen(id);
-    const storage = opened.session.getStorage();
-    const entry: SetApprovalModeEntry = {
-      type: "set_approval_mode",
-      id: await storage.createEntryId(),
-      parentId: await storage.getLeafId(),
-      timestamp: new Date().toISOString(),
-      mode,
-    };
-    await storage.appendEntry(entry as unknown as SessionTreeEntry);
+    await this.appendApprovalModeEntry(opened.session, mode);
     this.opts.indexer.setApprovalMode(id, mode);
     this.emitMeta(id);
     this.opts.bus.emit({ type: "approval_mode_changed", sessionId: id, mode });

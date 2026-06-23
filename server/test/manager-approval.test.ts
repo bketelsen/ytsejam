@@ -359,6 +359,39 @@ describe("AgentManager approval-mode tool wrapping", () => {
     expect(h.events.some((event) => event.type === "approval_request")).toBe(false);
   });
 
+  test("configured default 'read_only' survives an index rebuild (JSONL SSOT)", async () => {
+    const h = makeApprovalHarness({ defaultApprovalMode: "read_only" });
+    const row = await h.manager.createSession();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("read_only");
+
+    // The JSONL (SSOT) must carry the initial mode — the sqlite row is derived
+    // and wiped on rebuild. Without the createSession persistence fix this
+    // entry is absent and the rebuild below re-derives the hardcoded yolo.
+    const lines = readFileSync(row.path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines.some((entry) => entry.type === "set_approval_mode" && entry.mode === "read_only")).toBe(true);
+
+    // Simulate a restart: drop the derived index and rebuild from JSONL.
+    await h.manager.rebuildIndex();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("read_only");
+  });
+
+  test("configured default 'ask' survives an index rebuild (JSONL SSOT)", async () => {
+    const h = makeApprovalHarness({ defaultApprovalMode: "ask" });
+    const row = await h.manager.createSession();
+    await h.manager.rebuildIndex();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("ask");
+  });
+
+  test("default 'yolo' writes no set_approval_mode entry and still rebuilds to yolo", async () => {
+    const h = makeApprovalHarness(); // shipped default yolo
+    const row = await h.manager.createSession();
+    const lines = readFileSync(row.path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    // yolo is the derive fallback — no redundant entry is written.
+    expect(lines.some((entry) => entry.type === "set_approval_mode")).toBe(false);
+    await h.manager.rebuildIndex();
+    expect(h.indexer.getSession(row.id)?.approvalMode).toBe("yolo");
+  });
+
   test("manager wrapping preserves ungated tool reference equality", async () => {
     const h = makeApprovalHarness();
     const row = await h.manager.createSession();
