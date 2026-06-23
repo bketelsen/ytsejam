@@ -52,7 +52,7 @@ Tools split into two groups, assembled by `server/src/tools/index.ts`:
   session and subagent: `web_search`, `web_fetch`. Safe to share because they never touch the
   filesystem.
 - **`createSessionCwdTools(cwd)`** — cwd-*bearing* tools, built **per session/per task** against a
-  specific working directory: `bash`, `read`, `write`, `edit`, `ls`, `git`, `grep`, `find`. Relative
+  specific working directory: `bash`, `read`, `write`, `edit`, `ls`, `git`, `run_checks`, `grep`, `find`. Relative
   paths and `bash`/`git` invocations resolve against that `cwd`.
 
 `AgentManager.wire()` builds the cwd tools against the session's resolved workdir; `TaskManager.run()`
@@ -82,6 +82,7 @@ per-session; delegation/scheduling tools are per-session (they close over the se
 | `edit` | `files.ts` | replace an **exact, unique** substring (errors if 0 or >1 matches). |
 | `ls` | `files.ts` | list a directory (default `.`). |
 | `git` | `git.ts` | Local-repo git ops in the bound cwd's repo: `status`, `diff`, `log`, `show`, `add`, `restore`, `checkout`, `branch`, `commit`. No push/pull/remote/config/force operations. Read ops run immediately; mutating ops are approval-gated in ASK mode. |
+| `run_checks` | `run-checks.ts` | Runs `npm run <script>` in the bound cwd's repo root, optionally with `--workspace`. `kind` maps `test`→`test`, `build`→`build`, `typecheck`→`check`, `lint`→`lint`, or `script`→explicit `script`. Returns structured pass/fail details, with best-effort Vitest summary/failure parsing. Approval-gated like `bash`. |
 | `grep` | `search.ts` | `grep -rnE` recursive regex; capped at 200 lines. |
 | `find` | `search.ts` | `find <path> -name <glob>`; capped at 200 lines. |
 

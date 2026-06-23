@@ -3,6 +3,7 @@ import { createBashTool } from "./shell.ts";
 import { createEditTool, createLsTool, createReadTool, createWriteTool } from "./files.ts";
 import { createApplyPatchTool } from "./apply-patch.ts";
 import { createGitTool } from "./git.ts";
+import { createRunChecksTool } from "./run-checks.ts";
 import { createFindTool, createGrepTool } from "./search.ts";
 import { createWebFetchTool, createWebSearchTool } from "./web.ts";
 
@@ -28,6 +29,7 @@ export function createSessionCwdTools(cwd: string): AgentTool<any>[] {
     createApplyPatchTool(cwd),
     createLsTool(cwd),
     createGitTool(cwd),
+    createRunChecksTool(cwd),
     createGrepTool(cwd),
     createFindTool(cwd),
   ];
