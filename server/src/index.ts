@@ -24,6 +24,8 @@ import { TaskStore } from "./tasks.ts";
 import { createGlobalTools } from "./tools/index.ts";
 import { createDelegationTools } from "./tools/delegation.ts";
 import { createSchedulingTools } from "./tools/scheduling.ts";
+import { createPlanTools } from "./tools/plan.ts";
+import { PlanStore, renderPlanSection } from "./plans.ts";
 import { CogBriefProvider } from "./cog/brief.ts";
 import { SkillsStore } from "./skills.ts";
 import { createCogTools } from "./tools/cog.ts";
@@ -91,6 +93,7 @@ const persona = new PersonaStore(path.join(config.dataDir, "persona"));
 const cogBrief = new CogBriefProvider();
 const skills = new SkillsStore(path.join(config.dataDir, "skills"));
 const workdirs = new WorkdirStore(path.join(config.dataDir, "workdirs"));
+const plans = new PlanStore(path.join(config.dataDir, "plans"));
 const archiveStore = new ArchiveStore(path.join(config.dataDir, "archived"));
 try {
   await skills.seed(path.join(import.meta.dirname, "../skills"));
@@ -130,6 +133,7 @@ const manager = new AgentManager({
     return [
       ...createDelegationTools(() => taskManager, sessionId),
       ...createSchedulingTools(() => scheduler, sessionId),
+      ...createPlanTools(plans, sessionId),
       ...dreamTools,
     ];
   },
@@ -149,6 +153,7 @@ const manager = new AgentManager({
       domainManifest,
       resolveWorkdir(workdirs, sessionId, config.dataDir),
     ),
+  planSection: (sessionId) => renderPlanSection(plans.current(sessionId)),
   recallSection: async (sessionId, query) => {
     const ltm = memory.getLtm();
     const domains = domainManifest;

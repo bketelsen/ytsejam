@@ -45,6 +45,7 @@ export function composeSystemPrompt(
   opts: {
     dataDir: string;
     now?: Date;
+    planSection?: string;
     cogSection?: string;
     skillsSection?: string;
     memorySection?: string;
@@ -52,7 +53,9 @@ export function composeSystemPrompt(
   },
 ): string {
   const now = opts.now ?? new Date();
-  const extras = [opts.cogSection, opts.skillsSection, opts.memorySection]
+  // planSection leads: it's the agent's own task state and the most actionable
+  // scaffolding, so it sits closest to the persona/instructions.
+  const extras = [opts.planSection, opts.cogSection, opts.skillsSection, opts.memorySection]
     .filter((s): s is string => Boolean(s?.trim()))
     .map((s) => `\n\n${s.trim()}`)
     .join("");

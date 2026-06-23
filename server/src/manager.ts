@@ -130,6 +130,15 @@ export interface AgentManagerOptions {
    * swallowed (profile-only or empty section is served on failure).
    */
   recallSection?: (sessionId: string, query: string) => Promise<string | undefined>;
+  /**
+   * Optional: render the per-session "## Current plan" system-prompt section
+   * from the persisted plan store. Called synchronously every turn and folded
+   * into the system prompt by composeSystemPrompt. Because the system prompt is
+   * rebuilt fresh each turn from this hook — never from the conversation branch
+   * that compaction rewrites — the plan survives compaction by construction.
+   * Best-effort: errors are swallowed (no plan section served on failure).
+   */
+  planSection?: (sessionId: string) => string | undefined;
 }
 
 interface OpenSession {
@@ -369,8 +378,16 @@ export class AgentManager {
         const memorySection = await this.opts
           .recallSection?.(metadata.id, query)
           .catch(() => undefined);
+        // Synchronous, best-effort: a plan-store read must never break a turn.
+        let planSection: string | undefined;
+        try {
+          planSection = this.opts.planSection?.(metadata.id);
+        } catch {
+          planSection = undefined;
+        }
         const prompt = composeSystemPrompt(persona, {
           dataDir: this.opts.dataDir,
+          planSection,
           cogSection,
           skillsSection,
           memorySection,
@@ -384,7 +401,7 @@ export class AgentManager {
           const bytes = Buffer.byteLength(prompt, "utf8");
           console.log(
             `[prompt] session=${metadata.id} systemPrompt≈${Math.ceil(prompt.length / 4)} tokens (${bytes} B)` +
-              ` cog=${cogSection ? "y" : "n"} skills=${skillsSection ? "y" : "n"}` +
+              ` plan=${planSection ? "y" : "n"} cog=${cogSection ? "y" : "n"} skills=${skillsSection ? "y" : "n"}` +
               ` memory=${memorySection ? "y" : "n"} ctxFiles=${contextFiles ? Buffer.byteLength(contextFiles, "utf8") : 0}B query="${query.slice(0, 60)}"`,
           );
         }
