@@ -1,15 +1,16 @@
-import {
+import fs, {
   appendFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { PlanStore, renderPlanSection } from "../src/plans.ts";
 
 function freshStore() {
@@ -19,6 +20,10 @@ function freshStore() {
 
 function planFile(store: PlanStore, sessionId: string): string {
   return join(store.storeDir, `${sessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}.jsonl`);
+}
+
+function lockFile(store: PlanStore, sessionId: string): string {
+  return join(store.storeDir, `.${sessionId.replace(/[^a-zA-Z0-9_-]/g, "_")}.jsonl.lock`);
 }
 
 function lineCount(file: string): number {
@@ -187,6 +192,34 @@ describe("PlanStore persistence", () => {
 });
 
 describe("PlanStore concurrency", () => {
+  test("reclaims a stale lock with an atomic rename before acquiring", () => {
+    const store = freshStore();
+    const sessionId = "stale-session";
+    mkdirSync(store.storeDir, { recursive: true });
+    const staleLock = lockFile(store, sessionId);
+    writeFileSync(staleLock, "stale-token\n123\nold\n");
+    const old = new Date(Date.now() - 31_000);
+    utimesSync(staleLock, old, old);
+
+    const renameSpy = vi.spyOn(fs, "renameSync");
+    try {
+      expect(store.update(sessionId, { add: ["after stale"] })).toEqual([
+        { id: "p1", text: "after stale", status: "pending" },
+      ]);
+      const staleRenames = renameSpy.mock.calls.filter(
+        ([from, to]) =>
+          from === staleLock &&
+          typeof to === "string" &&
+          to.startsWith(`${staleLock}.`) &&
+          to.endsWith(".stale"),
+      );
+      expect(staleRenames).toHaveLength(1);
+      expect(readdirSync(store.storeDir).filter((name) => name.endsWith(".stale"))).toEqual([]);
+    } finally {
+      renameSpy.mockRestore();
+    }
+  });
+
   test("serializes overlapping same-session updates so none are lost", async () => {
     const store = freshStore();
     const sessionId = "same-session";

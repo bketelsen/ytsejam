@@ -48,8 +48,11 @@ const STATUS_VALUES: readonly PlanStatus[] = [
 
 const COMPACT_AFTER_LINES = 200;
 const LOCK_RETRY_MS = 5;
-const LOCK_STALE_MS = 30_000;
-const LOCK_TIMEOUT_MS = 35_000;
+// Plan mutations are synchronous and normally finish in milliseconds. If a lock
+// is held for over a second, treat it as stale/wedged; if it still cannot be
+// acquired within two seconds, fail fast rather than freezing the server loop.
+const LOCK_STALE_MS = 1_000;
+const LOCK_TIMEOUT_MS = 2_000;
 const sleepBuffer = new SharedArrayBuffer(4);
 const sleepView = new Int32Array(sleepBuffer);
 
@@ -108,7 +111,14 @@ export class PlanStore {
     return path.join(this.dir, `.${safeSessionId(sessionId)}.jsonl.lock`);
   }
 
+  private reclaimPath(lockPath: string): string {
+    return `${lockPath}.reclaim`;
+  }
+
   private withSessionLock<T>(sessionId: string, fn: () => T): T {
+    // In one Node process, set()/update() are already synchronous. The lock file
+    // protects the JSONL read-modify-write sequence across worker threads or
+    // other ytsejam processes pointed at the same data dir.
     const release = this.acquireSessionLock(sessionId);
     try {
       return fn();
@@ -147,7 +157,7 @@ export class PlanStore {
         try {
           const stat = fs.statSync(lockPath);
           if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-            fs.unlinkSync(lockPath);
+            this.reclaimStaleLock(lockPath);
             continue;
           }
         } catch {
@@ -159,6 +169,60 @@ export class PlanStore {
         }
         sleepSync(LOCK_RETRY_MS);
       }
+    }
+  }
+
+  private reclaimStaleLock(lockPath: string): void {
+    const releaseReclaim = this.acquireReclaimMarker(lockPath);
+    if (!releaseReclaim) return;
+    try {
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return;
+      } catch {
+        return;
+      }
+
+      const stalePath = `${lockPath}.${randomUUID()}.stale`;
+      try {
+        fs.renameSync(lockPath, stalePath);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return;
+        throw err;
+      }
+      try {
+        fs.unlinkSync(stalePath);
+      } catch {
+        // best effort: a renamed stale lock no longer blocks acquisition
+      }
+    } finally {
+      releaseReclaim();
+    }
+  }
+
+  private acquireReclaimMarker(lockPath: string): (() => void) | undefined {
+    const marker = this.reclaimPath(lockPath);
+    try {
+      const fd = fs.openSync(marker, "wx", 0o600);
+      fs.closeSync(fd);
+      return () => {
+        try {
+          fs.unlinkSync(marker);
+        } catch {
+          // best effort: stale reclaim markers are ignored after timeout
+        }
+      };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") throw err;
+      try {
+        const stat = fs.statSync(marker);
+        if (Date.now() - stat.mtimeMs > LOCK_TIMEOUT_MS) fs.unlinkSync(marker);
+      } catch {
+        // Marker disappeared between open and stat; retry through the outer loop.
+      }
+      return undefined;
     }
   }
 
