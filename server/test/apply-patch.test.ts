@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -119,6 +119,39 @@ describe("apply_patch tool", () => {
     ].join("\n");
     await tool.execute("t1", { patch });
     expect(readFileSync(join(d, "nested/dir/new.txt"), "utf8")).toBe("first\nsecond\n");
+  });
+
+  test("rejects patch paths outside the workspace", async () => {
+    const parent = dir();
+    const d = join(parent, "workspace");
+    mkdirSync(d);
+    const patch = [
+      "*** Begin Patch",
+      "*** Add File: ../escape.txt",
+      "+nope",
+      "*** End Patch",
+    ].join("\n");
+    const tool = createApplyPatchTool(d);
+
+    await expect(tool.execute("t1", { patch })).rejects.toThrow(
+      /outside the workspace.*escape\.txt/i,
+    );
+    expect(existsSync(join(parent, "escape.txt"))).toBe(false);
+  });
+
+  test("accepts absolute patch paths inside the workspace", async () => {
+    const d = dir();
+    const target = join(d, "absolute.txt");
+    const patch = [
+      "*** Begin Patch",
+      `*** Add File: ${target}`,
+      "+inside",
+      "*** End Patch",
+    ].join("\n");
+    const tool = createApplyPatchTool(d);
+
+    await tool.execute("t1", { patch });
+    expect(readFileSync(target, "utf8")).toBe("inside\n");
   });
 
   test("refuses to add a file that already exists", async () => {

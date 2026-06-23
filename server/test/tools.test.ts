@@ -1,12 +1,24 @@
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import fs, { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createBashTool, runCommand, runArgv, MAX_TOOL_OUTPUT } from "../src/tools/shell.ts";
-import { createEditTool, createReadTool, createWriteTool } from "../src/tools/files.ts";
+import { createEditTool, createReadTool, createWriteTool, resolveToolPath } from "../src/tools/files.ts";
 import { createGrepTool, createFindTool } from "../src/tools/search.ts";
 
 const dir = () => mkdtempSync(join(tmpdir(), "tools-"));
+
+async function withSandboxEnv<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.YTSEJAM_SANDBOX;
+  if (value === undefined) delete process.env.YTSEJAM_SANDBOX;
+  else process.env.YTSEJAM_SANDBOX = value;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.YTSEJAM_SANDBOX;
+    else process.env.YTSEJAM_SANDBOX = prev;
+  }
+}
 
 describe("bash tool", () => {
   test("captures stdout+stderr and exit code", async () => {
@@ -53,6 +65,19 @@ describe("search tools", () => {
     expect(text).not.toContain("b.txt");
   });
 
+  test("grep rejects path arguments outside the workspace", async () => {
+    await withSandboxEnv(undefined, async () => {
+      const d = dir();
+      const outside = dir();
+      writeFileSync(join(outside, "secret.txt"), "needle\n");
+      const grep = createGrepTool(d);
+
+      await expect(
+        grep.execute("t1", { pattern: "needle", path: outside }),
+      ).rejects.toThrow(/outside the workspace.*tools-/i);
+    });
+  });
+
   test("runArgv output is capped at MAX_TOOL_OUTPUT", async () => {
     const d = dir();
     const result = await runCommand(
@@ -64,13 +89,88 @@ describe("search tools", () => {
 });
 
 describe("file tools", () => {
-  test("write then read round-trips", async () => {
+  test("relative and absolute paths inside the workspace round-trip", async () => {
     const d = dir();
     const write = createWriteTool(d);
     const read = createReadTool(d);
+    const edit = createEditTool(d);
     await write.execute("t1", { path: "a/b.txt", content: "hello" });
+    await edit.execute("t2", { path: "a/b.txt", oldText: "hello", newText: "hello inside" });
     const r = await read.execute("t2", { path: join(d, "a/b.txt") });
-    expect((r.content[0] as any).text).toContain("hello");
+    expect((r.content[0] as any).text).toContain("hello inside");
+  });
+
+  test("rejects relative traversal outside the workspace", async () => {
+    await withSandboxEnv(undefined, async () => {
+      const parent = dir();
+      const d = join(parent, "workspace");
+      mkdirSync(d);
+      const write = createWriteTool(d);
+
+      await expect(
+        write.execute("t1", { path: "../escape.txt", content: "nope" }),
+      ).rejects.toThrow(/outside the workspace.*escape\.txt/i);
+      expect(existsSync(join(parent, "escape.txt"))).toBe(false);
+    });
+  });
+
+  test("rejects absolute paths outside the workspace", async () => {
+    await withSandboxEnv(undefined, async () => {
+      const d = dir();
+      const outside = dir();
+      const target = join(outside, "secret.txt");
+      writeFileSync(target, "secret\n");
+      const read = createReadTool(d);
+
+      await expect(read.execute("t1", { path: target })).rejects.toThrow(
+        /outside the workspace.*secret\.txt/i,
+      );
+    });
+  });
+
+  test("rejects symlink paths that resolve outside the workspace", async () => {
+    await withSandboxEnv(undefined, async () => {
+      const d = dir();
+      const outside = dir();
+      writeFileSync(join(outside, "secret.txt"), "secret\n");
+      symlinkSync(outside, join(d, "outside-link"));
+      const read = createReadTool(d);
+
+      await expect(read.execute("t1", { path: "outside-link/secret.txt" })).rejects.toThrow(
+        /outside the workspace.*outside-link/,
+      );
+    });
+  });
+
+  test("rethrows non-ENOENT realpath errors instead of treating them as missing paths", async () => {
+    await withSandboxEnv(undefined, async () => {
+      const d = dir();
+      const originalRealpath = fs.realpathSync.native;
+      const error = Object.assign(new Error("synthetic loop"), { code: "ELOOP" });
+      const spy = vi.spyOn(fs.realpathSync, "native").mockImplementation((p) => {
+        if (String(p).includes("loop")) throw error;
+        return originalRealpath(p);
+      });
+
+      try {
+        expect(() => resolveToolPath(d, "loop/file.txt")).toThrow(error);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  test("YTSEJAM_SANDBOX=0 restores permissive path resolution", async () => {
+    await withSandboxEnv("0", async () => {
+      const d = dir();
+      const outside = dir();
+      const target = join(outside, "secret.txt");
+      writeFileSync(target, "secret\n");
+      const read = createReadTool(d);
+
+      const r = await read.execute("t1", { path: target });
+      expect((r.content[0] as any).text).toContain("secret");
+    });
   });
 
   test("edit replaces a unique occurrence and rejects ambiguous ones", async () => {

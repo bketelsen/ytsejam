@@ -28,6 +28,11 @@ export interface Config {
   contextFiles: boolean;
 }
 
+export function sandboxEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  const v = env.YTSEJAM_SANDBOX;
+  return v !== "0" && v?.toLowerCase() !== "false";
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const authToken = env.YTSEJAM_AUTH_TOKEN;
   if (!authToken) throw new Error("YTSEJAM_AUTH_TOKEN is required");

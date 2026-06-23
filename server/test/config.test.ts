@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, sandboxEnabled } from "../src/config.ts";
 
 // Helper: tests don't care about dataDir; pass a fixed sentinel so the
 // in-repo-default guard doesn't trip. Tests that care about dataDir
@@ -67,6 +67,14 @@ describe("loadConfig", () => {
     expect(over.subagentModel).toBe("faux/faux");
     expect(over.taskConcurrency).toBe(2);
     expect(over.taskTimeoutMinutes).toBe(5);
+  });
+
+  test("sandboxEnabled defaults on and accepts 0/false opt-out", () => {
+    expect(sandboxEnabled({})).toBe(true);
+    expect(sandboxEnabled({ YTSEJAM_SANDBOX: "0" })).toBe(false);
+    expect(sandboxEnabled({ YTSEJAM_SANDBOX: "false" })).toBe(false);
+    expect(sandboxEnabled({ YTSEJAM_SANDBOX: "FALSE" })).toBe(false);
+    expect(sandboxEnabled({ YTSEJAM_SANDBOX: "true" })).toBe(true);
   });
 });
 
