@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { GATED_TOOL_NAMES, isGatedTool } from "../src/approval/gated-tools.ts";
+import { GATED_GIT_OPS, GATED_TOOL_NAMES, canToolRequireApproval, isGatedTool } from "../src/approval/gated-tools.ts";
 
 describe("gated tools registry", () => {
   test("gated set is exactly the design-doc list", () => {
@@ -7,6 +7,21 @@ describe("gated tools registry", () => {
     expect([...GATED_TOOL_NAMES].sort()).toEqual(
       ["apply_patch", "bash", "cancel_schedule", "delegate", "edit", "schedule", "write"],
     );
+  });
+
+  test("git gates only local mutating subcommands", () => {
+    expect([...GATED_GIT_OPS].sort()).toEqual(["add", "branch", "checkout", "commit", "restore"]);
+    for (const op of ["add", "branch", "checkout", "commit", "restore"]) {
+      expect(isGatedTool("git", { op })).toBe(true);
+    }
+    for (const op of ["status", "diff", "log", "show"]) {
+      expect(isGatedTool("git", { op })).toBe(false);
+    }
+  });
+
+  test("git is wrapped because some subcommands can require approval", () => {
+    expect(canToolRequireApproval("git")).toBe(true);
+    expect(canToolRequireApproval("read")).toBe(false);
   });
 
   test("isGatedTool true for bash, write, edit, apply_patch, delegate, schedule, cancel_schedule", () => {
@@ -25,6 +40,7 @@ describe("gated tools registry", () => {
       "list_schedules",
       "recall",
       "skill",
+      "git",
     ]) {
       expect(isGatedTool(name)).toBe(false);
     }

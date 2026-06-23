@@ -2,6 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createBashTool } from "./shell.ts";
 import { createEditTool, createLsTool, createReadTool, createWriteTool } from "./files.ts";
 import { createApplyPatchTool } from "./apply-patch.ts";
+import { createGitTool } from "./git.ts";
 import { createFindTool, createGrepTool } from "./search.ts";
 import { createWebFetchTool, createWebSearchTool } from "./web.ts";
 
@@ -26,8 +27,8 @@ export function createSessionCwdTools(cwd: string): AgentTool<any>[] {
     createEditTool(cwd),
     createApplyPatchTool(cwd),
     createLsTool(cwd),
+    createGitTool(cwd),
     createGrepTool(cwd),
     createFindTool(cwd),
   ];
 }
-

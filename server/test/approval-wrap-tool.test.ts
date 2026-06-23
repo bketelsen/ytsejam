@@ -6,6 +6,7 @@ import { ApprovalCoordinator } from "../src/approval/coordinator.ts";
 import type { ApprovalMode } from "../src/approval/types.ts";
 
 const emptyParams = Type.Object({});
+const gitParams = Type.Object({ op: Type.String() });
 
 function makeFakeTool(name: string): AgentTool<typeof emptyParams> {
   return {
@@ -33,6 +34,32 @@ describe("wrapToolWithApproval", () => {
     const tool = makeFakeTool("read");
     const ctx = { sessionId: "s1", effectiveMode: (): ApprovalMode => "ask", coordinator: coord };
     expect(wrapToolWithApproval(tool, ctx)).toBe(tool);
+  });
+
+  test("param-gated git tool runs read ops directly and gates write ops", async () => {
+    const { coord, lastId } = makeCoordinator();
+    let calls = 0;
+    const tool: AgentTool<typeof gitParams> = {
+      name: "git",
+      label: "Git",
+      description: "",
+      parameters: gitParams,
+      execute: async (_id, params) => {
+        calls++;
+        return { content: [{ type: "text", text: `ran ${params.op}` }], details: {} };
+      },
+    };
+    const ctx = { sessionId: "s1", effectiveMode: (): ApprovalMode => "ask", coordinator: coord };
+    const wrapped = wrapToolWithApproval(tool, ctx);
+
+    expect((await wrapped.execute("read", { op: "status" })).content[0]).toMatchObject({ text: "ran status" });
+    expect(coord.list()).toHaveLength(0);
+
+    const p = wrapped.execute("write", { op: "commit" });
+    expect(coord.list()).toHaveLength(1);
+    coord.resolve(lastId(), "approve");
+    expect((await p).content[0]).toMatchObject({ text: "ran commit" });
+    expect(calls).toBe(2);
   });
 
   test("gated tool in YOLO mode calls through", async () => {

@@ -52,8 +52,8 @@ Tools split into two groups, assembled by `server/src/tools/index.ts`:
   session and subagent: `web_search`, `web_fetch`. Safe to share because they never touch the
   filesystem.
 - **`createSessionCwdTools(cwd)`** — cwd-*bearing* tools, built **per session/per task** against a
-  specific working directory: `bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`. Relative paths
-  and `bash` invocations resolve against that `cwd`.
+  specific working directory: `bash`, `read`, `write`, `edit`, `ls`, `git`, `grep`, `find`. Relative
+  paths and `bash`/`git` invocations resolve against that `cwd`.
 
 `AgentManager.wire()` builds the cwd tools against the session's resolved workdir; `TaskManager.run()`
 builds them against the **parent session's** workdir so a subagent's files land in the same repo the
@@ -81,6 +81,7 @@ per-session; delegation/scheduling tools are per-session (they close over the se
 | `write` | `files.ts` | write a file, creating parent dirs; overwrites. |
 | `edit` | `files.ts` | replace an **exact, unique** substring (errors if 0 or >1 matches). |
 | `ls` | `files.ts` | list a directory (default `.`). |
+| `git` | `git.ts` | Local-repo git ops in the bound cwd's repo: `status`, `diff`, `log`, `show`, `add`, `restore`, `checkout`, `branch`, `commit`. No push/pull/remote/config/force operations. Read ops run immediately; mutating ops are approval-gated in ASK mode. |
 | `grep` | `search.ts` | `grep -rnE` recursive regex; capped at 200 lines. |
 | `find` | `search.ts` | `find <path> -name <glob>`; capped at 200 lines. |
 

@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { Static, TSchema } from "typebox";
 import type { ApprovalDecision, ApprovalCoordinator } from "./coordinator.ts";
-import { isGatedTool } from "./gated-tools.ts";
+import { canToolRequireApproval, isGatedTool } from "./gated-tools.ts";
 import type { ApprovalMode } from "./types.ts";
 
 /**
@@ -29,7 +29,7 @@ export function wrapToolWithApproval<TParameters extends TSchema, TDetails = any
   tool: AgentTool<TParameters, TDetails>,
   ctx: ApprovalContext,
 ): AgentTool<TParameters, TDetails | ApprovalDenialDetails> {
-  if (!isGatedTool(tool.name)) return tool;
+  if (!canToolRequireApproval(tool.name)) return tool;
 
   const originalExecute = tool.execute;
   return {
@@ -40,7 +40,7 @@ export function wrapToolWithApproval<TParameters extends TSchema, TDetails = any
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback<TDetails | ApprovalDenialDetails>,
     ): Promise<AgentToolResult<TDetails | ApprovalDenialDetails>> => {
-      if (ctx.effectiveMode() === "yolo") {
+      if (!isGatedTool(tool.name, params) || ctx.effectiveMode() === "yolo") {
         return originalExecute(toolCallId, params, signal, onUpdate);
       }
 
