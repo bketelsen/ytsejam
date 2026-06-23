@@ -5,7 +5,7 @@ describe("gated tools registry", () => {
   test("gated set is exactly the design-doc list", () => {
     // Pinning this prevents accidental drift — change requires a deliberate edit.
     expect([...GATED_TOOL_NAMES].sort()).toEqual(
-      ["apply_patch", "bash", "cancel_schedule", "delegate", "edit", "schedule", "write"],
+      ["apply_patch", "bash", "cancel_schedule", "delegate", "edit", "run_checks", "schedule", "write"],
     );
   });
 
@@ -24,8 +24,8 @@ describe("gated tools registry", () => {
     expect(canToolRequireApproval("read")).toBe(false);
   });
 
-  test("isGatedTool true for bash, write, edit, apply_patch, delegate, schedule, cancel_schedule", () => {
-    for (const name of ["bash", "write", "edit", "apply_patch", "delegate", "schedule", "cancel_schedule"]) {
+  test("isGatedTool true for bash, write, edit, apply_patch, run_checks, delegate, schedule, cancel_schedule", () => {
+    for (const name of ["bash", "write", "edit", "apply_patch", "run_checks", "delegate", "schedule", "cancel_schedule"]) {
       expect(isGatedTool(name)).toBe(true);
     }
   });

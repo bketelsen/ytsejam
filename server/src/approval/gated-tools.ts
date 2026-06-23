@@ -11,6 +11,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   "write",
   "edit",
   "apply_patch",
+  "run_checks",
   "delegate",
   "schedule",
   "cancel_schedule",
