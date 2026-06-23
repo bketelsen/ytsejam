@@ -68,6 +68,14 @@ describe("loadConfig", () => {
     expect(over.taskConcurrency).toBe(2);
     expect(over.taskTimeoutMinutes).toBe(5);
   });
+
+  test("workspace sandbox defaults on and accepts 0/false opt-out", () => {
+    expect(load({ YTSEJAM_AUTH_TOKEN: "x" }).sandbox).toBe(true);
+    expect(load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_SANDBOX: "0" }).sandbox).toBe(false);
+    expect(load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_SANDBOX: "false" }).sandbox).toBe(false);
+    expect(load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_SANDBOX: "FALSE" }).sandbox).toBe(false);
+    expect(load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_SANDBOX: "true" }).sandbox).toBe(true);
+  });
 });
 
 

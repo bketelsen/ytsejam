@@ -26,6 +26,13 @@ export interface Config {
    * --no-context-files opt-out.
    */
   contextFiles: boolean;
+  /** confine structured file/path tools to their bound workspace */
+  sandbox: boolean;
+}
+
+export function sandboxEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  const v = env.YTSEJAM_SANDBOX;
+  return v !== "0" && v?.toLowerCase() !== "false";
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -54,6 +61,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     taskConcurrency: Math.max(1, Number(env.YTSEJAM_TASK_CONCURRENCY ?? 4) || 4),
     taskTimeoutMinutes: Math.max(1, Number(env.YTSEJAM_TASK_TIMEOUT_MIN ?? 15) || 15),
     contextFiles: env.YTSEJAM_CONTEXT_FILES !== "false",
+    sandbox: sandboxEnabled(env),
   };
 }
 

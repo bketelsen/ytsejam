@@ -41,6 +41,7 @@ beforeEach(() => {
       webDistDir: "/tmp/nonexistent",
       generateTitles: false,
       contextFiles: false,
+      sandbox: true,
       piAuthPath: `${tmpData}/no-auth.json`,
       subagentModel: "faux/faux",
       taskConcurrency: 4,

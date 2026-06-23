@@ -2,10 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-
-function resolve(cwd: string, p: string): string {
-  return path.isAbsolute(p) ? p : path.join(cwd, p);
-}
+import { resolveToolPath } from "./files.ts";
 
 type FileOp =
   | { kind: "add"; file: string; lines: string[] }
@@ -224,7 +221,7 @@ export async function planPatch(cwd: string, patch: string): Promise<PlannedWrit
     );
 
   for (const op of ops) {
-    const target = resolve(cwd, op.file);
+    const target = resolveToolPath(cwd, op.file);
     const prior = state.get(target);
     if (op.kind === "add") {
       // A path deleted earlier in this same envelope is addable; otherwise it

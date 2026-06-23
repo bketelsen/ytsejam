@@ -1,11 +1,55 @@
+import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { sandboxEnabled } from "../config.ts";
 import { truncate } from "./shell.ts";
 
+export class ToolPathOutsideWorkspaceError extends Error {
+  readonly path: string;
+  readonly resolvedPath: string;
+  readonly workspace: string;
+
+  constructor(inputPath: string, resolvedPath: string, workspace: string) {
+    super(`Path is outside the workspace: ${inputPath} (resolved to ${resolvedPath}; workspace ${workspace})`);
+    this.name = "ToolPathOutsideWorkspaceError";
+    this.path = inputPath;
+    this.resolvedPath = resolvedPath;
+    this.workspace = workspace;
+  }
+}
+
+function canonicalPathForContainment(p: string): string {
+  const suffix: string[] = [];
+  let probe = path.resolve(p);
+  while (true) {
+    try {
+      return path.resolve(syncFs.realpathSync.native(probe), ...suffix);
+    } catch {
+      const parent = path.dirname(probe);
+      if (parent === probe) return path.resolve(p);
+      suffix.unshift(path.basename(probe));
+      probe = parent;
+    }
+  }
+}
+
+function isInside(base: string, target: string): boolean {
+  const relative = path.relative(base, target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 export function resolveToolPath(cwd: string, p: string): string {
-  return path.isAbsolute(p) ? p : path.join(cwd, p);
+  if (!sandboxEnabled()) return path.isAbsolute(p) ? p : path.join(cwd, p);
+
+  const workspace = canonicalPathForContainment(cwd);
+  const resolved = path.isAbsolute(p) ? path.resolve(p) : path.resolve(cwd, p);
+  const target = canonicalPathForContainment(resolved);
+  if (!isInside(workspace, target)) {
+    throw new ToolPathOutsideWorkspaceError(p, target, workspace);
+  }
+  return target;
 }
 
 const readParams = Type.Object({ path: Type.String() });

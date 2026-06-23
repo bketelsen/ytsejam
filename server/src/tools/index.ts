@@ -22,6 +22,7 @@ export function createGlobalTools(): AgentTool<any>[] {
  */
 export function createSessionCwdTools(cwd: string): AgentTool<any>[] {
   return [
+    // Bash runs an unconstrained shell in cwd; path containment applies only to structured path tools.
     createBashTool(cwd),
     createReadTool(cwd),
     createWriteTool(cwd),
