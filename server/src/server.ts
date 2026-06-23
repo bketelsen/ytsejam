@@ -8,6 +8,7 @@ import type { EventBus, ServerEvent } from "./events.ts";
 import type { Indexer } from "./indexer.ts";
 import type { AgentManager } from "./manager.ts";
 import type { ApprovalCoordinator } from "./approval/coordinator.ts";
+import { isApprovalMode } from "./approval/types.ts";
 import * as memory from "./memory/index.ts";
 import { BackfillJob } from "./memory/bridge/backfill-job.ts";
 import { listAvailableModels } from "./models.ts";
@@ -370,12 +371,27 @@ export function createApp(deps: AppDeps) {
     if (body.unread === false) manager.markRead(id);
     if (typeof body.model === "string") await manager.setModel(id, body.model);
     if (body.approvalMode !== undefined) {
-      if (body.approvalMode !== "yolo" && body.approvalMode !== "ask") {
-        return c.json({ error: "approvalMode must be 'yolo' or 'ask'" }, 400);
+      if (!isApprovalMode(body.approvalMode)) {
+        return c.json({ error: "approvalMode must be 'yolo', 'ask', or 'read_only'" }, 400);
       }
       await manager.setApprovalMode(id, body.approvalMode);
     }
     return c.json({ ok: true });
+  });
+
+  // Dedicated runtime escalation/de-escalation endpoint. Guarded by the same
+  // /api/* bearer-token auth. Validates the mode, then delegates to
+  // setApprovalMode (which persists to JSONL, updates the index, and emits the
+  // approval_mode_changed + session_meta events the UI listens for).
+  app.post("/api/sessions/:id/approval-mode", async (c) => {
+    const id = c.req.param("id");
+    if (!indexer.getSession(id)) return c.json({ error: "not found" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    if (!isApprovalMode(body.mode)) {
+      return c.json({ error: "mode must be 'yolo', 'ask', or 'read_only'" }, 400);
+    }
+    await manager.setApprovalMode(id, body.mode);
+    return c.json({ ok: true, mode: body.mode });
   });
 
   app.post("/api/sessions/:id/cwd", async (c) => {

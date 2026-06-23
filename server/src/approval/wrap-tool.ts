@@ -21,9 +21,28 @@ export interface ApprovalDenialDetails {
 }
 
 /**
+ * Build the denial result returned when a gated tool is auto-denied in
+ * read-only mode. Reuses the ApprovalDenialDetails shape (`{ approval: "deny" }`)
+ * and carries an actionable message telling the model how to escalate.
+ */
+function readOnlyDenial(toolName: string): AgentToolResult<ApprovalDenialDetails> {
+  const text =
+    `This session is in read-only approval mode, so the mutating \`${toolName}\` ` +
+    `tool was automatically denied without prompting. Read-only tools still run. ` +
+    `To allow this action, escalate the session's approval mode to \`ask\` ` +
+    `(prompt for each mutating action) or \`yolo\` (auto-approve) — e.g. ` +
+    `POST /api/sessions/:id/approval-mode {"mode":"ask"}.`;
+  return {
+    content: [{ type: "text" as const, text }],
+    details: { approval: "deny" },
+  };
+}
+
+/**
  * Wrap a tool's execute fn. In YOLO mode (or for ungated tools) calls through
- * directly. In ASK mode for gated tools, opens an approval and either calls
- * through or returns a synthetic denial.
+ * directly. In READ_ONLY mode, gated tools are auto-denied without prompting.
+ * In ASK mode for gated tools, opens an approval and either calls through or
+ * returns a synthetic denial.
  */
 export function wrapToolWithApproval<TParameters extends TSchema, TDetails = any>(
   tool: AgentTool<TParameters, TDetails>,
@@ -40,8 +59,14 @@ export function wrapToolWithApproval<TParameters extends TSchema, TDetails = any
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback<TDetails | ApprovalDenialDetails>,
     ): Promise<AgentToolResult<TDetails | ApprovalDenialDetails>> => {
-      if (!isGatedTool(tool.name, params) || ctx.effectiveMode() === "yolo") {
+      const mode = ctx.effectiveMode();
+      if (!isGatedTool(tool.name, params) || mode === "yolo") {
         return originalExecute(toolCallId, params, signal, onUpdate);
+      }
+
+      // Read-only: auto-deny gated/mutating tools WITHOUT opening an approval.
+      if (mode === "read_only") {
+        return readOnlyDenial(tool.name);
       }
 
       const decision = await ctx.coordinator.request({

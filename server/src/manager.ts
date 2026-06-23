@@ -115,6 +115,12 @@ export interface AgentManagerOptions {
   /** Approval prompt coordinator, plumbed now for gated-tool integration. */
   approvalCoordinator?: ApprovalCoordinator;
   /**
+   * Approval mode applied to newly created sessions (and as the in-memory
+   * fallback when a session row has none). Defaults to `yolo` when omitted to
+   * preserve the historical behavior. Wired from config.defaultApprovalMode.
+   */
+  defaultApprovalMode?: ApprovalMode;
+  /**
    * Optional LTM ingest hook fired fire-and-forget when a chat session
    * settles at agent_end. Lazy getter (not a direct ref) because the
    * managers are constructed before the LTM store is opened at boot;
@@ -227,6 +233,11 @@ export class AgentManager {
     });
   }
 
+  /** Default approval mode for new sessions; `yolo` unless configured. */
+  private defaultApprovalMode(): ApprovalMode {
+    return this.opts.defaultApprovalMode ?? "yolo";
+  }
+
   private wrapTools(
     baseTools: AgentTool<any>[],
     sessionId: string,
@@ -257,7 +268,7 @@ export class AgentManager {
       preview: "",
       unread: false,
       archived: this.opts.isArchived?.(metadata.id) ?? false,
-      approvalMode: "yolo",
+      approvalMode: this.defaultApprovalMode(),
     };
     this.opts.indexer.upsertSession(row);
     this.open.set(metadata.id, this.wire(metadata, session, model));
@@ -325,7 +336,7 @@ export class AgentManager {
   ): OpenSession {
     const sessionCwd =
       this.opts.resolveWorkdir?.(metadata.id) ?? this.opts.dataDir;
-    const currentEffectiveMode = { value: "yolo" as ApprovalMode };
+    const currentEffectiveMode = { value: this.defaultApprovalMode() };
     const sessionRow = this.opts.indexer.getSession(metadata.id);
     if (sessionRow?.approvalMode) currentEffectiveMode.value = sessionRow.approvalMode;
     const baseTools = [
@@ -885,7 +896,7 @@ export class AgentManager {
         return;
       }
       // Fresh turn: resolve effective mode now.
-      const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+      const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? this.defaultApprovalMode();
       opened.currentEffectiveMode.value = override ?? sessionMode;
       if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
       opened.running = true; // set eagerly: a second sendMessage before agent_start must steer
@@ -915,7 +926,7 @@ export class AgentManager {
         await opened.harness.followUp(effectiveText);
         return;
       }
-      const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? "yolo";
+      const sessionMode = this.opts.indexer.getSession(id)?.approvalMode ?? this.defaultApprovalMode();
       opened.currentEffectiveMode.value = override ?? sessionMode;
       if (!(await this.runPendingCompactionAtIdle(opened, "idle"))) return;
       opened.running = true;

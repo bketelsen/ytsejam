@@ -71,6 +71,30 @@ describe("loadConfig", () => {
 });
 
 
+describe("default approval mode config", () => {
+  test("defaults to yolo (shipped default unchanged)", () => {
+    expect(load({ YTSEJAM_AUTH_TOKEN: "x" }).defaultApprovalMode).toBe("yolo");
+  });
+
+  test.each(["yolo", "ask", "read_only"] as const)(
+    "honors a valid YTSEJAM_DEFAULT_APPROVAL_MODE=%s",
+    (mode) => {
+      expect(
+        load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_DEFAULT_APPROVAL_MODE: mode }).defaultApprovalMode,
+      ).toBe(mode);
+    },
+  );
+
+  test.each(["bogus", "READ_ONLY", "Ask", " yolo", ""])(
+    "falls back safely to yolo for invalid value %j",
+    (raw) => {
+      expect(
+        load({ YTSEJAM_AUTH_TOKEN: "x", YTSEJAM_DEFAULT_APPROVAL_MODE: raw }).defaultApprovalMode,
+      ).toBe("yolo");
+    },
+  );
+});
+
 describe("context files config", () => {
   test("defaults to true", () => {
     expect(load({ YTSEJAM_AUTH_TOKEN: "x" }).contextFiles).toBe(true);

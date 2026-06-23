@@ -1,8 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
+import type { ApprovalMode } from "./approval/types.ts";
 import type { TaskRow, TaskStatus } from "./tasks.ts";
 import type { ScheduleRow } from "./schedules.ts";
 
-const SCHEMA_VERSION = 5;
+// Bumped 5 → 6 for the `read_only` approval mode (widened CHECK constraint).
+// The index is derived from JSONL (SSOT) and rebuilt on boot, so a version
+// bump that recreates the table loses nothing.
+const SCHEMA_VERSION = 6;
 
 export interface SessionRow {
   id: string;
@@ -13,7 +17,7 @@ export interface SessionRow {
   preview: string;
   unread: boolean;
   archived: boolean;
-  approvalMode: "yolo" | "ask";
+  approvalMode: ApprovalMode;
 }
 
 type SqliteInteger = number | bigint;
@@ -27,7 +31,7 @@ interface SessionDbRow {
   preview: string;
   unread: SqliteInteger;
   archived: SqliteInteger;
-  approval_mode: "yolo" | "ask";
+  approval_mode: ApprovalMode;
 }
 
 interface TaskDbRow {
@@ -145,7 +149,7 @@ export class Indexer {
         unread INTEGER NOT NULL DEFAULT 0,
         archived INTEGER NOT NULL DEFAULT 0,
         approval_mode TEXT NOT NULL DEFAULT 'yolo',
-        CHECK(approval_mode IN ('yolo', 'ask'))
+        CHECK(approval_mode IN ('yolo', 'ask', 'read_only'))
       );
       CREATE INDEX sessions_updated ON sessions(updated_at DESC);
       CREATE TABLE tasks (
@@ -224,7 +228,7 @@ export class Indexer {
     this.db.prepare("UPDATE sessions SET archived=? WHERE id=?").run(archived ? 1 : 0, id);
   }
 
-  setApprovalMode(id: string, mode: "yolo" | "ask"): void {
+  setApprovalMode(id: string, mode: ApprovalMode): void {
     this.db.prepare("UPDATE sessions SET approval_mode=? WHERE id=?").run(mode, id);
   }
 
