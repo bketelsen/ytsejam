@@ -26,7 +26,9 @@ function canonicalPathForContainment(p: string): string {
   while (true) {
     try {
       return path.resolve(syncFs.realpathSync.native(probe), ...suffix);
-    } catch {
+    } catch (err) {
+      // Missing write targets are allowed: canonicalize the deepest existing ancestor.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       const parent = path.dirname(probe);
       if (parent === probe) return path.resolve(p);
       suffix.unshift(path.basename(probe));
@@ -49,6 +51,7 @@ export function resolveToolPath(cwd: string, p: string): string {
   if (!isInside(workspace, target)) {
     throw new ToolPathOutsideWorkspaceError(p, target, workspace);
   }
+  // Preflight only: a concurrent filesystem change between this check and the later fs op remains possible.
   return target;
 }
 

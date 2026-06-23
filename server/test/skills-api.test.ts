@@ -42,7 +42,6 @@ function buildApp(opts: { skills?: SkillsStore } = {}): ReturnType<typeof create
       taskConcurrency: 4,
       taskTimeoutMinutes: 15,
       contextFiles: false,
-      sandbox: true,
     },
     authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
     skills: opts.skills,

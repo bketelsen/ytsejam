@@ -48,7 +48,6 @@ beforeEach(() => {
       taskConcurrency: 4,
       taskTimeoutMinutes: 15,
       contextFiles: false,
-      sandbox: true,
     },
     authStore: new PiAuthStore(join(tmpData, "no-auth.json")),
     workdirs,

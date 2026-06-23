@@ -93,7 +93,6 @@ describe("terminal websocket", () => {
         taskConcurrency: 4,
         taskTimeoutMinutes: 15,
         contextFiles: false,
-        sandbox: true,
       },
       authStore: new PiAuthStore(`${made.dataDir}/no-auth.json`),
     });

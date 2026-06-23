@@ -41,7 +41,6 @@ function makeDeps(dataDir: string): AppDeps {
       taskConcurrency: 4,
       taskTimeoutMinutes: 15,
       contextFiles: false,
-      sandbox: true,
     },
     authStore: new PiAuthStore(join(dataDir, "no-auth.json")),
   };

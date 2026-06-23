@@ -1,9 +1,9 @@
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from "node:fs";
+import fs, { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createBashTool, runCommand, runArgv, MAX_TOOL_OUTPUT } from "../src/tools/shell.ts";
-import { createEditTool, createReadTool, createWriteTool } from "../src/tools/files.ts";
+import { createEditTool, createReadTool, createWriteTool, resolveToolPath } from "../src/tools/files.ts";
 import { createGrepTool, createFindTool } from "../src/tools/search.ts";
 
 const dir = () => mkdtempSync(join(tmpdir(), "tools-"));
@@ -139,6 +139,24 @@ describe("file tools", () => {
       await expect(read.execute("t1", { path: "outside-link/secret.txt" })).rejects.toThrow(
         /outside the workspace.*outside-link/,
       );
+    });
+  });
+
+  test("rethrows non-ENOENT realpath errors instead of treating them as missing paths", async () => {
+    await withSandboxEnv(undefined, async () => {
+      const d = dir();
+      const originalRealpath = fs.realpathSync.native;
+      const error = Object.assign(new Error("synthetic loop"), { code: "ELOOP" });
+      const spy = vi.spyOn(fs.realpathSync, "native").mockImplementation((p) => {
+        if (String(p).includes("loop")) throw error;
+        return originalRealpath(p);
+      });
+
+      try {
+        expect(() => resolveToolPath(d, "loop/file.txt")).toThrow(error);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
