@@ -1,5 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { resolveToolPath } from "./files.ts";
 import { runArgv } from "./shell.ts";
 
 const grepParams = Type.Object({
@@ -14,9 +15,10 @@ export function createGrepTool(cwd: string): AgentTool<typeof grepParams> {
     description: "Search file contents recursively with line numbers.",
     parameters: grepParams,
     execute: async (_id, params) => {
+      const target = resolveToolPath(cwd, params.path);
       const { output } = await runArgv(
         "grep",
-        ["-rnE", "--", params.pattern, params.path],
+        ["-rnE", "--", params.pattern, target],
         { cwd, timeoutMs: 30_000 },
       );
       const capped = output.split("\n").slice(0, 200).join("\n");
@@ -37,9 +39,10 @@ export function createFindTool(cwd: string): AgentTool<typeof findParams> {
     description: "Find files by name pattern.",
     parameters: findParams,
     execute: async (_id, params) => {
+      const target = resolveToolPath(cwd, params.path);
       const { output } = await runArgv(
         "find",
-        [params.path, "-name", params.namePattern],
+        [target, "-name", params.namePattern],
         { cwd, timeoutMs: 30_000 },
       );
       const capped = output.split("\n").slice(0, 200).join("\n");

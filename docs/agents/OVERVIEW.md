@@ -290,6 +290,7 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 | `YTSEJAM_GENERATE_TITLES` | `true` | LLM-generated session titles |
 | `YTSEJAM_CONTEXT_FILES` | `true` | auto-load `AGENTS.md`/`CLAUDE.md` into the prompt |
 | `YTSEJAM_DEFAULT_APPROVAL_MODE` | `yolo` | default approval mode for new sessions: `yolo` (run), `ask` (prompt), `read_only` (auto-deny mutating tools). Runtime-escalatable via `POST /api/sessions/:id/approval-mode`. Invalid values fall back to `yolo` |
+| `YTSEJAM_SANDBOX` | `true` | confine structured file/path tools to their bound workspace; set `0`/`false` to restore permissive host paths |
 | `YTSEJAM_COMPACTION_ENABLED` | `true` | emergency kill-switch for all compaction (idle/inner-loop/reactive) |
 | `YTSEJAM_PI_AUTH` | `~/.pi/agent/auth.json` | pi CLI OAuth credentials (Copilot/Codex subscriptions) |
 | `LTM_STORE_DIR` | `<dataDir>/ltm` | LTM substrate directory (single-writer). Empty-string falls through to default. |

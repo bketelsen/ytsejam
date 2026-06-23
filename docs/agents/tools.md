@@ -53,19 +53,18 @@ Tools split into two groups, assembled by `server/src/tools/index.ts`:
   filesystem.
 - **`createSessionCwdTools(cwd)`** — cwd-*bearing* tools, built **per session/per task** against a
   specific working directory: `bash`, `read`, `write`, `edit`, `ls`, `git`, `run_checks`, `grep`, `find`. Relative
-  paths and `bash`/`git` invocations resolve against that `cwd`.
+  paths and structured path arguments resolve against that `cwd`.
 
 `AgentManager.wire()` builds the cwd tools against the session's resolved workdir; `TaskManager.run()`
 builds them against the **parent session's** workdir so a subagent's files land in the same repo the
 user is talking about. `applyWorkdirChange()` rebuilds them live when the workdir changes mid-session.
 
-**Tool-author rule: never assume the cwd a tool will be bound to.** The file tools `resolve(cwd, p)`
-so an *absolute* path always wins and a *relative* path lands in whatever cwd the harness bound. This
-matters most for subagent file tools: a subagent (and any agent writing the subagent's `task` prompt)
-must use **absolute paths** for anything outside the parent workdir, because the subagent's relative
-paths resolve against the parent workdir, not the data dir. The worker system prompt
-(`composeWorkerPrompt` in `persona.ts`) states the bound workdir explicitly for this reason. See
-[`delegation.md`](delegation.md).
+**Tool-author rule: never assume the cwd a tool will be bound to.** The structured file/path tools
+resolve both relative and absolute path arguments through `resolveToolPath(cwd, p)`, which confines
+access to the bound workspace by default. A path is allowed only when its canonical real path is the
+workspace itself or a descendant; `..` traversal, absolute host paths outside the workspace, and
+symlink escapes are rejected. Set `YTSEJAM_SANDBOX=0` or `false` only as an emergency opt-out to
+restore the older permissive behavior. `bash` is intentionally not sandboxed by this helper.
 
 ## Tool surface (what the model can call)
 
