@@ -23,32 +23,55 @@ test("ApprovalToggle imports ApprovalMode type from ../lib/types", () => {
   assert.match(src, /import\s+type\s*\{[^}]*\bApprovalMode\b[^}]*\}\s*from\s*["']\.\.\/lib\/types["']/);
 });
 
-test("ApprovalToggle uses switch semantics with ask as checked state", () => {
-  assert.match(src, /role=["']switch["']/);
-  assert.match(src, /aria-checked=\{isAsk\}/);
-  assert.match(src, /const\s+isAsk\s*=\s*mode\s*===\s*["']ask["']/);
+test("ApprovalToggle models all three modes (read_only, ask, yolo) as labels", () => {
+  // A label map (or equivalent) must distinctly name every mode the server can emit.
+  assert.match(src, /read_only/);
+  assert.match(src, /\bask\b/);
+  assert.match(src, /\byolo\b/);
+  assert.match(src, /READ-ONLY/i);
+  assert.match(src, /ASK/);
+  assert.match(src, /YOLO/);
 });
 
-test("ApprovalToggle exposes a stable accessible name and hides visible mode text from AT", () => {
-  assert.match(src, /const\s+STABLE_LABEL\s*=\s*["']Require approvals for risky tools["']/);
-  assert.match(src, /aria-label=\{STABLE_LABEL\}/);
-  assert.match(src, /title=\{STABLE_LABEL\}/);
-  assert.match(src, /<span\s+aria-hidden=["']true["']>\{label\}<\/span>/);
+test("ApprovalToggle read_only renders as Read-only, NOT as YOLO", () => {
+  // Guard against the regression where a runtime read_only value fell through to YOLO.
+  assert.match(src, /read_only["']?\s*:\s*["']READ-ONLY["']/);
+  assert.doesNotMatch(src, /read_only["']?\s*:\s*["']YOLO["']/i);
 });
 
-test("ApprovalToggle click sends the opposite mode via onChange(next)", () => {
-  assert.match(src, /const\s+next:\s*ApprovalMode\s*=\s*isAsk\s*\?\s*["']yolo["']\s*:\s*["']ask["']/);
+test("ApprovalToggle cycles in escalation order, wrapping yolo -> read_only", () => {
+  // Clicking advances to the next mode; the safest -> most permissive -> wrap cycle.
+  assert.match(src, /read_only["']?\s*:\s*["']ask["']/);
+  assert.match(src, /ask["']?\s*:\s*["']yolo["']/);
+  assert.match(src, /yolo["']?\s*:\s*["']read_only["']/);
+});
+
+test("ApprovalToggle click advances to the next mode via onChange(next)", () => {
+  assert.match(src, /const\s+next:\s*ApprovalMode\s*=/);
   assert.match(src, /onClick=\{\(\)\s*=>\s*onChange\(next\)\}/);
 });
 
-test("ApprovalToggle uses warning-tinted classes for YOLO state", () => {
+test("ApprovalToggle uses warning-tinted classes for the YOLO state", () => {
   assert.match(src, /bg-warning\/15/);
   assert.match(src, /border-warning\/60/);
   assert.match(src, /hover:bg-warning\/25/);
 });
 
-test("ApprovalToggle uses subdued non-yellow classes for ASK state", () => {
-  assert.match(src, /\?\s*["']border-border\s+text-muted-foreground\s+hover:bg-accent["']/);
+test("ApprovalToggle uses success-tinted classes + a lock affordance for read_only", () => {
+  assert.match(src, /bg-success\/15/);
+  assert.match(src, /border-success\/60/);
+  assert.match(src, /\bLock\b/); // lucide lock icon signals the locked / read-only state
+});
+
+test("ApprovalToggle uses subdued neutral classes for the ASK state", () => {
+  assert.match(src, /border-border\s+text-muted-foreground\s+hover:bg-accent/);
+});
+
+test("ApprovalToggle exposes an accessible name reflecting the current mode", () => {
+  assert.match(src, /aria-label=\{[^}]*\}/);
+  assert.match(src, /title=\{[^}]*\}/);
+  // The visible label text is decorative; AT reads the aria-label.
+  assert.match(src, /aria-hidden=["']true["']/);
 });
 
 test("ApprovalToggle wires disabled prop through to the button", () => {

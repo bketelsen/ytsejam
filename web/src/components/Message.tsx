@@ -198,6 +198,8 @@ export function ToolCallCard({
         .map((b) => b.text ?? "")
         .join("\n")
     : null;
+  const approval = (result?.details as { approval?: string } | undefined)?.approval;
+  const deniedApproval = approval === "deny" || approval === "timeout";
   return (
     <div className="my-1 rounded-md border border-border bg-background text-sm text-foreground">
       <button
@@ -209,6 +211,11 @@ export function ToolCallCard({
         {!result && !interrupted && <span className="animate-pulse text-xs text-warning">running…</span>}
         {!result && interrupted && <span className="text-xs text-destructive">interrupted</span>}
         {result?.isError && <span className="text-xs text-destructive">error</span>}
+        {/* Auto-denied (read-only mode) or user-denied calls carry details.approval
+            but are not flagged isError; surface a badge so the card doesn't read as a success. */}
+        {!result?.isError && deniedApproval && (
+          <span className="text-xs text-warning">denied</span>
+        )}
       </button>
       {open && (
         <div className="space-y-2 border-t border-border p-2 font-mono text-xs">
