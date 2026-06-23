@@ -402,8 +402,28 @@ export function useApp() {
   );
 
   const setApprovalMode = useCallback(async (sessionId: string, mode: ApprovalMode) => {
-    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, approvalMode: mode } : s)));
-    await client.setSessionApprovalMode(sessionId, mode);
+    // Optimistically apply, capturing the prior mode so we can roll back if the
+    // PATCH fails. approvalMode is a SECURITY control: when the request fails the
+    // server keeps the old mode and never emits approval_mode_changed, so without
+    // a revert the UI would silently show a mode the server isn't actually in
+    // (e.g. read_only while the server is still yolo) until a reload.
+    let previous: ApprovalMode | undefined;
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id !== sessionId) return s;
+        previous = s.approvalMode;
+        return { ...s, approvalMode: mode };
+      }),
+    );
+    try {
+      await client.setSessionApprovalMode(sessionId, mode);
+    } catch (err) {
+      if (previous !== undefined) {
+        const reverted = previous;
+        setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, approvalMode: reverted } : s)));
+      }
+      console.error(`setApprovalMode(${sessionId}, ${mode}) failed; reverted to ${previous}`, err);
+    }
   }, []);
 
   return {

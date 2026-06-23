@@ -95,6 +95,14 @@ function Main() {
     [app.sessions, app.currentId],
   );
   const currentMode: ApprovalMode = currentSession?.approvalMode ?? "ask";
+  // Spoken (sentence-case) labels for the aria-live announce — the cycle button
+  // keeps focus while its accessible name changes, which not all screen readers
+  // re-announce; the live region below guarantees the new mode is spoken.
+  const APPROVAL_ANNOUNCE: Record<ApprovalMode, string> = {
+    read_only: "Read-only",
+    ask: "Ask",
+    yolo: "YOLO",
+  };
 
   const sidebarProps = {
     sessions: app.sessions,
@@ -153,6 +161,9 @@ function Main() {
               onChange={(m) => app.currentId && app.setApprovalMode(app.currentId, m)}
               disabled={!app.currentId || !currentSession}
             />
+            <span className="sr-only" role="status" aria-live="polite">
+              Approval mode: {APPROVAL_ANNOUNCE[currentMode]}
+            </span>
             <HealthIcon kind="ws" state={app.wsState} title={wsTitle} />
             <HealthIcon kind="ltm" state={app.ltmState} title={ltmTitle} />
           </>

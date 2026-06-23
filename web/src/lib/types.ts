@@ -1,4 +1,8 @@
-export type ApprovalMode = "yolo" | "ask";
+// Mirrors the server's ApprovalMode (server/src/approval/types.ts):
+// - read_only: gated/mutating tools are auto-DENIED without prompting.
+// - ask: gated/mutating tools pause for a human approval prompt.
+// - yolo: gated/mutating tools run without prompting.
+export type ApprovalMode = "yolo" | "ask" | "read_only";
 export type ApprovalDecision = "approve" | "deny" | "timeout";
 
 export interface ApprovalRequest {
