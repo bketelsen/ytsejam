@@ -23,6 +23,7 @@ async function initProject(): Promise<string> {
     scripts: {
       pass: "node -e \"console.log('ok')\"",
       fail: "node -e \"console.error('broken'); process.exit(7)\"",
+      wait: "node -e \"setTimeout(() => console.log('waited'), 100)\"",
       test: "npm run pass",
     },
   }, null, 2));
@@ -84,9 +85,9 @@ describe("run_checks tool", () => {
       passed: false,
       timedOut: false,
       truncated: false,
-      summary: "Script 'missing' was not found. Available scripts: fail, pass, test.",
+      summary: "Script 'missing' was not found. Available scripts: fail, pass, test, wait.",
       failures: [],
-      availableScripts: ["fail", "pass", "test"],
+      availableScripts: ["fail", "pass", "test", "wait"],
     });
     expect(text(result)).toContain("Script 'missing' was not found");
   });
@@ -98,6 +99,20 @@ describe("run_checks tool", () => {
     await expect(
       tool.execute("t1", { kind: "script", script: "--help", timeoutSeconds: 5 }),
     ).rejects.toThrow(/leading-dash/i);
+  });
+
+  test("clamps zero timeout to at least one second", async () => {
+    const cwd = await initProject();
+    const tool = createRunChecksTool(cwd);
+
+    const result = await tool.execute("t1", { kind: "script", script: "wait", timeoutSeconds: 0 });
+
+    expect(result.details).toMatchObject({
+      command: "npm run wait",
+      exitCode: 0,
+      passed: true,
+      timedOut: false,
+    });
   });
 
   test("resolves npm workspace scripts from the repo root", async () => {
@@ -134,7 +149,7 @@ describe("run_checks tool", () => {
 describe("parseVitestOutput", () => {
   test("extracts summary and failing test names from recognizable vitest output", () => {
     const parsed = parseVitestOutput(`
- FAIL  test/math.test.ts > math > adds wrong
+ FAIL  test/math.test.ts > math > adds wrong (123ms)
  FAIL  test/string.test.ts [ test/string.test.ts ]
 
  Test Files  2 failed | 1 passed (3)
@@ -149,6 +164,19 @@ describe("parseVitestOutput", () => {
         "test/math.test.ts > math > adds wrong",
         "test/string.test.ts [ test/string.test.ts ]",
       ],
+    });
+  });
+
+  test("parses vitest lines prefixed with cursor-control escape sequences", () => {
+    const parsed = parseVitestOutput([
+      "\x1b[2K\x1b[1G FAIL  test/csi.test.ts > csi > survives cursor controls (45ms)",
+      "\x1b[2K\x1b[1G Test Files  1 failed | 1 passed (2)",
+      "\x1b[2K\x1b[1G      Tests  2 failed | 4 passed (6)",
+    ].join("\n"));
+
+    expect(parsed).toEqual({
+      summary: "4 passed, 2 failed",
+      failures: ["test/csi.test.ts > csi > survives cursor controls"],
     });
   });
 });

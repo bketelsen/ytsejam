@@ -63,7 +63,7 @@ export interface ParsedCheckOutput {
 }
 
 function stripAnsi(text: string): string {
-  return text.replace(/\x1b\[[0-9;]*m/g, "");
+  return text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
 }
 
 function parseCountLine(line: string): Map<string, number> {
@@ -87,7 +87,7 @@ function formatVitestSummary(counts: Map<string, number>): string | undefined {
 export function parseVitestOutput(output: string): ParsedCheckOutput {
   const lines = stripAnsi(output).split(/\r?\n/);
   const failures = lines
-    .map((line) => line.match(/^\s*FAIL\s+(.+?)\s*$/)?.[1]?.trim())
+    .map((line) => line.match(/^\s*FAIL\s+((?=\S*(?:[/\\]|\.test\.|\.spec\.))\S.+?)(?:\s+\(\d+(?:\.\d+)?m?s\))?\s*$/)?.[1]?.trim())
     .filter((line): line is string => Boolean(line));
 
   const testsLine = [...lines].reverse().find((line) => /^\s*Tests\s+/.test(line));
@@ -235,6 +235,13 @@ function runNpm(root: string, args: string[], timeoutMs: number): Promise<CheckR
   });
 }
 
+function timeoutMs(timeoutSeconds: number | undefined): number {
+  if (typeof timeoutSeconds !== "number" || !Number.isFinite(timeoutSeconds)) {
+    return DEFAULT_TIMEOUT_SECONDS * 1000;
+  }
+  return Math.max(1, Math.trunc(timeoutSeconds)) * 1000;
+}
+
 async function repoRoot(cwd: string): Promise<string> {
   const result = await new Promise<CheckRunResult>((resolve) => {
     const child = spawn("git", ["rev-parse", "--show-toplevel"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
@@ -308,7 +315,7 @@ export function createRunChecksTool(cwd: string): AgentTool<typeof checkParams> 
 
       const args = ["run", script];
       if (params.workspace) args.push("--workspace", params.workspace);
-      const result = await runNpm(root, args, (params.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000);
+      const result = await runNpm(root, args, timeoutMs(params.timeoutSeconds));
       const parsed = parseVitestOutput(result.output);
       const summary = parsed.summary ?? tailSummary(result.output);
       const details: RunChecksDetails = {
