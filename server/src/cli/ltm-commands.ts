@@ -2,6 +2,7 @@ import path from "node:path";
 import { MemorySystem, runDoctor } from "ltm";
 import { LtmReconciler } from "../memory/bridge/ltm-reconciler.ts";
 import { createLtmEmbedder, parseLtmEmbedderMode } from "../memory/embedder.ts";
+import { runMaintenance } from "../memory/maintain.ts";
 import { defaultPiAuthPath, PiAuthStore } from "../pi-auth.ts";
 
 export interface LtmCliOpts {
@@ -187,6 +188,95 @@ export async function ltmReplay(opts: LtmCliOpts = {}): Promise<number> {
       ltm.close();
     } catch {
       // already-failed reconcile leaves LTM in a closeable state; if even
+      // close() throws the lock is already gone via the process exit.
+    }
+  }
+}
+
+/**
+ * Run the deterministic LTM maintenance pass (the old dream "mechanical" pass,
+ * now on demand only — no scheduler, no LLM, no report).
+ *
+ * Snapshots facts.jsonl, canonicalizes + dedups facts, consolidates episodic
+ * memories, runs a full reconcile (rebuild + prune), and backfills fact
+ * embeddings. Prints a JSON summary. Requires the server STOPPED (single-writer
+ * lock), same as `ltm replay`.
+ *
+ * Exit codes: 0 = success; 1 = LTM could not be opened or maintenance threw.
+ */
+export async function ltmMaintain(opts: LtmCliOpts = {}): Promise<number> {
+  const out = opts.stdout ?? ((line) => console.log(line));
+  const err = opts.stderr ?? ((line) => console.error(line));
+  const { dataDir, ltmStoreDir } = resolveDirs(opts);
+
+  const mode = (() => {
+    try {
+      return parseLtmEmbedderMode(process.env.YTSEJAM_LTM_EMBEDDER);
+    } catch (e) {
+      err(`[ltm maintain] invalid embedder config: ${(e as Error).message}`);
+      return null;
+    }
+  })();
+  if (!mode) return 1;
+
+  const authStore = new PiAuthStore(
+    process.env.YTSEJAM_PI_AUTH ?? defaultPiAuthPath(),
+  );
+  const embedderResult = await createLtmEmbedder(authStore, {
+    mode,
+    cacheDir: path.join(ltmStoreDir, "embed-cache"),
+    copilot: {
+      model: process.env.YTSEJAM_LTM_COPILOT_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_COPILOT_URL,
+    },
+    ollama: {
+      model: process.env.YTSEJAM_LTM_OLLAMA_MODEL,
+      baseUrl: process.env.YTSEJAM_LTM_OLLAMA_URL,
+    },
+  }).catch((e: Error) => {
+    err(`[ltm maintain] could not create LTM embedder: ${e.message}`);
+    return null;
+  });
+  if (!embedderResult) return 1;
+
+  let ltm: MemorySystem;
+  try {
+    ltm = MemorySystem.open({
+      storeDir: ltmStoreDir,
+      embedder: embedderResult.embedder,
+    });
+  } catch (e) {
+    err(
+      `[ltm maintain] could not open LTM at ${ltmStoreDir}\n` +
+        `  ${(e as Error).message}\n` +
+        `  If the ytsejam server is running it already holds the single-writer\n` +
+        `  lock on this store. Stop the server (systemctl --user stop ytsejam)\n` +
+        `  before running this command.`,
+    );
+    return 1;
+  }
+
+  try {
+    const reconciler = new LtmReconciler({
+      ltm,
+      dataDir,
+      logger: makeCliLogger("warn", err),
+    });
+    const summary = await runMaintenance({
+      ltm,
+      reconcile: (o) => reconciler.reconcile(o),
+      storeDir: ltmStoreDir,
+    });
+    out(JSON.stringify(summary, null, 2));
+    return 0;
+  } catch (e) {
+    err(`[ltm maintain] failed: ${(e as Error).message}`);
+    return 1;
+  } finally {
+    try {
+      ltm.close();
+    } catch {
+      // already-failed maintenance leaves LTM in a closeable state; if even
       // close() throws the lock is already gone via the process exit.
     }
   }

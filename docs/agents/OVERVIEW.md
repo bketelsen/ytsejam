@@ -46,25 +46,32 @@ wrapper for the `node server/src/index.ts ltm …` CLI). `postinstall` runs `pat
 
 Read these to understand the runtime; the boot wiring in `index.ts` is the map.
 
-- **`index.ts`** — composition root. Loads config, constructs every store/service, wires tools into
+- **`index.ts`** — composition root. Loads config, constructs every store/service (incl. the
+  `ApprovalCoordinator` and the `PlanStore`), wires tools into
   the `AgentManager`, rebuilds the sqlite index from JSONL, recovers interrupted tasks, catches up
-  schedules, opens LTM + starts the cog→LTM bridge, then starts the Hono server + WebSocket. It also
-  owns the SIGTERM/SIGINT graceful-drain orchestrator (scheduler stop → WS 1001 close → HTTP close
-  → manager/task cancellation → LTM drain → indexer close). Also intercepts CLI argv via `runCli()`
-  **before** any of that boot work, so `node server/src/index.ts ltm replay` exits without ever
-  opening the HTTP listener.
+  schedules, opens LTM + starts the cog→LTM bridge (with a bounded-backoff reconnect supervisor so a
+  transient boot-time embedder outage self-heals), then starts the Hono server + WebSocket. It also
+  owns the SIGTERM/SIGINT graceful-drain orchestrator — a 7-step `drainAndExit` (scheduler stop →
+  WS 1001 close → HTTP close → manager abort → task cancellation → LTM drain → indexer close) that
+  never calls `process.exit`, letting the event loop empty naturally. Also
+  intercepts CLI argv via `runCli()` **before** any of that boot work, so
+  `node server/src/index.ts ltm replay` exits without ever opening the HTTP listener.
 - **`cli/`** — argv subcommands that share the server's modules but never boot it. `dispatch.ts`
-  owns the `ltm` namespace; `ltm-commands.ts` implements `ltm replay [--force]` and `ltm health`
-  (open LTM directly + reconcile tick; require server stopped — single-writer lock) plus
-  `ltm backfill <dir>` (rate-limited turn ingest via the running server's admin route — requires
+  owns the `ltm` namespace; `ltm-commands.ts` implements `ltm replay [--force]`, `ltm maintain`
+  (deterministic on-demand LTM hygiene: canonicalize + consolidate + rebuild-prune + embed-backfill),
+  and `ltm health` (open LTM directly + reconcile tick; require server stopped — single-writer lock)
+  plus `ltm backfill <dir>` (rate-limited turn ingest via the running server's admin route — requires
   server **running**). See [`memory-bridge.md`](memory-bridge.md) § CLI.
 - **`config.ts`** — `loadConfig()` reads env into a typed `Config`. The only required var is
-  `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout.
+  `YTSEJAM_AUTH_TOKEN`. Clamps task concurrency/timeout, parses the default approval mode
+  (`YTSEJAM_DEFAULT_APPROVAL_MODE`, invalid → `yolo`), refuses an implicit `./data` that would land
+  inside the repo, and exposes `sandboxEnabled()` (`YTSEJAM_SANDBOX`).
 - **`server.ts`** — `createApp()` builds the Hono app: bearer-token auth on `/api/*`, the REST routes
-  (sessions, messages, tasks, schedules, persona, models, cwd, archive, **memory health**), the
-  `/api/ws` WebSocket (per-client session subscription + lightweight global liveness events), the
-  `/api/terminal/ws` WebSocket (query-token-gated raw PTY I/O frames), and static serving of
-  `web/dist` with SPA fallback.
+  (sessions, messages, tasks, schedules, persona, models, cwd, archive, **approval mode**, **memory
+  health**, and the `/api/admin/ltm-*` debug/backfill routes), the
+  `/api/ws` WebSocket (per-client session subscription + lightweight global liveness events + the
+  approval request/response lifecycle), the `/api/terminal/ws` WebSocket (query-token-gated raw PTY
+  I/O frames), and static serving of `web/dist` with SPA fallback.
 - **`terminal.ts`** — owns the quake-style interactive PTY sessions via `node-pty` (a **native
   module** — see the deploy note in [`terminal.md`](terminal.md)): spawns the user's shell in
   `os.homedir()`, forwards output, handles input/resize, and reaps the process on socket close. The
@@ -75,8 +82,16 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
 - **`manager.ts`** — `AgentManager` owns chat sessions: opens/caches a pi `AgentHarness` per session,
   composes the system prompt each turn, forwards harness events to the bus, mirrors metadata into the
   index, generates titles, drives compaction (idle, inner-loop via the `context` event hook, and the
-  reactive backstop), and handles rename/archive/workdir/model changes. JSONL stays SSOT (e.g.
-  a rename mid-run updates the index immediately but flushes to JSONL on `agent_end`).
+  reactive backstop), applies the per-session approval mode (wrapping gated tools), and handles
+  rename/archive/workdir/model changes. JSONL stays SSOT (e.g. a rename mid-run updates the index
+  immediately but flushes to JSONL on `agent_end`).
+- **`approval/`** — per-session tool-approval gating. `ApprovalMode` is `yolo` (run) / `ask` (pause
+  for a human decision) / `read_only` (auto-deny mutating tools). `ApprovalCoordinator` opens an
+  approval and awaits the decision (5-min timeout), broadcasting `approval_request`/`approval_resolved`
+  on the bus; `wrap-tool.ts` + `gated-tools.ts` decide which tools gate (`GATED_TOOL_NAMES` is a
+  `ReadonlySet`; all `cog_*` are ungated by policy); `prefix.ts` parses per-turn `/yolo` `/careful`
+  overrides; `session-entry.ts` replays the `set_approval_mode` JSONL entry (last-write-wins). Default
+  from `YTSEJAM_DEFAULT_APPROVAL_MODE`; runtime-escalatable. See [`security.md`](security.md).
 - **`indexer.ts`** — `Indexer`, the **only** sqlite writer. Schema-versioned; drops+rebuilds on
   version mismatch (safe because derived). Tables: `sessions`, `tasks`, `schedules`, `meta`.
   Periodic `wal_checkpoint(TRUNCATE)` keeps the WAL bounded.
@@ -103,6 +118,11 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   `YTSEJAM_COMPACTION_ENABLED=false`. Each compaction emits `compaction_start`/`compaction_end` bus
   events, a one-line cog dev-log entry, and a `.compactions.jsonl` sidecar record with the
   `entry_point` field. See [`observability.md`](observability.md).
+- **`plans.ts`** — `PlanStore`: per-session agent plan/todo state (`<dataDir>/plans/<sessionId>.jsonl`,
+  full-snapshot-per-write, latest-wins, with cross-process file locking). `renderPlanSection` injects a
+  bounded `## Current plan` block into the system prompt every turn — because the prompt is rebuilt
+  from this store (not from the conversation branch compaction rewrites), **the plan survives
+  compaction by construction**. Mutated only by the ungated `plan_set`/`plan_update` tools.
 - **`context-files.ts`** — faithful port of pi-coding-agent's "context files": loads `AGENTS.md`/
   `CLAUDE.md` from `~/.pi/agent` and the workdir's ancestor chain into the system prompt
   (`YTSEJAM_CONTEXT_FILES=false` disables).
@@ -111,7 +131,8 @@ Read these to understand the runtime; the boot wiring in `index.ts` is the map.
   `PiAuthStore` is a read-mostly view over the pi CLI's `~/.pi/agent/auth.json` OAuth credentials
   (refreshing + writing back expired tokens at mode 0600). Env API keys win over OAuth.
 - **`events.ts`** — `EventBus`, a synchronous in-memory pub/sub. `ServerEvent` is the union the
-  WebSocket relays (agent stream events, session/task/schedule metadata, compaction lifecycle).
+  WebSocket relays (agent stream events, session/task/schedule metadata, compaction lifecycle, and the
+  `approval_request`/`approval_resolved`/`approval_mode_changed` lifecycle).
   See [`observability.md`](observability.md) for the full event list.
 
 #### Model catalog (live Copilot merge)
@@ -141,10 +162,13 @@ catalog only.
 
 Tools are `AgentTool` factories wired explicitly at boot (no auto-registry). Split into
 **cwd-independent** globals (`web_search`, `web_fetch`) built once, and **cwd-bearing** tools
-(`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`) built per session/per task against a working
-directory. Plus per-session `delegate`/`schedule` tools, the global `skill` tool, the `cog_*`
-memory tools, and `recall` (unified cog + LTM retrieval). Files: `index.ts` (assembly), `shell.ts`,
-`files.ts`, `search.ts`, `web.ts`, `delegation.ts`, `scheduling.ts`, `skills.ts`, `cog.ts`. See
+(`bash`, `read`, `write`, `edit`, `apply_patch`, `ls`, `git`, `run_checks`, `grep`, `find`) built per
+session/per task against a working directory. Plus per-session `delegate`/`schedule`/`plan` tools, the
+global `skill` tool, the `cog_*` memory tools, and `recall` (unified cog + LTM retrieval). Files:
+`index.ts` (assembly), `shell.ts`, `files.ts`,
+`apply-patch.ts`, `git.ts`, `run-checks.ts`, `search.ts`, `web.ts`, `delegation.ts`, `scheduling.ts`,
+`plan.ts`, `skills.ts`, `cog.ts`. Mutating tools (`bash`, `write`, `edit`, `apply_patch`, mutating
+`git`, `run_checks`) are approval-gated; read tools and all `cog_*`/`plan_*` tools are ungated. See
 [`tools.md`](tools.md).
 
 ### `server/src/memory/` + `server/src/cog/` — persistent memory
@@ -160,7 +184,10 @@ the long-term-memory substrate at `packages/ltm/` (opened against `<dataDir>/ltm
 back-fill reconciler for anything that missed the inline path. **Conversation turns themselves**
 are ingested into LTM on each session end via `ingestSessionFile()` — chat sessions on
 `agent_end`, subagent sessions on `run()` completion. The `recall` tool queries both substrates
-and interleaves results. See [`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md),
+and interleaves results. Deterministic LTM hygiene (fact canonicalize/dedup, episodic consolidate,
+rebuild-prune, embedding backfill) is an **on-demand** `ltm maintain` CLI pass
+(`server/src/memory/maintain.ts`) — there is no scheduler and no autonomous/LLM memory behavior. See
+[`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md) (incl. § Deterministic maintenance),
 and `server/src/memory/README.md`.
 
 ### `server/skills/` — seeded skill playbooks
@@ -181,21 +208,25 @@ React 19 SPA, Vite build, Tailwind v4 + shadcn/ui. The server serves the built `
 - **`useApp.ts`** — the app state hook: holds sessions/messages/streaming/tasks plus the WS and LTM
   health states, opens the WebSocket, routes `ServerEvent`s into React state (streaming assistant
   tokens, session metadata incl. live `compacting` flag, task updates, archive/unarchive,
-  `compaction_start`/`compaction_end` lifecycle), polls `/api/memory/health` for the brain-icon
-  state, and exposes `send`/`selectSession`/`newSession`.
+  `compaction_start`/`compaction_end` lifecycle, and the approval request/resolve/mode-change
+  lifecycle), polls `/api/memory/health` for the brain-icon state, and exposes
+  `send`/`selectSession`/`newSession`.
 - **`components/`** — `Sidebar` (session list + new/archived/settings/tasks/terminal; per-row compaction
   indicator), `Chat` (transcript + composer + per-session cwd editor + task-transcript dialog +
   in-flight compaction pill), `Message` (renders a transcript message, incl. tool calls/results,
-  markdown), `QuakeTerminal` (top `Sheet` + xterm/FitAddon renderer for `/api/terminal/ws`; **sheet
-  padding stays outside the ref-backed fit-target div** — PR #273, see [`terminal.md`](terminal.md)),
-  `TaskCard`/`TasksDialog` (delegated-task status + transcript), `Settings` (persona editor, model
-  picker, schedules), `Login`, `HealthIcon` (the WS + LTM status indicators), and generated shadcn
-  primitives in `components/ui/`.
+  markdown) with `MessageErrorBoundary`, `QuakeTerminal` (top `Sheet` + xterm/FitAddon renderer for
+  `/api/terminal/ws`; **sheet padding stays outside the ref-backed fit-target div** — PR #273, see
+  [`terminal.md`](terminal.md)), the approval UI (`ApprovalCard`, `ApprovalToggle`,
+  `LostApprovalNotice`), the slash-command overlay (`SlashOverlay` + `slashMenu.ts`/`useSlashMenu.ts`),
+  `WorkdirPicker`, `TaskCard`/`TasksDialog` (delegated-task status + transcript), `Settings` (persona
+  editor, model picker, schedules), `Login`, `HealthIcon` (the WS + LTM status indicators), and
+  generated shadcn primitives in `components/ui/`.
 - **`lib/`** — `api.ts` (typed REST client + bearer token in `localStorage`, plus
   `getMemoryHealth`), `ws.ts` (auto-reconnecting WebSocket with per-session subscribe + connect
   watchdog), `terminal-ws.ts` (lazy terminal WebSocket helper for xterm input/output/resize),
-  `types.ts` (shared row/event types mirroring the server, incl. `HealthState` SSOT and the
-  compaction-lifecycle events), `time.ts`, `utils.ts`.
+  `approvalPrefix.ts` / `approvalWatchdog.ts` (client-side `/yolo`·`/careful` prefix parsing + a
+  lost-approval watchdog), `types.ts` (shared row/event types mirroring the server, incl.
+  `HealthState` SSOT and the compaction- + approval-lifecycle events), `time.ts`, `utils.ts`.
 
 UI styling rule (`web/CLAUDE.md`): **only shadcn semantic theme tokens**, never raw Tailwind palette
 classes — enforced by `web/test/theme.test.mjs` in the gate.
@@ -216,10 +247,12 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 2. `server.ts` authenticates, routes to `AgentManager.sendMessage`, which opens/reuses the session's
    `AgentHarness` and prompts (or steers, if a run is in flight).
 3. The harness runs the agent loop: it composes the system prompt (persona + memory brief + skills table
-   + context files), streams model output, and **dispatches tool calls** to the wired tools — file/
-   shell tools resolve against the session's workdir; `delegate` spawns a background subagent; `cog_*`
-   tools call the in-process memory module; `skill` loads markdown playbooks such as `/cog` or
-   `/cron-pull-weeds`.
+   + current plan + context files), streams model output, and **dispatches tool calls** to the wired
+   tools — file/shell tools resolve against the session's workdir; `delegate` spawns a background
+   subagent; `cog_*` tools call the in-process memory module; `skill` loads markdown playbooks such as
+   `/cog` or `/cron-pull-weeds`. Mutating tool calls pass through the approval gate first: in `ask`
+   mode the harness pauses on an `approval_request` until the client answers (over the WS); in
+   `read_only` they're auto-denied; in `yolo` they run.
 4. State changes are written **JSONL-first** (the pi session tree, or a store's event log), then
    mirrored into the sqlite index, then emitted on the `EventBus`.
 5. The WebSocket relays harness/metadata events to subscribed clients; the UI streams the assistant's
@@ -241,6 +274,15 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
 - **Delegation runs in-process background subagents** with concurrency cap `YTSEJAM_TASK_CONCURRENCY`
   and per-task timeout `YTSEJAM_TASK_TIMEOUT_MIN`. **Subagents cannot delegate further** (the tools
   aren't wired into the worker toolset). → [`delegation.md`](delegation.md)
+- **Tool approval is per-session, three modes.** `yolo` runs mutating tools, `ask` pauses on an
+  `approval_request` (answered over the WS, 5-min timeout), `read_only` auto-denies them. Which tools
+  gate is a hard-coded `ReadonlySet` (`GATED_TOOL_NAMES`); all `cog_*`/`plan_*` are ungated by policy.
+  The mode is persisted as a `set_approval_mode` JSONL entry (last-write-wins) and runtime-escalatable.
+  → [`security.md`](security.md)
+- **The plan survives compaction by construction.** `PlanStore` persists per-session todo state out of
+  band; `renderPlanSection` re-injects it into the system prompt every turn, which is rebuilt from the
+  store rather than the conversation branch compaction rewrites. Never store plan state only in-context.
+  Mutated via the ungated `plan_set`/`plan_update` tools.
 - **The quality gate is `scripts/gate.sh`** — server typecheck + server tests + ltm tests + web
   build/typecheck + web tests, in that order. **CI runs this same script on every PR via
   `.github/workflows/gate.yml`** — local and CI gates are the same contract. →
@@ -255,7 +297,7 @@ classes — enforced by `web/test/theme.test.mjs` in the gate.
   if either substrate fails (LTM is wrapped in a try/catch at boot; bridge failures don't fail the
   cog write). → [`storage.md`](storage.md), [`memory-bridge.md`](memory-bridge.md),
   `server/src/memory/README.md`.
-- **Graceful shutdown is orchestrated, not a SIGKILL timeout.** On `SIGTERM`/`SIGINT`, `index.ts` stops the scheduler, closes WebSockets with 1001, closes HTTP, aborts manager turns, cancels task-manager work, drains LTM, closes sqlite, and then lets Node exit naturally. A `TimeoutStopSec=45` SIGKILL line in the journal is now a bug signal, not the expected restart path. → [`observability.md`](observability.md), [`deployment.md`](deployment.md)
+- **Graceful shutdown is orchestrated, not a SIGKILL timeout.** On `SIGTERM`/`SIGINT`, `index.ts` runs a 7-step drain: stops the scheduler, closes WebSockets with 1001, closes HTTP, aborts manager turns, cancels task-manager work, drains LTM, closes sqlite, then lets Node exit naturally (no `process.exit`). A `TimeoutStopSec=45` SIGKILL line in the journal is now a bug signal, not the expected restart path. → [`observability.md`](observability.md), [`deployment.md`](deployment.md)
 - **Crash-safety via event-sourcing:** tasks and schedules record their state-changing event *before*
   the side effect (a cancel before abort; a schedule fire before inject), so a crash never
   double-fires and recovery is a fold over the log.
@@ -319,8 +361,8 @@ Config files:
   archive, memory, ltm), the sqlite index schema/role, rebuild semantics, memory-module internal
   shape, auto-commit cadence, and where each kind of data lives.
 - [`tools.md`](tools.md) — how tools are registered/called, the cwd-binding split, the full tool
-  surface (including `recall` and the `cog_rpc` allow-list), and the absolute-path rule for
-  subagent file tools.
+  surface (including `apply_patch`/`git`/`run_checks`/`plan`, `recall`, and the `cog_rpc` allow-list),
+  which tools are approval-gated, and the absolute-path rule for subagent file tools.
 - [`terminal.md`](terminal.md) — the quake-style PTY terminal: `node-pty` server session, the
   query-token-gated `/api/terminal/ws` route, the xterm/FitAddon `QuakeTerminal` + `Ctrl+`` hotkey,
   the padding-outside-the-fit-target invariant (PR #273), and the native-module deploy/rebuild gotcha.
@@ -332,12 +374,12 @@ Config files:
 - [`memory-bridge.md`](memory-bridge.md) — the cog→LTM bridge: two write paths (inline +
   reconciler), public surface (`attachLtm`/`attachReconciler`/`recordObservation`/`getLtm` plus
   setup RPCs `init_canonical_file`/`skill_write`), `domains.yml` validate-on-write, `recall()`
-  semantics, the `server/src/cli/` LTM subcommands, and the health surface that drives the web brain
-  icon.
-- [`observability.md`](observability.md) — the `EventBus`/`ServerEvent` union, compaction
-  telemetry (three entry points, `compaction_start`/`compaction_end`, the `entry_point` field, the
-  per-session `.compactions.jsonl` sidecar), health icons in the chat header, `/api/memory/health`,
-  and the graceful shutdown lifecycle.
+  semantics, the on-demand **deterministic maintenance** pass (`ltm maintain` CLI), the
+  `server/src/cli/` LTM subcommands, and the health surface that drives the web brain icon.
+- [`observability.md`](observability.md) — the `EventBus`/`ServerEvent` union (incl. the approval
+  lifecycle events), compaction telemetry (three entry points, `compaction_start`/`compaction_end`,
+  the `entry_point` field, the per-session `.compactions.jsonl` sidecar), health icons in the chat
+  header, `/api/memory/health`, and the graceful shutdown lifecycle.
 - [`deployment.md`](deployment.md) — systemd `--user` unit, `current`→release symlink, `deploy.sh`
   flow with staged-release skill drift gate + auto-rollback, `sync-skills.sh`, `dev.sh` isolation,
   and `migrate-data.sh` semantics.
