@@ -23,14 +23,14 @@ describe("AgentManager.postAssistantNote", () => {
     const callsBefore = faux.state.callCount;
 
     const row = await manager.createSession();
-    await manager.postAssistantNote(row.id, "── Memory maintenance ──\nNo proposals.");
+    await manager.postAssistantNote(row.id, "── System note ──\nNothing to report.");
 
     // 1. The assistant message is persisted in the session branch
     const messages = await manager.getMessages(row.id);
     const assistantMsg = messages.find(
       (m: any) => m.role === "assistant" &&
         Array.isArray(m.content) &&
-        m.content.some((c: any) => c.type === "text" && c.text.includes("Memory maintenance")),
+        m.content.some((c: any) => c.type === "text" && c.text.includes("System note")),
     );
     expect(assistantMsg).toBeDefined();
 
@@ -63,7 +63,7 @@ describe("AgentManager.postAssistantNote", () => {
     expect(indexer.getSession(row.id)!.archived).toBe(true);
 
     // postAssistantNote should unarchive first
-    await manager.postAssistantNote(row.id, "Dream report: nothing to do.");
+    await manager.postAssistantNote(row.id, "System note: nothing to do.");
 
     // Session is now unarchived
     expect(indexer.getSession(row.id)!.archived).toBe(false);
@@ -76,7 +76,7 @@ describe("AgentManager.postAssistantNote", () => {
         (m: any) =>
           m.role === "assistant" &&
           Array.isArray(m.content) &&
-          m.content.some((c: any) => c.type === "text" && c.text.includes("Dream report")),
+          m.content.some((c: any) => c.type === "text" && c.text.includes("System note")),
       ),
     ).toBe(true);
   });

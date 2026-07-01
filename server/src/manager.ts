@@ -972,8 +972,10 @@ export class AgentManager {
   }
 
   /**
-   * Append an assistant note to a session WITHOUT running an agent turn (used
-   * by the dream report). Unarchives the session first so it surfaces in the UI.
+   * Append an assistant note to a session WITHOUT running an agent turn.
+   * Unarchives the session first so it surfaces in the UI. General-purpose
+   * (originally added for the dream report); retained as a lightweight way to
+   * post a system-authored assistant message.
    */
   async postAssistantNote(id: string, text: string): Promise<void> {
     if (this.opts.isArchived?.(id)) await this.unarchiveSession(id);

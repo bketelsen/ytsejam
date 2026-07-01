@@ -2,6 +2,7 @@ import {
   ltmBackfill,
   ltmDoctor,
   ltmHealth,
+  ltmMaintain,
   ltmPurgeFacts,
   ltmReplay,
 } from "./ltm-commands.ts";
@@ -12,6 +13,10 @@ ytsejam CLI
 Usage:
   ytsejam ltm replay [--force] [--rebuild] [--prune] [--verbose|--quiet]
                                   Open LTM, run one reconcile pass, print JSON stats.
+  ytsejam ltm maintain            Deterministic maintenance: snapshot facts.jsonl,
+                                  canonicalize + dedup facts, consolidate episodic
+                                  memories, reconcile (rebuild + prune), backfill fact
+                                  embeddings. No LLM. Run with the server STOPPED.
   ytsejam ltm health              Print LTM bridge health (one-off tick).
   ytsejam ltm doctor [--fix]      Store health checks; --fix compacts logs to one
                                   line per id. Run with the server STOPPED.
@@ -24,8 +29,8 @@ Usage:
                                   Server MUST be running. Auth via YTSEJAM_API_TOKEN.
 
 Notes:
-  ltm replay, ltm health, ltm doctor --fix, and ltm purge-facts require the
-  server to be STOPPED (LTM single-writer lock / safe compaction).
+  ltm replay, ltm maintain, ltm health, ltm doctor --fix, and ltm purge-facts
+  require the server to be STOPPED (LTM single-writer lock / safe compaction).
   Environment:
     YTSEJAM_DATA_DIR              Cog data root (default: ./data).
     LTM_STORE_DIR                 LTM store dir (default: <dataDir>/ltm).
@@ -82,6 +87,10 @@ export async function runCli(argv: string[]): Promise<number | null> {
 
   if (sub === "health") {
     return ltmHealth({});
+  }
+
+  if (sub === "maintain") {
+    return ltmMaintain({});
   }
 
   if (sub === "doctor") {

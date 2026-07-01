@@ -268,6 +268,7 @@ patched dependency, no separate binary that duplicates boot.
 
 ```
 node server/src/index.ts ltm replay [--force] [--rebuild] [--prune]   # one reconcile tick, JSON stats
+node server/src/index.ts ltm maintain           # deterministic hygiene pass (see § Deterministic maintenance)
 node server/src/index.ts ltm health             # one-off CLI snapshot
 npm run ltm -- replay                           # ergonomic wrapper from repo root
 node server/src/index.ts ltm backfill <dir> [--rate=N] [--batch=N] [--pause-ms=N] [--poll-ms=N]
@@ -294,75 +295,45 @@ until terminal status, and sends DELETE on Ctrl-C for graceful cancel.
 Auth via `YTSEJAM_API_TOKEN`, server URL via `YTSEJAM_API_URL` (default
 `http://127.0.0.1:9873`).
 
-## Dreaming (nightly memory maintenance)
+## Deterministic maintenance (`ltm maintain`)
 
-The **dream job** is a scheduled, background LTM maintenance pass that runs
-once per night (default 03:00 local) and keeps the fact profile clean without
-requiring user action. Code: `server/src/memory/dream/`.
+LTM keeps a small **deterministic, on-demand maintenance pass** — run manually,
+never scheduled, and with no LLM in the path. Code: `server/src/memory/maintain.ts`
+(`runMaintenance`), exposed as the `ltm maintain` CLI subcommand
+(`server/src/cli/ltm-commands.ts` → `ltmMaintain`).
+
+> History: this is the surviving half of the removed "dream" job. The nightly
+> scheduler and the LLM fact-mining/proposal/report machinery were deleted; only
+> the reversible mechanical maintenance was kept, moved out of the scheduler and
+> onto an explicit CLI command. There is no autonomous memory behavior anymore.
 
 ### What it does
 
-The job runs two phases:
+`runMaintenance` performs four reversible operations, in order:
 
-1. **Mechanical (autonomous) pass** — deterministic, reversible maintenance:
-   backs up `facts.jsonl`, runs `canonicalizeFacts()` (normalises predicate
-   casing and synonym predicates), `consolidate()` (folds episodic memories),
-   a full reconciler tick with `--rebuild --prune`, and `backfillFactEmbeddings()`.
-   This phase never consults the LLM and never touches proposals; it is skipped
-   when `DREAM_PROPOSE_ONLY=1`.
+1. **Snapshot** — copies `facts.jsonl` to a timestamped `facts.jsonl.bak.<ts>`
+   before touching anything, so the whole pass is trivially revertible with `cp`.
+2. `canonicalizeFacts()` — normalises predicate casing and folds synonym
+   predicates, deduping the fact store.
+3. `consolidate()` — folds decayed episodic memories into summaries.
+4. A full reconcile tick (`--rebuild --prune`) — re-mirrors cog observations and
+   tombstones orphan cog-origin observation records.
+5. `backfillFactEmbeddings()` — embeds any active facts still missing a vector.
 
-2. **LLM mining pass** — sends current active facts + recent user turns to the
-   configured model via the `propose_changes` tool. The model returns
-   confidence-scored proposals of kinds `drop` / `merge` / `resolve` / `add`.
-   Proposals below `DREAM_MIN_CONFIDENCE` are discarded; proposals whose key
-   matches a previously dismissed proposal are discarded (anti-thrash guard).
-   Surviving proposals are persisted in `<dreamDir>/pending-proposals.jsonl`.
+It prints a JSON summary (`backup`, `canonicalized`, `merged`, `folded`,
+`pruned`, `embedded`) and exits. Like `ltm replay`, it opens the store directly
+and therefore requires the **server stopped** (single-writer lock):
 
-After both phases the job opens (or reuses) a **"Memory maintenance" chat
-session** and posts a human-readable report listing each proposal with its
-id, kind, targets, and rationale. The agent (or operator) can review and
-reply `apply all`, `apply 1,2`, `dismiss 3`, or `explain 2` to action items
-via the `dream_apply` / `dream_dismiss` / `dream_pending` cog tools.
+```sh
+systemctl --user stop ytsejam
+node server/src/index.ts ltm maintain
+systemctl --user start ytsejam
+```
 
-Dream state (cursor position, last-run date, maintenance session id) is
-persisted in `<dreamDir>/dream-state.json`. Each run appends a structured
-entry to `<dreamDir>/dream-log.jsonl` for observability.
-
-### Kill-switches and safety
-
-- `DREAM_ENABLED=0` — disables the scheduler entirely; `DreamScheduler.start()`
-  is a no-op. This is the recommended kill-switch for staging environments or
-  while performing manual LTM surgery.
-- `DREAM_PROPOSE_ONLY=1` — skips the mechanical phase (no autonomous writes to
-  `facts.jsonl`). Proposals are still mined and the report is still posted.
-  Useful when you want LLM review but not autonomous canonicalization.
-- The mechanical pass always writes a timestamped `.bak.*` file next to
-  `facts.jsonl` before touching it, so mechanical changes are trivially
-  reversible with `cp`.
-
-### Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `DREAM_ENABLED` | `1` | Set to `0` to disable the dream scheduler entirely. |
-| `DREAM_HOUR` | `3` | Hour of day (0–23, local time) at which the job runs. |
-| `DREAM_MODEL` | `claude-haiku-4.5` | Chat-completions model for the LLM mining pass. Passed to the Copilot endpoint. |
-| `DREAM_MINE_TOKEN_BUDGET` | `8000` | Approximate token budget for user turns fed to the miner. Newer turns are kept first when the budget is exceeded. |
-| `DREAM_MIN_CONFIDENCE` | `0.6` | Minimum proposal confidence (0–1) to retain. Proposals below this are silently discarded after the LLM call. |
-| `DREAM_PROPOSE_ONLY` | `0` | Set to `1` to skip the mechanical pass and only mine + report proposals. |
-
-All env vars are read at server boot by `DreamConfig` in
-`server/src/memory/dream/scheduler.ts`. Changing them requires a server
-restart; there is no live-reload.
-
-### Anti-thrash: applied proposals are excluded from re-proposal
-
-The anti-thrash guard checks both `dismissedKeys()` and `appliedKeys()` so a
-proposal that has already been applied is never re-proposed on a subsequent
-nightly run. `applyProposals()` only marks a proposal `"applied"` if the
-underlying mutation was verified to have landed (the fact round-trips through
-the regex extractor); proposals whose fact did not land remain `"pending"` and
-resurface for the next nightly pass.
+Note the ordinary `LtmReconciler` already ticks every `LTM_RECONCILE_INTERVAL_MS`
+(default 5 min) during normal operation — `ltm maintain` is the heavier,
+occasional hygiene pass (canonicalize + consolidate + embed-backfill + rebuild
+prune), not something you need to run routinely.
 
 ## Health surface
 

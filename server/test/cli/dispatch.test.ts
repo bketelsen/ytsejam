@@ -11,6 +11,7 @@ import { join } from "node:path";
 vi.mock("../../src/cli/ltm-commands.ts", () => ({
   ltmReplay: vi.fn(async () => 0),
   ltmHealth: vi.fn(async () => 0),
+  ltmMaintain: vi.fn(async () => 0),
   ltmBackfill: vi.fn(async () => 0),
   ltmDoctor: vi.fn(async () => 0),
   ltmPurgeFacts: vi.fn(async () => 0),
@@ -21,6 +22,7 @@ import { runCli } from "../../src/cli/dispatch.ts";
 import {
   ltmReplay,
   ltmHealth,
+  ltmMaintain,
   ltmBackfill,
   ltmDoctor,
   ltmPurgeFacts,
@@ -54,6 +56,7 @@ describe("runCli", () => {
     // Reset call history per test so routing assertions are independent.
     vi.mocked(ltmReplay).mockClear();
     vi.mocked(ltmHealth).mockClear();
+    vi.mocked(ltmMaintain).mockClear();
     vi.mocked(ltmBackfill).mockClear();
     vi.mocked(ltmDoctor).mockClear();
     vi.mocked(ltmPurgeFacts).mockClear();
@@ -175,6 +178,12 @@ describe("runCli", () => {
     expect(await runCli(["ltm", "health"])).toBe(0);
     expect(ltmHealth).toHaveBeenCalledTimes(1);
     expect(vi.mocked(ltmHealth).mock.calls[0]![0]).toEqual({});
+  });
+
+  it("routes `ltm maintain` to ltmMaintain", async () => {
+    expect(await runCli(["ltm", "maintain"])).toBe(0);
+    expect(ltmMaintain).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ltmMaintain).mock.calls[0]![0]).toEqual({});
   });
 
   it("routes `ltm doctor` to ltmDoctor with fix=false", async () => {
